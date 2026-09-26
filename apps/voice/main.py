@@ -1,9 +1,14 @@
 """Kaho AI voice agent entrypoint.
 
 A terminal-only pipeline: your mic/speakers -> Deepgram (STT) -> Groq (LLM)
--> ElevenLabs (TTS), with Silero VAD driving turn-taking. No web server,
-no browser — run it with `python main.py` (or `./scripts/run_agent.sh`)
+-> Deepgram or ElevenLabs (TTS), with Silero VAD driving turn-taking. No web
+server, no browser — run it with `python main.py` (or `./scripts/run_agent.sh`)
 and talk.
+
+TTS_PROVIDER picks the voice: Deepgram Aura is the default because it runs on
+the STT key we already have and costs nothing extra to iterate against, but its
+voices are English-only. Switch to ElevenLabs for Hindi and the other Indian
+languages.
 """
 
 import asyncio
@@ -22,6 +27,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.services.deepgram.stt import DeepgramSTTService
+from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
@@ -36,6 +42,7 @@ SYSTEM_INSTRUCTION = (
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
 SUPPORTED_LLM_PROVIDERS = ("groq",)
+SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs")
 
 
 def env(name: str) -> str | None:
@@ -82,9 +89,35 @@ def build_llm() -> GroqLLMService:
     )
 
 
+def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
+    provider = (env("TTS_PROVIDER") or "deepgram").lower()
+    if provider not in SUPPORTED_TTS_PROVIDERS:
+        logger.error(
+            f"TTS_PROVIDER={provider!r} isn't wired up — expected one of "
+            f"{', '.join(SUPPORTED_TTS_PROVIDERS)}."
+        )
+        sys.exit(1)
+
+    if provider == "elevenlabs":
+        require_env("ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID")
+        return ElevenLabsTTSService(
+            api_key=env("ELEVENLABS_API_KEY"),
+            settings=ElevenLabsTTSService.Settings(
+                voice=env("ELEVENLABS_VOICE_ID"),
+                model=env("ELEVENLABS_MODEL_ID"),
+            ),
+        )
+
+    require_env("DEEPGRAM_API_KEY", "DEEPGRAM_VOICE_ID")
+    return DeepgramTTSService(
+        api_key=env("DEEPGRAM_API_KEY"),
+        settings=DeepgramTTSService.Settings(voice=env("DEEPGRAM_VOICE_ID")),
+    )
+
+
 async def main() -> None:
     load_dotenv()
-    require_env("DEEPGRAM_API_KEY", "ELEVENLABS_API_KEY")
+    require_env("DEEPGRAM_API_KEY")
 
     transport = LocalAudioTransport(
         LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
@@ -99,14 +132,7 @@ async def main() -> None:
     )
 
     llm = build_llm()
-
-    tts = ElevenLabsTTSService(
-        api_key=env("ELEVENLABS_API_KEY"),
-        settings=ElevenLabsTTSService.Settings(
-            voice=env("ELEVENLABS_VOICE_ID"),
-            model=env("ELEVENLABS_MODEL_ID"),
-        ),
-    )
+    tts = build_tts()
 
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(

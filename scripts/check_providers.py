@@ -63,6 +63,35 @@ def check_deepgram() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
+def check_deepgram_tts() -> tuple[bool, str]:
+    """Synthesize a short phrase with the configured Aura voice."""
+    api_key = env("DEEPGRAM_API_KEY")
+    voice = env("DEEPGRAM_VOICE_ID")
+    missing = [
+        name
+        for name, value in [("DEEPGRAM_API_KEY", api_key), ("DEEPGRAM_VOICE_ID", voice)]
+        if not value
+    ]
+    if missing:
+        return False, f"missing: {', '.join(missing)}"
+    try:
+        resp = httpx.post(
+            "https://api.deepgram.com/v1/speak",
+            params={"model": voice},
+            headers={"Authorization": f"Token {api_key}", "Content-Type": "application/json"},
+            json={"text": "Hi"},
+            timeout=TIMEOUT,
+        )
+        resp.raise_for_status()
+        if not resp.content:
+            return False, "the request succeeded but returned no audio"
+        return True, ""
+    except httpx.HTTPStatusError as e:
+        return False, f"HTTP {e.response.status_code}: {e.response.text.strip()[:200]}"
+    except httpx.HTTPError as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def check_elevenlabs() -> tuple[bool, str]:
     """Synthesize two characters of speech.
 
@@ -178,18 +207,31 @@ LLM_CHECKS = {
     "bedrock": ("AWS Bedrock (LLM)", check_bedrock),
 }
 
+TTS_CHECKS = {
+    "deepgram": ("Deepgram Aura (TTS)", check_deepgram_tts),
+    "elevenlabs": ("ElevenLabs (TTS)", check_elevenlabs),
+}
+
+
+def pick(kind: str, var: str, default: str, table: dict) -> tuple[str, object] | None:
+    """Resolve a provider env var to its check, or report the bad value."""
+    name = (env(var) or default).strip().lower()
+    if name not in table:
+        print(f"{kind}: FAILED - unknown {var}={name!r} (expected: {', '.join(table)})")
+        return None
+    return table[name]
+
 
 def main() -> int:
     load_dotenv(ROOT / ".env")
-    provider = (os.getenv("LLM_PROVIDER") or "groq").strip().lower()
-    if provider not in LLM_CHECKS:
-        options = ", ".join(LLM_CHECKS)
-        print(f"LLM: FAILED - unknown LLM_PROVIDER {provider!r} (expected: {options})")
+    llm_check = pick("LLM", "LLM_PROVIDER", "groq", LLM_CHECKS)
+    tts_check = pick("TTS", "TTS_PROVIDER", "deepgram", TTS_CHECKS)
+    if llm_check is None or tts_check is None:
         return 1
     checks = [
         ("Deepgram (STT)", check_deepgram),
-        ("ElevenLabs (TTS)", check_elevenlabs),
-        LLM_CHECKS[provider],
+        tts_check,
+        llm_check,
     ]
     all_ok = True
     for label, check in checks:
