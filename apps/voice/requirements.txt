@@ -1,4 +1,4 @@
-pipecat-ai[silero,deepgram,elevenlabs,aws]
+pipecat-ai[silero,deepgram,elevenlabs,groq,local,aws]
 python-dotenv
 # Pinned to match the botocore range pipecat-ai[aws]'s aiobotocore requires;
 # bump alongside pipecat-ai, not independently.

@@ -1,28 +1,58 @@
-"""Make one lightweight test call to each provider and report OK or the error.
+"""Make one small real test call to each provider and report OK or the error.
+
+Each check exercises the same credentials and model the agent itself uses, so a
+green run here means the pipeline's config is actually valid — not just that the
+key exists. The calls are deliberately tiny (0.3s of silence to transcribe, a
+two-character phrase to synthesize), so the spend is negligible.
 
 Never prints API key values — only whether each call succeeded, and the
 provider's own error message if it didn't.
 """
+import io
 import os
 import sys
+import wave
 from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
-TIMEOUT = 10
+TIMEOUT = 30
+
+
+def env(name: str) -> str | None:
+    """Read an env var, treating an empty string the same as unset."""
+    return os.getenv(name) or None
+
+
+def silent_wav(seconds: float = 0.3, sample_rate: int = 16000) -> bytes:
+    """A mono PCM16 WAV of silence — just enough to exercise a transcription."""
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        wf.writeframes(b"\x00\x00" * int(sample_rate * seconds))
+    return buf.getvalue()
 
 
 def check_deepgram() -> tuple[bool, str]:
-    """GET /v1/projects — the lightest authenticated call Deepgram offers."""
-    api_key = os.getenv("DEEPGRAM_API_KEY")
+    """Transcribe a fragment of silence, using the configured model/language."""
+    api_key = env("DEEPGRAM_API_KEY")
     if not api_key:
         return False, "DEEPGRAM_API_KEY is not set"
+    params = {}
+    if model := env("DEEPGRAM_MODEL"):
+        params["model"] = model
+    if language := env("DEEPGRAM_LANGUAGE"):
+        params["language"] = language
     try:
-        resp = httpx.get(
-            "https://api.deepgram.com/v1/projects",
-            headers={"Authorization": f"Token {api_key}"},
+        resp = httpx.post(
+            "https://api.deepgram.com/v1/listen",
+            params=params,
+            headers={"Authorization": f"Token {api_key}", "Content-Type": "audio/wav"},
+            content=silent_wav(),
             timeout=TIMEOUT,
         )
         resp.raise_for_status()
@@ -34,28 +64,50 @@ def check_deepgram() -> tuple[bool, str]:
 
 
 def check_elevenlabs() -> tuple[bool, str]:
-    """GET /v1/user — validates the key without generating any audio."""
-    api_key = os.getenv("ELEVENLABS_API_KEY")
-    if not api_key:
-        return False, "ELEVENLABS_API_KEY is not set"
+    """Synthesize two characters of speech.
+
+    A TTS-scoped key often can't read /v1/user, /v1/models or /v1/voices, so
+    synthesis is the only call that reliably proves the key works.
+    """
+    api_key = env("ELEVENLABS_API_KEY")
+    voice_id = env("ELEVENLABS_VOICE_ID")
+    missing = [
+        name
+        for name, value in [("ELEVENLABS_API_KEY", api_key), ("ELEVENLABS_VOICE_ID", voice_id)]
+        if not value
+    ]
+    if missing:
+        return False, f"missing: {', '.join(missing)}"
+    payload: dict[str, str] = {"text": "Hi"}
+    if model := env("ELEVENLABS_MODEL_ID"):
+        payload["model_id"] = model
     try:
-        resp = httpx.get(
-            "https://api.elevenlabs.io/v1/user",
+        resp = httpx.post(
+            f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}",
             headers={"xi-api-key": api_key},
+            json=payload,
             timeout=TIMEOUT,
         )
         resp.raise_for_status()
+        if not resp.content:
+            return False, "the request succeeded but returned no audio"
         return True, ""
     except httpx.HTTPStatusError as e:
-        return False, f"HTTP {e.response.status_code}: {e.response.text.strip()[:200]}"
+        hint = ""
+        if e.response.status_code == 402:
+            hint = (
+                " — on the free plan, pick a voice from your own dashboard;"
+                " Voice Library voices are paid-only over the API"
+            )
+        return False, f"HTTP {e.response.status_code}: {e.response.text.strip()[:200]}{hint}"
     except httpx.HTTPError as e:
         return False, f"{type(e).__name__}: {e}"
 
 
 def check_groq() -> tuple[bool, str]:
     """One tiny chat completion (a few tokens) against Groq's OpenAI-compatible API."""
-    api_key = os.getenv("GROQ_API_KEY")
-    model_id = os.getenv("GROQ_MODEL_ID")
+    api_key = env("GROQ_API_KEY")
+    model_id = env("GROQ_MODEL_ID")
     missing = [
         name
         for name, value in [("GROQ_API_KEY", api_key), ("GROQ_MODEL_ID", model_id)]
@@ -84,10 +136,10 @@ def check_groq() -> tuple[bool, str]:
 
 def check_bedrock() -> tuple[bool, str]:
     """One tiny Converse call to Claude Haiku 4.5 on Bedrock (a few tokens)."""
-    access_key = os.getenv("AWS_ACCESS_KEY_ID")
-    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
-    region = os.getenv("AWS_REGION")
-    model_id = os.getenv("BEDROCK_MODEL_ID")
+    access_key = env("AWS_ACCESS_KEY_ID")
+    secret_key = env("AWS_SECRET_ACCESS_KEY")
+    region = env("AWS_REGION")
+    model_id = env("BEDROCK_MODEL_ID")
     missing = [
         name
         for name, value in [
@@ -109,7 +161,7 @@ def check_bedrock() -> tuple[bool, str]:
             region_name=region,
             aws_access_key_id=access_key,
             aws_secret_access_key=secret_key,
-            aws_session_token=os.getenv("AWS_SESSION_TOKEN") or None,
+            aws_session_token=env("AWS_SESSION_TOKEN"),
         )
         client.converse(
             modelId=model_id,
