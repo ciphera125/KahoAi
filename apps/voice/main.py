@@ -15,6 +15,7 @@ import asyncio
 import os
 import ssl
 import sys
+from pathlib import Path
 
 import certifi
 from dotenv import load_dotenv
@@ -35,11 +36,39 @@ from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.workers.runner import WorkerRunner
 
-SYSTEM_INSTRUCTION = (
-    "You are Kaho, a helpful voice assistant for the Indian market. Your "
-    "responses will be spoken aloud, so avoid emojis, bullet points, or any "
-    "formatting that can't be spoken. Keep answers brief and conversational."
-)
+HERE = Path(__file__).resolve().parent
+DEFAULT_PROMPT_PATH = HERE / "prompts" / "default.md"
+
+# Prepended to whatever persona AGENT_SYSTEM_PROMPT_PATH points at. These cover
+# only *how* to speak — the prompt file decides what the agent is and does — so
+# a new persona never has to restate them. Everything here exists because text
+# that reads fine on a screen sounds wrong, or takes too long, out loud.
+VOICE_RULES = """\
+You are speaking out loud over a phone call. Every word you produce is read by a
+text-to-speech engine, so write for the ear, not the eye.
+
+Keep each turn to one or two sentences. Say the single most useful thing and
+stop. A caller cannot skim, so a long answer is a wasted answer — if something
+genuinely needs more, give the first part and let them ask.
+
+Write plain spoken prose. No bullet points, no numbered lists, no markdown, no
+emoji, no headings, no code, no em-dashes, and no parentheses. Do not spell out
+options as "either A, B, or C"; ask about the most likely one instead.
+
+Write numbers the way you would say them. A phone number is read digit by digit.
+Prices, dates, and times are spoken in full, so "rupees five hundred" and
+"three thirty in the afternoon" rather than symbols or numerals.
+
+Never open with filler like "Sure" or "Got it" and then restate the question.
+Answer it. Do not repeat a phrase you have already used in this call, and do not
+apologise more than once for the same thing.
+
+Speech recognition will sometimes hand you a garbled or nonsensical transcript.
+When a request does not parse, ask once, briefly, for the specific part you
+missed, and never guess at a name, a number, or an amount. If the caller is
+still unclear after that, ask them to spell it or say it slower. Never invent a
+plausible-sounding answer to fill the silence.
+"""
 
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
@@ -68,6 +97,27 @@ def ensure_ca_bundle() -> None:
 def env(name: str) -> str | None:
     """Read an env var, treating an empty string the same as unset."""
     return os.getenv(name) or None
+
+
+def load_system_prompt() -> str:
+    """Build the system instruction: the voice rules, then the chosen persona.
+
+    AGENT_SYSTEM_PROMPT_PATH swaps the persona without touching code — that file
+    alone decides what the agent is, knows and does. See apps/voice/prompts/.
+    """
+    path = Path(env("AGENT_SYSTEM_PROMPT_PATH") or DEFAULT_PROMPT_PATH)
+    if not path.is_absolute():
+        path = (HERE / path).resolve()
+    try:
+        persona = path.read_text(encoding="utf-8").strip()
+    except OSError as e:
+        logger.error(f"Could not read the system prompt at {path}: {e}")
+        sys.exit(1)
+    if not persona:
+        logger.error(f"The system prompt at {path} is empty.")
+        sys.exit(1)
+    logger.info(f"Persona: {path.name}")
+    return f"{VOICE_RULES}\n\n{persona}"
 
 
 def require_env(*names: str) -> None:
@@ -101,7 +151,7 @@ def build_llm() -> GroqLLMService:
         api_key=env("GROQ_API_KEY"),
         settings=GroqLLMService.Settings(
             model=env("GROQ_MODEL_ID"),
-            system_instruction=SYSTEM_INSTRUCTION,
+            system_instruction=load_system_prompt(),
             max_tokens=int(max_tokens) if max_tokens else None,
             temperature=float(temperature) if temperature else None,
             reasoning_effort=reasoning_effort,
@@ -144,11 +194,22 @@ async def main() -> None:
         LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
     )
 
+    # keyterm biases nova-3 toward words it would otherwise mangle: brand names,
+    # drug names, place names, anything domain-specific. Worth filling in per
+    # deployment — it is the main lever on mis-transcription. (nova-3 replaced
+    # the older `keywords` parameter with this one and rejects `keywords`.)
+    keyterms = [t.strip() for t in (env("DEEPGRAM_KEYTERMS") or "").split(",") if t.strip()]
     stt = DeepgramSTTService(
         api_key=env("DEEPGRAM_API_KEY"),
         settings=DeepgramSTTService.Settings(
             model=env("DEEPGRAM_MODEL"),
             language=env("DEEPGRAM_LANGUAGE"),
+            # Punctuation and sentence casing give the LLM cleaner input, and
+            # numerals matter here: phone numbers, rupee amounts and OTPs are
+            # far easier to act on as digits than as spelled-out words.
+            smart_format=True,
+            numerals=True,
+            keyterm=keyterms or None,
         ),
     )
 
