@@ -52,6 +52,36 @@ def check_elevenlabs() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
+def check_groq() -> tuple[bool, str]:
+    """One tiny chat completion (a few tokens) against Groq's OpenAI-compatible API."""
+    api_key = os.getenv("GROQ_API_KEY")
+    model_id = os.getenv("GROQ_MODEL_ID")
+    missing = [
+        name
+        for name, value in [("GROQ_API_KEY", api_key), ("GROQ_MODEL_ID", model_id)]
+        if not value
+    ]
+    if missing:
+        return False, f"missing: {', '.join(missing)}"
+    try:
+        resp = httpx.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model_id,
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 5,
+            },
+            timeout=TIMEOUT,
+        )
+        resp.raise_for_status()
+        return True, ""
+    except httpx.HTTPStatusError as e:
+        return False, f"HTTP {e.response.status_code}: {e.response.text.strip()[:200]}"
+    except httpx.HTTPError as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def check_bedrock() -> tuple[bool, str]:
     """One tiny Converse call to Claude Haiku 4.5 on Bedrock (a few tokens)."""
     access_key = os.getenv("AWS_ACCESS_KEY_ID")
@@ -91,17 +121,26 @@ def check_bedrock() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
-CHECKS = [
-    ("Deepgram (STT)", check_deepgram),
-    ("ElevenLabs (TTS)", check_elevenlabs),
-    ("AWS Bedrock (LLM)", check_bedrock),
-]
+LLM_CHECKS = {
+    "groq": ("Groq (LLM)", check_groq),
+    "bedrock": ("AWS Bedrock (LLM)", check_bedrock),
+}
 
 
 def main() -> int:
     load_dotenv(ROOT / ".env")
+    provider = (os.getenv("LLM_PROVIDER") or "groq").strip().lower()
+    if provider not in LLM_CHECKS:
+        options = ", ".join(LLM_CHECKS)
+        print(f"LLM: FAILED - unknown LLM_PROVIDER {provider!r} (expected: {options})")
+        return 1
+    checks = [
+        ("Deepgram (STT)", check_deepgram),
+        ("ElevenLabs (TTS)", check_elevenlabs),
+        LLM_CHECKS[provider],
+    ]
     all_ok = True
-    for label, check in CHECKS:
+    for label, check in checks:
         ok, error = check()
         if ok:
             print(f"{label}: OK")
