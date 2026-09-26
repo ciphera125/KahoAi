@@ -13,8 +13,10 @@ languages.
 
 import asyncio
 import os
+import ssl
 import sys
 
+import certifi
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -43,6 +45,24 @@ SYSTEM_INSTRUCTION = (
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
 SUPPORTED_LLM_PROVIDERS = ("groq",)
 SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs")
+
+
+def ensure_ca_bundle() -> None:
+    """Point OpenSSL at certifi when the interpreter ships without a CA bundle.
+
+    The python.org macOS builds leave .../etc/openssl/cert.pem unpopulated
+    unless you run their "Install Certificates.command". HTTP still works,
+    because httpx carries its own certifi copy, but every websocket — our STT
+    and TTS both — dies on CERTIFICATE_VERIFY_FAILED. Setting SSL_CERT_FILE
+    before the first handshake fixes it without touching the machine.
+    """
+    if os.environ.get("SSL_CERT_FILE"):
+        return
+    cafile = ssl.get_default_verify_paths().openssl_cafile
+    if cafile and os.path.exists(cafile):
+        return
+    os.environ["SSL_CERT_FILE"] = certifi.where()
+    logger.debug(f"No system CA bundle at {cafile}; using certifi instead.")
 
 
 def env(name: str) -> str | None:
@@ -117,6 +137,7 @@ def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
 
 async def main() -> None:
     load_dotenv()
+    ensure_ca_bundle()
     require_env("DEEPGRAM_API_KEY")
 
     transport = LocalAudioTransport(

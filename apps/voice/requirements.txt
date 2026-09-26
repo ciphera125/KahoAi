@@ -3,3 +3,5 @@ python-dotenv
 # Pinned to match the botocore range pipecat-ai[aws]'s aiobotocore requires;
 # bump alongside pipecat-ai, not independently.
 boto3==1.43.75
+# Imported directly by main.py to repair the CA bundle on python.org macOS builds.
+certifi
