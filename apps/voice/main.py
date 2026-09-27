@@ -334,15 +334,23 @@ def build_tts() -> DeepgramTTSService | ElevenLabsTTSService | SarvamTTSService:
         # min_buffer_size is how much text it collects before it starts
         # speaking: small starts sooner but gives the voice less to plan its
         # intonation with, which is what makes short fragments sound clipped.
+        #
+        # Every one of these goes into the websocket config verbatim, nulls
+        # included, and Sarvam rejects the whole message if any is null
+        # ("Input parameters has to be a valid dictionary"), so an unset
+        # option has to be left out entirely rather than passed as None.
+        options = {
+            "voice": env("SARVAM_VOICE_ID"),
+            "model": env("SARVAM_MODEL_ID"),
+            "language": env("SARVAM_LANGUAGE"),
+            "pace": env_float("SARVAM_PACE", 1.0),
+            "min_buffer_size": env_int("SARVAM_MIN_BUFFER_SIZE"),
+            "max_chunk_length": env_int("SARVAM_MAX_CHUNK_LENGTH"),
+        }
         return SarvamTTSService(
             api_key=env("SARVAM_API_KEY"),
             settings=SarvamTTSService.Settings(
-                voice=env("SARVAM_VOICE_ID"),
-                model=env("SARVAM_MODEL_ID"),
-                language=env("SARVAM_LANGUAGE"),
-                pace=env_float("SARVAM_PACE", 1.0),
-                min_buffer_size=env_int("SARVAM_MIN_BUFFER_SIZE"),
-                max_chunk_length=env_int("SARVAM_MAX_CHUNK_LENGTH"),
+                **{k: v for k, v in options.items() if v is not None}
             ),
             text_filters=speech_text_filters(),
             text_aggregation_mode=text_aggregation_mode(),
