@@ -13,6 +13,7 @@ languages.
 
 import asyncio
 import os
+import re
 import ssl
 import sys
 from pathlib import Path
@@ -34,6 +35,8 @@ from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+from pipecat.utils.text.base_text_filter import BaseTextFilter
+from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.workers.runner import WorkerRunner
 
 HERE = Path(__file__).resolve().parent
@@ -58,6 +61,21 @@ options as "either A, B, or C"; ask about the most likely one instead.
 Write numbers the way you would say them. A phone number is read digit by digit.
 Prices, dates, and times are spoken in full, so "rupees five hundred" and
 "three thirty in the afternoon" rather than symbols or numerals.
+
+Speak English unless the caller speaks something else first. If they write or
+speak to you in Hindi or Hinglish, answer the same way and keep doing so until
+they switch back. An English question always gets an English answer, however
+Indian the subject is, and a greeting does not count as a language change.
+Whatever the language, write it in the Latin alphabet, romanising Hindi as "aap
+kaise hain" — the voice reading you aloud may have no idea what to do with
+another script.
+
+Everything you tell a caller has to come from these instructions or from what
+the caller themselves just told you. Those facts are yours to give freely, so
+answer straight from them. For anything else — a price, a time, an address,
+whether something is in stock or free — you simply do not have it, and the
+honest sentence is that you do not, along with who does. Never patch the gap
+with something plausible; the caller will act on it as though it were true.
 
 Never open with filler like "Sure" or "Got it" and then restate the question.
 Answer it. Do not repeat a phrase you have already used in this call, and do not
@@ -159,6 +177,38 @@ def build_llm() -> GroqLLMService:
     )
 
 
+class SpokenPunctuationFilter(BaseTextFilter):
+    """Normalise punctuation that reads badly when spoken.
+
+    The prompt asks the model to avoid these, and mostly it does, but "mostly"
+    is not a guarantee you want between the LLM and the caller's ear — it still
+    slipped an em-dash through in testing. Anything we can enforce in code, we
+    enforce in code, and leave the prompt to handle what only judgement can.
+    """
+
+    # Smart quotes are flattened because some voices spell them out.
+    REPLACEMENTS = {"…": "...", "“": '"', "”": '"', "‘": "'", "’": "'"}
+
+    # A dash becomes the comma a speaker actually pauses on. It swallows the
+    # space around it too: an unspaced "need—could" would otherwise turn into
+    # "need,could" and be read as one slurred word.
+    DASHES = re.compile(r"\s*[—–]\s*")
+
+    async def filter(self, text: str) -> str:
+        text = self.DASHES.sub(", ", text)
+        for old, new in self.REPLACEMENTS.items():
+            text = text.replace(old, new)
+        return text
+
+    async def handle_interruption(self):
+        """Nothing is buffered between calls, so an interruption needs no reset."""
+
+
+def speech_text_filters() -> list[BaseTextFilter]:
+    """Strip markdown, then fix punctuation, before any text reaches the voice."""
+    return [MarkdownTextFilter(), SpokenPunctuationFilter()]
+
+
 def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
     provider = (env("TTS_PROVIDER") or "deepgram").lower()
     if provider not in SUPPORTED_TTS_PROVIDERS:
@@ -176,12 +226,14 @@ def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
                 voice=env("ELEVENLABS_VOICE_ID"),
                 model=env("ELEVENLABS_MODEL_ID"),
             ),
+            text_filters=speech_text_filters(),
         )
 
     require_env("DEEPGRAM_API_KEY", "DEEPGRAM_VOICE_ID")
     return DeepgramTTSService(
         api_key=env("DEEPGRAM_API_KEY"),
         settings=DeepgramTTSService.Settings(voice=env("DEEPGRAM_VOICE_ID")),
+        text_filters=speech_text_filters(),
     )
 
 
