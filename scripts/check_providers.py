@@ -92,6 +92,40 @@ def check_deepgram_tts() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
+def check_sarvam() -> tuple[bool, str]:
+    """Synthesize two characters through Sarvam's Bulbul TTS."""
+    api_key = env("SARVAM_API_KEY")
+    voice = env("SARVAM_VOICE_ID")
+    missing = [
+        name
+        for name, value in [("SARVAM_API_KEY", api_key), ("SARVAM_VOICE_ID", voice)]
+        if not value
+    ]
+    if missing:
+        return False, f"missing: {', '.join(missing)}"
+    payload = {
+        "text": "Namaste",
+        "speaker": voice,
+        "target_language_code": env("SARVAM_LANGUAGE") or "hi-IN",
+        "model": env("SARVAM_MODEL_ID") or "bulbul:v3",
+    }
+    try:
+        resp = httpx.post(
+            "https://api.sarvam.ai/text-to-speech",
+            headers={"api-subscription-key": api_key},
+            json=payload,
+            timeout=TIMEOUT,
+        )
+        resp.raise_for_status()
+        if not resp.json().get("audios"):
+            return False, "the request succeeded but returned no audio"
+        return True, ""
+    except httpx.HTTPStatusError as e:
+        return False, f"HTTP {e.response.status_code}: {e.response.text.strip()[:200]}"
+    except (httpx.HTTPError, ValueError) as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 def check_elevenlabs() -> tuple[bool, str]:
     """Synthesize two characters of speech.
 
@@ -210,6 +244,7 @@ LLM_CHECKS = {
 TTS_CHECKS = {
     "deepgram": ("Deepgram Aura (TTS)", check_deepgram_tts),
     "elevenlabs": ("ElevenLabs (TTS)", check_elevenlabs),
+    "sarvam": ("Sarvam Bulbul (TTS)", check_sarvam),
 }
 
 

@@ -39,6 +39,7 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.groq.llm import GroqLLMService
+from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.utils.text.base_text_filter import BaseTextFilter
@@ -80,7 +81,7 @@ guess at a name or a number.
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
 SUPPORTED_LLM_PROVIDERS = ("groq",)
-SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs")
+SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam")
 
 
 def ensure_ca_bundle() -> None:
@@ -307,7 +308,18 @@ def text_aggregation_mode() -> TextAggregationMode:
         sys.exit(1)
 
 
-def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
+def env_int(name: str) -> int | None:
+    raw = env(name)
+    if raw is None:
+        return None
+    try:
+        return int(raw)
+    except ValueError:
+        logger.error(f"{name}={raw!r} is not a whole number.")
+        sys.exit(1)
+
+
+def build_tts() -> DeepgramTTSService | ElevenLabsTTSService | SarvamTTSService:
     provider = (env("TTS_PROVIDER") or "deepgram").lower()
     if provider not in SUPPORTED_TTS_PROVIDERS:
         logger.error(
@@ -315,6 +327,26 @@ def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
             f"{', '.join(SUPPORTED_TTS_PROVIDERS)}."
         )
         sys.exit(1)
+
+    if provider == "sarvam":
+        require_env("SARVAM_API_KEY", "SARVAM_VOICE_ID")
+        # Sarvam is the one provider here with a real character buffer.
+        # min_buffer_size is how much text it collects before it starts
+        # speaking: small starts sooner but gives the voice less to plan its
+        # intonation with, which is what makes short fragments sound clipped.
+        return SarvamTTSService(
+            api_key=env("SARVAM_API_KEY"),
+            settings=SarvamTTSService.Settings(
+                voice=env("SARVAM_VOICE_ID"),
+                model=env("SARVAM_MODEL_ID"),
+                language=env("SARVAM_LANGUAGE"),
+                pace=env_float("SARVAM_PACE", 1.0),
+                min_buffer_size=env_int("SARVAM_MIN_BUFFER_SIZE"),
+                max_chunk_length=env_int("SARVAM_MAX_CHUNK_LENGTH"),
+            ),
+            text_filters=speech_text_filters(),
+            text_aggregation_mode=text_aggregation_mode(),
+        )
 
     if provider == "elevenlabs":
         require_env("ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID")
