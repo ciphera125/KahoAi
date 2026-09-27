@@ -12,17 +12,22 @@ languages.
 """
 
 import asyncio
+import json
 import os
 import re
 import ssl
 import sys
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 
 import certifi
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
-from pipecat.frames.frames import LLMRunFrame
+from pipecat.audio.vad.vad_analyzer import VADParams
+from pipecat.frames.frames import LLMRunFrame, MetricsFrame
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
@@ -34,6 +39,7 @@ from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.groq.llm import GroqLLMService
+from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
@@ -42,50 +48,33 @@ from pipecat.workers.runner import WorkerRunner
 HERE = Path(__file__).resolve().parent
 DEFAULT_PROMPT_PATH = HERE / "prompts" / "default.md"
 
-# Prepended to whatever persona AGENT_SYSTEM_PROMPT_PATH points at. These cover
-# only *how* to speak — the prompt file decides what the agent is and does — so
-# a new persona never has to restate them. Everything here exists because text
-# that reads fine on a screen sounds wrong, or takes too long, out loud.
+# Every token here is re-sent on every turn of every call, so it is kept as short
+# as it can be while still holding. Formatting is barely mentioned on purpose:
+# speech_text_filters() strips markdown and dashes deterministically, which is
+# cheaper and more reliable than spending tokens asking the model to behave.
+# These rules cover only *how* to speak; the persona file says what the agent is.
 VOICE_RULES = """\
-You are speaking out loud over a phone call. Every word you produce is read by a
-text-to-speech engine, so write for the ear, not the eye.
+You are speaking aloud on a phone call. Write for the ear: plain spoken prose,
+never lists or headings.
 
-Keep each turn to one or two sentences. Say the single most useful thing and
-stop. A caller cannot skim, so a long answer is a wasted answer — if something
-genuinely needs more, give the first part and let them ask.
+Keep each turn to one or two sentences. Say the most useful thing and stop. Do
+not open with filler like "Sure" or "Got it", and do not reuse a phrase you have
+already said.
 
-Write plain spoken prose. No bullet points, no numbered lists, no markdown, no
-emoji, no headings, no code, no em-dashes, and no parentheses. Do not spell out
-options as "either A, B, or C"; ask about the most likely one instead.
+Say numbers as a person would. Phone numbers digit by digit, prices and times in
+full, so "rupees five hundred" and "three thirty in the afternoon".
 
-Write numbers the way you would say them. A phone number is read digit by digit.
-Prices, dates, and times are spoken in full, so "rupees five hundred" and
-"three thirty in the afternoon" rather than symbols or numerals.
+Always reply in English, including your opening line. Even when the caller
+speaks Hindi or Hinglish, understand them and answer in English. Never reply in
+Hindi, never mix a Hindi word into an English sentence, and never use another
+script. Greet with "Hello" or "Hi", never "Namaste".
 
-Speak English unless the caller speaks something else first. If they write or
-speak to you in Hindi or Hinglish, answer the same way and keep doing so until
-they switch back. An English question always gets an English answer, however
-Indian the subject is, and a greeting does not count as a language change.
-Whatever the language, write it in the Latin alphabet, romanising Hindi as "aap
-kaise hain" — the voice reading you aloud may have no idea what to do with
-another script.
-
-Everything you tell a caller has to come from these instructions or from what
-the caller themselves just told you. Those facts are yours to give freely, so
-answer straight from them. For anything else — a price, a time, an address,
-whether something is in stock or free — you simply do not have it, and the
-honest sentence is that you do not, along with who does. Never patch the gap
-with something plausible; the caller will act on it as though it were true.
-
-Never open with filler like "Sure" or "Got it" and then restate the question.
-Answer it. Do not repeat a phrase you have already used in this call, and do not
-apologise more than once for the same thing.
-
-Speech recognition will sometimes hand you a garbled or nonsensical transcript.
-When a request does not parse, ask once, briefly, for the specific part you
-missed, and never guess at a name, a number, or an amount. If the caller is
-still unclear after that, ask them to spell it or say it slower. Never invent a
-plausible-sounding answer to fill the silence.
+Everything you say must come from these instructions or from what the caller
+just told you, and those facts are yours to give freely. Anything else, a price,
+a time, whether something is available, you do not have: say so, and say who
+does. Never fill the gap with a plausible guess, because the caller will act on
+it. If a transcript is garbled, ask once about the part you missed, and never
+guess at a name or a number.
 """
 
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
@@ -115,6 +104,91 @@ def ensure_ca_bundle() -> None:
 def env(name: str) -> str | None:
     """Read an env var, treating an empty string the same as unset."""
     return os.getenv(name) or None
+
+
+def env_float(name: str, default: float) -> float:
+    raw = env(name)
+    if raw is None:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.error(f"{name}={raw!r} is not a number.")
+        sys.exit(1)
+
+
+def build_vad() -> SileroVADAnalyzer:
+    """Silero VAD, with the turn-taking thresholds exposed for tuning.
+
+    stop_secs is the one that decides how the agent feels. It is how long the
+    caller has to go quiet before we treat their turn as finished, so it is
+    added to *every* reply's latency. Drop it and the agent feels sharp but
+    starts talking over anyone who pauses to think, which on a real call means
+    interrupting someone mid-sentence while they recall a date or an amount —
+    far more damaging than a short wait. Raise it and every answer drags.
+
+    250ms is a starting point, not an answer. Tune it against recordings of the
+    people who actually call you: slower or less fluent speakers need more.
+    """
+    return SileroVADAnalyzer(
+        params=VADParams(
+            confidence=env_float("VAD_CONFIDENCE", 0.7),
+            start_secs=env_float("VAD_START_SECS", 0.2),
+            stop_secs=env_float("VAD_STOP_SECS", 0.25),
+            min_volume=env_float("VAD_MIN_VOLUME", 0.6),
+        )
+    )
+
+
+class TurnTimingLogger(BaseObserver):
+    """Append one JSON object per metric to a log that latency_summary.py reads.
+
+    Pipecat already measures each stage; this only writes what it reports to
+    disk so runs can be compared after the fact instead of by squinting at a
+    scrolling terminal. TTFA is the number that matters — time to first audio,
+    i.e. what the caller actually waits through.
+    """
+
+    def __init__(self, path: Path):
+        super().__init__()
+        self._path = path
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._run = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
+        self._seen: set[int] = set()
+
+    def _write(self, record: dict) -> None:
+        record |= {"run": self._run, "at": time.time()}
+        with self._path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(record) + "\n")
+
+    async def on_push_frame(self, data: FramePushed) -> None:
+        frame = data.frame
+        if not isinstance(frame, MetricsFrame):
+            return
+        # Every processor that passes a frame along pushes it again; count once.
+        if id(frame) in self._seen:
+            return
+        self._seen.add(id(frame))
+        for item in frame.data:
+            kind = type(item).__name__.replace("MetricsData", "").lower()
+            record = {
+                "metric": kind,
+                "processor": getattr(item, "processor", None),
+                "model": getattr(item, "model", None),
+            }
+            if hasattr(item, "ttfa"):
+                record |= {
+                    "seconds": item.ttfa,
+                    "ttfb": item.ttfb,
+                    "leading_silence": item.leading_silence,
+                }
+            # Only durations. Usage metrics also carry a `value`, but theirs is
+            # an object (token counts, audio seconds) that json would choke on.
+            elif isinstance(getattr(item, "value", None), int | float):
+                record["seconds"] = item.value
+            else:
+                continue
+            self._write(record)
 
 
 def load_system_prompt() -> str:
@@ -209,6 +283,30 @@ def speech_text_filters() -> list[BaseTextFilter]:
     return [MarkdownTextFilter(), SpokenPunctuationFilter()]
 
 
+def text_aggregation_mode() -> TextAggregationMode:
+    """How much text to gather before handing it to the voice.
+
+    "sentence" (the default) sends each sentence the moment it is complete,
+    rather than waiting for the whole reply, so the caller hears the first
+    sentence while the model is still writing the second. "token" forwards
+    tokens as they arrive, shaving off the wait for the first sentence to end
+    at the cost of the engine having less context for prosody — it has to
+    commit to an intonation before it knows where the sentence is going, which
+    is what makes fragment-level synthesis sound choppy.
+
+    Deepgram Aura streams over a websocket and buffers text on its own side
+    until we flush, so there is no character-count knob to set here; this
+    choice of boundary is the equivalent lever.
+    """
+    raw = (env("TTS_TEXT_AGGREGATION") or "sentence").strip().lower()
+    try:
+        return TextAggregationMode(raw)
+    except ValueError:
+        options = ", ".join(m.value for m in TextAggregationMode)
+        logger.error(f"TTS_TEXT_AGGREGATION={raw!r} is not one of: {options}")
+        sys.exit(1)
+
+
 def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
     provider = (env("TTS_PROVIDER") or "deepgram").lower()
     if provider not in SUPPORTED_TTS_PROVIDERS:
@@ -227,6 +325,7 @@ def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
                 model=env("ELEVENLABS_MODEL_ID"),
             ),
             text_filters=speech_text_filters(),
+            text_aggregation_mode=text_aggregation_mode(),
         )
 
     require_env("DEEPGRAM_API_KEY", "DEEPGRAM_VOICE_ID")
@@ -234,6 +333,7 @@ def build_tts() -> DeepgramTTSService | ElevenLabsTTSService:
         api_key=env("DEEPGRAM_API_KEY"),
         settings=DeepgramTTSService.Settings(voice=env("DEEPGRAM_VOICE_ID")),
         text_filters=speech_text_filters(),
+        text_aggregation_mode=text_aggregation_mode(),
     )
 
 
@@ -271,7 +371,7 @@ async def main() -> None:
     context = LLMContext()
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=SileroVADAnalyzer()),
+        user_params=LLMUserAggregatorParams(vad_analyzer=build_vad()),
     )
 
     pipeline = Pipeline(
@@ -286,15 +386,24 @@ async def main() -> None:
         ]
     )
 
+    timings = Path(env("LATENCY_LOG_PATH") or HERE.parent.parent / "logs" / "turns.jsonl")
     worker = PipelineWorker(
         pipeline,
         params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
+        observers=[TurnTimingLogger(timings)],
     )
+    logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
 
     @worker.event_handler("on_pipeline_started")
     async def greet(worker, frame):
+        # Sent as "user", not "developer". Qwen's chat template refuses a
+        # conversation with no user turn ("No user query found in messages",
+        # HTTP 400) and the LLM service is then marked unusable, so the call
+        # opens in silence. gpt-oss happens to tolerate "developer"; a role
+        # every model accepts is the portable choice, since the whole point of
+        # GROQ_MODEL_ID is being able to swap models freely.
         context.add_message(
-            {"role": "developer", "content": "Start by concisely introducing yourself."}
+            {"role": "user", "content": "Start by concisely introducing yourself."}
         )
         await worker.queue_frames([LLMRunFrame()])
 
