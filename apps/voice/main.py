@@ -26,7 +26,13 @@ from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
-from pipecat.frames.frames import LLMRunFrame, MetricsFrame
+from pipecat.frames.frames import (
+    Frame,
+    LLMRunFrame,
+    MetricsFrame,
+    TranscriptionFrame,
+    TTSUpdateSettingsFrame,
+)
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
@@ -35,11 +41,13 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMContextAggregatorPair,
     LLMUserAggregatorParams,
 )
+from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.services.sarvam.tts import SarvamTTSService
+from pipecat.services.settings import TTSSettings
 from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.utils.text.base_text_filter import BaseTextFilter
@@ -65,10 +73,15 @@ already said.
 Say numbers as a person would. Phone numbers digit by digit, prices and times in
 full, so "rupees five hundred" and "three thirty in the afternoon".
 
-Always reply in English, including your opening line. Even when the caller
-speaks Hindi or Hinglish, understand them and answer in English. Never reply in
-Hindi, never mix a Hindi word into an English sentence, and never use another
-script. Greet with "Hello" or "Hi", never "Namaste".
+Answer in whatever language the caller just used, turn by turn. If they switch
+to Hindi mid-conversation, switch with them; if they switch back, switch back.
+Judge it from their latest turn alone, not from how the call opened. Open in
+English unless they have already spoken.
+
+Write Hindi in Devanagari, not romanised, because the voice pronounces its own
+script far better than a transliteration. English stays in the Latin alphabet.
+Keep a reply in one language rather than mixing the two in a sentence, except
+for words that have no natural translation.
 
 Everything you say must come from these instructions or from what the caller
 just told you, and those facts are yours to give freely. Anything else, a price,
@@ -284,6 +297,41 @@ def speech_text_filters() -> list[BaseTextFilter]:
     return [MarkdownTextFilter(), SpokenPunctuationFilter()]
 
 
+class FollowCallerLanguage(FrameProcessor):
+    """Retune the voice to whatever language the caller just spoke.
+
+    The LLM follows the caller on its own, but the voice does not: Sarvam is
+    told a target language once, when its websocket connects, and keeps using
+    it. Left alone it would read a Hindi reply with English pronunciation
+    rules, which is worse than either language on its own.
+
+    Deepgram's nova-3 reports a detected language per utterance when it runs
+    with language=multi, so each final transcript carries the answer already.
+    When it changes, this sends the TTS a settings update, which Sarvam applies
+    by resending its config rather than reconnecting. Nothing is emitted while
+    the caller stays in one language.
+
+    Pinning DEEPGRAM_LANGUAGE to a single language turns the detection off, and
+    this then has nothing to act on.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._current = None
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame) and frame.language:
+            if frame.language != self._current:
+                logger.info(f"Caller switched to {frame.language}; retuning the voice.")
+                self._current = frame.language
+                await self.push_frame(
+                    TTSUpdateSettingsFrame(delta=TTSSettings(language=frame.language)),
+                    FrameDirection.DOWNSTREAM,
+                )
+        await self.push_frame(frame, direction)
+
+
 def text_aggregation_mode() -> TextAggregationMode:
     """How much text to gather before handing it to the voice.
 
@@ -414,10 +462,24 @@ async def main() -> None:
         user_params=LLMUserAggregatorParams(vad_analyzer=build_vad()),
     )
 
+    # Only worth doing for a voice that speaks more than one language. Aura is
+    # English-only, so retuning it would be noise; Sarvam and ElevenLabs are
+    # the multilingual ones. TTS_FOLLOW_CALLER_LANGUAGE=false opts out.
+    multilingual = (env("TTS_PROVIDER") or "deepgram").lower() in ("sarvam", "elevenlabs")
+    follow = (env("TTS_FOLLOW_CALLER_LANGUAGE") or str(multilingual)).strip().lower() == "true"
+    if follow and not multilingual:
+        logger.warning(
+            "TTS_FOLLOW_CALLER_LANGUAGE is on but this voice speaks one language; ignoring."
+        )
+        follow = False
+    if follow:
+        logger.info("Voice will follow the caller's language, turn by turn.")
+
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
+            *([FollowCallerLanguage()] if follow else []),
             user_aggregator,
             llm,
             tts,
