@@ -237,6 +237,37 @@ def require_env(*names: str) -> None:
         sys.exit(1)
 
 
+class PortableGroqLLMService(GroqLLMService):
+    """Groq, with message roles normalised to the ones every model accepts.
+
+    When the caller interrupts and the STT recognises nothing, Pipecat appends
+    a "developer" note telling the model it was cut off, which is what lets the
+    bot ask them to repeat instead of trailing into silence. That role is
+    hardcoded, and Qwen's chat template rejects it outright: HTTP 400,
+    "Unexpected message role", after which the LLM is marked unusable and the
+    call is over. Since barge-in is normal on a real call, this took the agent
+    down repeatedly in testing.
+
+    Rewriting the role here keeps Pipecat's recovery behaviour and works on any
+    model, which beats disabling the recovery or pinning ourselves to a model
+    that tolerates the role.
+    """
+
+    PORTABLE_ROLES = {"developer": "user"}
+
+    def build_chat_completion_params(self, params_from_context) -> dict:
+        params = super().build_chat_completion_params(params_from_context)
+        messages = params.get("messages")
+        if messages:
+            params["messages"] = [
+                {**m, "role": self.PORTABLE_ROLES[m["role"]]}
+                if isinstance(m, dict) and m.get("role") in self.PORTABLE_ROLES
+                else m
+                for m in messages
+            ]
+        return params
+
+
 def build_llm() -> GroqLLMService:
     provider = (env("LLM_PROVIDER") or "groq").lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
@@ -253,7 +284,7 @@ def build_llm() -> GroqLLMService:
     # word. "low" keeps that in check; non-reasoning models reject the param,
     # so it stays unset unless asked for.
     reasoning_effort = env("GROQ_REASONING_EFFORT")
-    return GroqLLMService(
+    return PortableGroqLLMService(
         api_key=env("GROQ_API_KEY"),
         settings=GroqLLMService.Settings(
             model=env("GROQ_MODEL_ID"),
