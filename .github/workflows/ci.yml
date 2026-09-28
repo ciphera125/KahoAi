@@ -12,6 +12,11 @@ jobs:
           python-version: "3.11"
           cache: pip
           cache-dependency-path: apps/voice/requirements*.txt
+      # The `local` extra (mic and speaker) pulls in pyaudio, which has no Linux
+      # wheel and must compile against PortAudio's headers. Without this the
+      # install step fails and neither lint nor tests ever run.
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y portaudio19-dev
       - name: Install dependencies
         run: pip install -r apps/voice/requirements-dev.txt
       - name: Lint
