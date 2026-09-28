@@ -27,6 +27,7 @@ from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
+    EndTaskFrame,
     Frame,
     LLMRunFrame,
     MetricsFrame,
@@ -54,8 +55,10 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
+from pipecat.utils.types import NOT_GIVEN
 from pipecat.workers.runner import WorkerRunner
 from summary import summarise_call
+from tools import DEFAULT_TIMEOUT_SECS, CallContext, build_tool_schemas, enabled_names
 from transcript import CallTranscript
 
 HERE = Path(__file__).resolve().parent
@@ -117,6 +120,24 @@ def ensure_ca_bundle() -> None:
         return
     os.environ["SSL_CERT_FILE"] = certifi.where()
     logger.debug(f"No system CA bundle at {cafile}; using certifi instead.")
+    load_certifi_into_aiohttp()
+
+
+def load_certifi_into_aiohttp() -> None:
+    """aiohttp builds its verified SSL context when it is first imported.
+
+    Pipecat imports it long before ensure_ca_bundle() runs, so SSL_CERT_FILE
+    arrives too late for it. Everything using aiohttp, notably the Plivo
+    hang-up request, then fails with CERTIFICATE_VERIFY_FAILED and a real call
+    would be left open. The context is a private module attribute, so this is
+    guarded: if aiohttp moves it, we lose only this workaround.
+    """
+    try:
+        from aiohttp import connector
+
+        connector._SSL_CONTEXT_VERIFIED.load_verify_locations(cafile=certifi.where())
+    except Exception as e:
+        logger.warning(f"Could not add certifi to aiohttp's SSL context: {e}")
 
 
 def env(name: str) -> str | None:
@@ -521,7 +542,27 @@ def build_worker(
     llm = build_llm()
     tts = build_tts()
 
-    context = LLMContext()
+    # Masked transcript of every call. See transcript.py for why it is written
+    # as text and with Aadhaar/PAN masked at the point of writing.
+    call_id = call_id or datetime.now(UTC).strftime("local-%Y%m%dT%H%M%S")
+    calls_dir = Path(env("CALL_LOG_DIR") or HERE.parent.parent / "logs" / "calls")
+    transcript = CallTranscript(call_id, calls_dir)
+    logger.info(f"Transcript -> {calls_dir}/{call_id}.jsonl (sensitive numbers masked)")
+
+    # Tools are opt-in per deployment through TOOLS_ENABLED (default: end_call).
+    call = CallContext(call_id=call_id, transcript=transcript)
+    call.hang_up = lambda: llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
+    try:
+        tool_schemas = build_tool_schemas(
+            call,
+            enabled_names(env("TOOLS_ENABLED")),
+            env_float("TOOL_TIMEOUT_SECS", DEFAULT_TIMEOUT_SECS),
+        )
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(1)
+
+    context = LLMContext(tools=tool_schemas or NOT_GIVEN)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(vad_analyzer=build_vad()),
@@ -561,11 +602,6 @@ def build_worker(
     worker = PipelineWorker(pipeline, params=params, observers=[TurnTimingLogger(timings)])
     logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
 
-    # Masked transcript of every call. See transcript.py for why it is written
-    # as text and with Aadhaar/PAN masked at the point of writing.
-    call_id = call_id or datetime.now(UTC).strftime("local-%Y%m%dT%H%M%S")
-    calls_dir = Path(env("CALL_LOG_DIR") or HERE.parent.parent / "logs" / "calls")
-    transcript = CallTranscript(call_id, calls_dir)
     transcript.attach(user_aggregator, assistant_aggregator)
 
     @worker.event_handler("on_pipeline_finished")

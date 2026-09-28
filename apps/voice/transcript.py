@@ -78,6 +78,20 @@ class CallTranscript:
         else:
             self.write(record)
 
+    def tool(self, name: str, args: dict, result: dict, seconds: float) -> None:
+        """Audit a tool call. Args and result are masked like any other text."""
+        record = {
+            "event": "tool",
+            "role": "tool",
+            "name": name,
+            "text": json.dumps({"args": args, "result": result}, ensure_ascii=False, default=str),
+            "seconds": round(seconds, 3),
+        }
+        if self._held:
+            self._held.append(record)
+        else:
+            self.write(record)
+
     def _flush(self) -> None:
         """Decide what the held fragments are, then write them."""
         held, self._held = self._held, []
@@ -90,7 +104,7 @@ class CallTranscript:
         if contains_sensitive(joined):
             self.write({"event": "turn", "role": "user", "text": joined})
             for r in held:
-                if r["role"] == "assistant":
+                if r["role"] != "user":
                     # An echo of a partial number is as sensitive as the number.
                     self.write({**r, "text": re.sub(r"\d", "X", r["text"])})
         else:

@@ -35,6 +35,9 @@ def transcript_text(path: Path) -> tuple[str, int]:
     lines, caller_turns = [], 0
     for raw in path.read_text(encoding="utf-8").splitlines():
         row = json.loads(raw)
+        if row.get("event") == "tool":
+            lines.append(f"Tool {row['name']}: {row['text']}")
+            continue
         if row.get("event") != "turn":
             continue
         who = "Caller" if row["role"] == "user" else "Kaho"

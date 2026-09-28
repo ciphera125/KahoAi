@@ -11,6 +11,7 @@ the source or the measurement behind it — add a row when you make another one.
 ```
 apps/voice/main.py       the pipeline (build_worker) and the local mic/speaker entrypoint
 apps/voice/server.py     phone entrypoint: Plivo inbound calls over a websocket
+apps/voice/tools.py      tools the agent can call (decorator registry; TOOLS_ENABLED picks them)
 apps/voice/prompts/      personas; AGENT_SYSTEM_PROMPT_PATH picks one
 scripts/                 command-line helpers
 logs/turns.jsonl         per-turn timings (gitignored)
@@ -62,6 +63,11 @@ is the only writer for call content and masks inside `write`, so a new caller
 cannot forget. Numbers arrive split across turns ("2 3 4" / "5 6 7"), so
 digit-like turns are held and checked together; do not "simplify" that back to
 per-turn masking. Any new store of call content must write through it too.
+
+**Tools are one decorated function.** See `tools.py`. What a tool does is code;
+when to use it goes in the persona, not `VOICE_RULES`. Don't call handlers around
+the wrapper: it is what gives every tool a deadline, contained errors, and a
+masked audit line in the transcript.
 
 ## Before going live with real calls
 
