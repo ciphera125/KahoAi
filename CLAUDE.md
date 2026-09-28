@@ -14,7 +14,7 @@ apps/voice/server.py     phone entrypoint: Plivo inbound calls over a websocket
 apps/voice/prompts/      personas; AGENT_SYSTEM_PROMPT_PATH picks one
 scripts/                 command-line helpers
 logs/turns.jsonl         per-turn timings (gitignored)
-logs/calls/              per-call masked transcripts (gitignored)
+logs/calls/              per-call masked transcripts and summaries (gitignored)
 ```
 
 ## The pipeline

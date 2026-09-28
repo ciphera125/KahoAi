@@ -103,8 +103,8 @@ class CallTranscript:
             self._flush()
             self.write({"event": "call_end", "unix": time.time()})
 
-    def attach(self, user_aggregator, assistant_aggregator, worker) -> None:
-        """Record from the aggregators' finalized-turn events until the worker finishes."""
+    def attach(self, user_aggregator, assistant_aggregator) -> None:
+        """Record each finalized turn. The caller decides when the call has ended."""
 
         @user_aggregator.event_handler("on_user_turn_stopped")
         async def _user(aggregator, strategy, message):
@@ -113,7 +113,3 @@ class CallTranscript:
         @assistant_aggregator.event_handler("on_assistant_turn_stopped")
         async def _assistant(aggregator, message):
             self.assistant(message.content or "", message.interrupted)
-
-        @worker.event_handler("on_pipeline_finished")
-        async def _finished(worker, frame):
-            self.end()

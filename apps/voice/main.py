@@ -55,6 +55,7 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.workers.runner import WorkerRunner
+from summary import summarise_call
 from transcript import CallTranscript
 
 HERE = Path(__file__).resolve().parent
@@ -564,7 +565,20 @@ def build_worker(
     # as text and with Aadhaar/PAN masked at the point of writing.
     call_id = call_id or datetime.now(UTC).strftime("local-%Y%m%dT%H%M%S")
     calls_dir = Path(env("CALL_LOG_DIR") or HERE.parent.parent / "logs" / "calls")
-    CallTranscript(call_id, calls_dir).attach(user_aggregator, assistant_aggregator, worker)
+    transcript = CallTranscript(call_id, calls_dir)
+    transcript.attach(user_aggregator, assistant_aggregator)
+
+    @worker.event_handler("on_pipeline_finished")
+    async def call_finished(worker, frame):
+        transcript.end()
+        # SUMMARY_ENABLED=false skips it. It runs after the call, so it adds no
+        # latency for the caller, and it never raises into teardown.
+        if (env("SUMMARY_ENABLED") or "true").strip().lower() == "true":
+            await summarise_call(
+                transcript.path,
+                env("GROQ_API_KEY"),
+                env("SUMMARY_MODEL_ID") or env("GROQ_MODEL_ID"),
+            )
     logger.info(f"Transcript -> {calls_dir}/{call_id}.jsonl (sensitive numbers masked)")
 
     @worker.event_handler("on_pipeline_started")
