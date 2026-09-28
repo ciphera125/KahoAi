@@ -19,6 +19,7 @@ is confirmed by real tests versus only simulated, and what is open.
 ```
 apps/voice/main.py       the pipeline (build_worker) and the local mic/speaker entrypoint
 apps/voice/server.py     phone entrypoint: Plivo inbound calls over a websocket
+apps/voice/resilience.py  what happens when a provider fails mid-call (backup TTS, apology, hang-up rules)
 apps/voice/tools.py      tools the agent can call (decorator registry; TOOLS_ENABLED picks them)
 apps/voice/prompts/      personas; AGENT_SYSTEM_PROMPT_PATH picks one
 scripts/                 command-line helpers
@@ -77,6 +78,15 @@ per-turn masking. Any new store of call content must write through it too.
 when to use it goes in the persona, not `VOICE_RULES`. Don't call handlers around
 the wrapper: it is what gives every tool a deadline, contained errors, and a
 masked audit line in the transcript.
+
+**Every external call has a deadline and a defined failure.** No silent
+failures: a provider that dies must never leave the caller in silence.
+`resilience.py` owns this for the call path (backup TTS, spoken apology, response
+deadline); `summary.py` and `tools.py` show the pattern for calls off the path
+(bounded retries inside a hard deadline, a marker on disk when it gives up,
+errors contained instead of raised). A new external call needs the same three
+things and a test that injects its failure. Stored or logged error text goes
+through `safe_reason`, since provider errors can echo headers and keys.
 
 ## Before going live with real calls
 

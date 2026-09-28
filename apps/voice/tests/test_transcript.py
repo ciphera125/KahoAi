@@ -96,3 +96,16 @@ def test_fragments_held_at_hangup_are_still_masked_and_written(tmp_path):
     raw = t.path.read_text(encoding="utf-8")
     assert "2 3 4 5 6 7" not in raw
     assert "XXXX XXXX 1234" in raw and "call_end" in raw
+
+
+def test_a_marker_recorded_while_number_fragments_are_held_does_not_crash(tmp_path):
+    """Found by the resilience tests: a call can fail in the middle of a read-out number."""
+    t = CallTranscript("call-9", tmp_path)
+    t.user("2 3 4 5 6 7")
+    t.event("call_failed", role="stt", reason="no usable stt service left")
+    t.user("8 9 1 2 3 4")
+    t.end()
+    rows = lines(t.path)
+    assert "call_failed" in [r["event"] for r in rows]
+    raw = t.path.read_text(encoding="utf-8")
+    assert "2 3 4 5 6 7" not in raw and "XXXX XXXX 1234" in raw

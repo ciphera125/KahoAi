@@ -61,3 +61,40 @@ def test_hostile_caller_value_is_reduced_to_digits():
     assert server.clean_caller("+91 98765-43210") == "+919876543210"
     assert server.clean_caller("<script>1</script>") == "1"
     assert server.clean_caller("") is None
+
+
+# --- provider-failure behaviour on the phone path ------------------------------
+
+import asyncio  # noqa: E402
+
+
+def test_the_answer_xml_has_a_spoken_fallback_after_the_stream(client):
+    text = client.post("/answer?token=s3cret").text
+    assert text.index("</Stream>") < text.index("<Speak")
+    assert "technical problem" in text and text.endswith("</Speak></Response>")
+
+
+def test_a_custom_failure_message_is_used_and_escaped(client, monkeypatch):
+    monkeypatch.setenv("FAILURE_MESSAGE", "Sorry & <bye>")
+    assert "<Speak language=\"en-IN\">Sorry &amp; &lt;bye&gt;</Speak>" in client.post(
+        "/answer?token=s3cret"
+    ).text
+
+
+async def test_fail_open_serializer_leaves_the_call_alone(monkeypatch):
+    hung = []
+
+    async def real_hangup(self):
+        hung.append(True)
+
+    monkeypatch.setattr(server.PlivoFrameSerializer, "_hang_up_call", real_hangup)
+    s = server.FailOpenPlivoSerializer(
+        stream_id="S", call_id="C", auth_id="a", auth_token="t"
+    )
+    s.fail_open = True
+    await s._hang_up_call()
+    assert hung == []
+    s.fail_open = False
+    await s._hang_up_call()
+    assert hung == [True]
+    await asyncio.sleep(0)

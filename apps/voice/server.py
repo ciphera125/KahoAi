@@ -29,12 +29,32 @@ from pipecat.pipeline.worker import PipelineParams
 from pipecat.serializers.plivo import PlivoFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
+from resilience import DEFAULT_APOLOGY
 
 # Silero VAD only accepts 8kHz or 16kHz. The phone line is 8kHz, and the
 # serializer upsamples it to this before it reaches VAD and STT.
 PIPELINE_INPUT_RATE = 16000
 
 app = FastAPI()
+
+
+class FailOpenPlivoSerializer(PlivoFrameSerializer):
+    """Plivo serializer that can be told not to hang up when the stream ends.
+
+    Normally the call is hung up when the pipeline ends. When our own text to
+    speech is what broke, the caller has heard nothing, so hanging up would
+    just drop the line. With `fail_open` set the stream is closed and the call
+    is left alone: Plivo carries on to the <Speak> after the <Stream> in the
+    answer XML and reads the caller an apology with its own voice.
+    """
+
+    fail_open = False
+
+    async def _hang_up_call(self):
+        if self.fail_open:
+            logger.warning("Leaving the call open for Plivo's own apology")
+            return
+        await super()._hang_up_call()
 
 
 def authorized(token: str | None) -> bool:
@@ -48,7 +68,9 @@ def clean_caller(raw: str | None) -> str | None:
     return digits or None
 
 
-def answer_xml(host: str, token: str, caller: str | None = None) -> str:
+def answer_xml(
+    host: str, token: str, caller: str | None = None, apology: str = DEFAULT_APOLOGY
+) -> str:
     """The Plivo XML that connects a live call to our websocket.
 
     The caller's number arrives on this webhook and not on the websocket, so it
@@ -61,6 +83,9 @@ def answer_xml(host: str, token: str, caller: str | None = None) -> str:
         "<Response>"
         '<Stream bidirectional="true" keepCallAlive="true" '
         f'contentType="audio/x-mulaw;rate=8000">{url}</Stream>'
+        # Reached only if the stream ends without the call being hung up, which is
+        # what a provider failure that stops us speaking does on purpose.
+        f'<Speak language="en-IN">{escape(apology)}</Speak>'
         "</Response>"
     )
 
@@ -74,7 +99,10 @@ async def answer(request: Request, token: str | None = Query(None)):
     params.update(parse_qs(request.url.query))
     caller = clean_caller((params.get("From") or [None])[0])
     logger.info(f"Inbound call from {caller or 'unknown'}")
-    return Response(answer_xml(env("PUBLIC_HOST"), token, caller), media_type="text/xml")
+    apology = env("FAILURE_MESSAGE") or DEFAULT_APOLOGY
+    return Response(
+        answer_xml(env("PUBLIC_HOST"), token, caller, apology), media_type="text/xml"
+    )
 
 
 async def read_start(websocket: WebSocket) -> dict:
@@ -102,7 +130,7 @@ async def stream(
     logger.info(f"Call {call_id} connected on stream {stream_id}")
 
     auth_id, auth_token = env("PLIVO_AUTH_ID"), env("PLIVO_AUTH_TOKEN")
-    serializer = PlivoFrameSerializer(
+    serializer = FailOpenPlivoSerializer(
         stream_id=stream_id,
         call_id=call_id,
         auth_id=auth_id,
@@ -118,9 +146,15 @@ async def stream(
             serializer=serializer,
         ),
     )
+    async def abort(spoken: bool) -> None:
+        # Not spoken means the caller heard nothing: leave the line to Plivo.
+        serializer.fail_open = not spoken
+        await worker.cancel(reason="provider failure")
+
     worker = build_worker(
         transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id,
         caller_number=clean_caller(caller),
+        on_abort=abort,
     )
 
     @transport.event_handler("on_client_disconnected")

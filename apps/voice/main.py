@@ -27,15 +27,19 @@ from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
+    EndFrame,
     EndTaskFrame,
     Frame,
     LLMRunFrame,
+    ManuallySwitchServiceFrame,
     MetricsFrame,
     TranscriptionFrame,
+    TTSSpeakFrame,
     TTSUpdateSettingsFrame,
 )
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.pipeline.service_switcher import ServiceSwitcher, ServiceSwitcherStrategyFailover
 from pipecat.pipeline.worker import PipelineParams, PipelineWorker
 from pipecat.processors.aggregators.llm_context import LLMContext
 from pipecat.processors.aggregators.llm_response_universal import (
@@ -57,7 +61,13 @@ from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.utils.types import NOT_GIVEN
 from pipecat.workers.runner import WorkerRunner
-from summary import summarise_call
+from resilience import (
+    DEFAULT_APOLOGY,
+    RESPONSE_DEADLINE_SECS,
+    BotSpeechObserver,
+    CallHealth,
+)
+from summary import DEFAULT_ATTEMPTS, DEFAULT_DEADLINE_SECS, summarise_call
 from tools import DEFAULT_TIMEOUT_SECS, CallContext, build_tool_schemas, enabled_names
 from transcript import CallTranscript
 
@@ -375,6 +385,18 @@ class FollowCallerLanguage(FrameProcessor):
         super().__init__()
         self._current = None
 
+    async def retune(self) -> None:
+        """Send the current language to the TTS again, after a backup took over.
+
+        A settings update reaches only the active service, so a backup that
+        becomes active later starts from its own default language.
+        """
+        if self._current:
+            await self.push_frame(
+                TTSUpdateSettingsFrame(delta=TTSSettings(language=self._current)),
+                FrameDirection.DOWNSTREAM,
+            )
+
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if isinstance(frame, TranscriptionFrame) and frame.language:
@@ -423,13 +445,13 @@ def env_int(name: str) -> int | None:
         sys.exit(1)
 
 
-def build_tts() -> (
-    DeepgramTTSService | ElevenLabsTTSService | SarvamTTSService | SmallestTTSService
-):
-    provider = (env("TTS_PROVIDER") or "deepgram").lower()
+def build_tts(
+    provider: str | None = None,
+) -> DeepgramTTSService | ElevenLabsTTSService | SarvamTTSService | SmallestTTSService:
+    provider = (provider or env("TTS_PROVIDER") or "deepgram").lower()
     if provider not in SUPPORTED_TTS_PROVIDERS:
         logger.error(
-            f"TTS_PROVIDER={provider!r} isn't wired up — expected one of "
+            f"TTS provider {provider!r} isn't wired up — expected one of "
             f"{', '.join(SUPPORTED_TTS_PROVIDERS)}."
         )
         sys.exit(1)
@@ -514,12 +536,17 @@ def build_worker(
     params: PipelineParams | None = None,
     call_id: str | None = None,
     caller_number: str | None = None,
+    on_abort=None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
     The local mic/speaker run and each phone call get exactly the same STT, LLM,
     TTS and turn-taking; only the transport differs. Call load_dotenv() and
     ensure_ca_bundle() first.
+
+    on_abort(spoken) replaces the default hard stop when a provider failure ends
+    the call; `spoken` is whether the caller heard an apology. The worker carries
+    its CallHealth as `worker.health`.
     """
     require_env("DEEPGRAM_API_KEY")
 
@@ -543,7 +570,7 @@ def build_worker(
     )
 
     llm = build_llm()
-    tts = build_tts()
+    tts, tts_services, switcher = build_tts_stack()
 
     # Masked transcript of every call. See transcript.py for why it is written
     # as text and with Aadhaar/PAN masked at the point of writing.
@@ -585,11 +612,13 @@ def build_worker(
     if follow:
         logger.info("Voice will follow the caller's language, turn by turn.")
 
+    follow_proc = FollowCallerLanguage() if follow else None
+
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
-            *([FollowCallerLanguage()] if follow else []),
+            *([follow_proc] if follow_proc else []),
             user_aggregator,
             llm,
             tts,
@@ -602,13 +631,60 @@ def build_worker(
     params = params or PipelineParams()
     params.enable_metrics = True
     params.enable_usage_metrics = True
-    worker = PipelineWorker(pipeline, params=params, observers=[TurnTimingLogger(timings)])
+
+    # What happens when a provider dies mid-call. See resilience.py for the rules.
+    async def say_and_end(text: str) -> None:
+        await worker.queue_frames([TTSSpeakFrame(text), EndFrame()])
+
+    async def abort(spoken: bool) -> None:
+        if on_abort is not None:
+            await on_abort(spoken)
+        else:
+            await worker.cancel(reason="provider failure")
+
+    async def switch_to(service) -> None:
+        await worker.queue_frame(ManuallySwitchServiceFrame(service=service))
+
+    health = CallHealth(
+        {"stt": [stt], "llm": [llm], "tts": tts_services},
+        record=transcript.event,
+        say_and_end=say_and_end,
+        abort=abort,
+        switch_to=switch_to if switcher else None,
+        wrappers={"tts": [switcher]} if switcher else None,
+        apology=env("FAILURE_MESSAGE") or DEFAULT_APOLOGY,
+        response_deadline_secs=env_float("RESPONSE_DEADLINE_SECS", RESPONSE_DEADLINE_SECS),
+    )
+    worker = PipelineWorker(
+        pipeline,
+        params=params,
+        observers=[TurnTimingLogger(timings), BotSpeechObserver(health)],
+    )
+    worker.health = health
     logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
 
     transcript.attach(user_aggregator, assistant_aggregator)
 
+    @worker.event_handler("on_pipeline_error")
+    async def provider_error(worker, frame):
+        await health.on_error(frame)
+
+    @user_aggregator.event_handler("on_user_turn_stopped")
+    async def reply_is_due(aggregator, strategy, message):
+        health.arm()
+
+    if switcher is not None:
+
+        @switcher.strategy.event_handler("on_service_switched")
+        async def tts_switched(strategy, service):
+            logger.warning(f"TTS switched to {service.name}")
+            transcript.event("tts_switched", to=service.name)
+            if follow_proc is not None:
+                await follow_proc.retune()
+
     @worker.event_handler("on_pipeline_finished")
     async def call_finished(worker, frame):
+        health.finished()
         transcript.end()
         # SUMMARY_ENABLED=false skips it. It runs after the call, so it adds no
         # latency for the caller, and it never raises into teardown.
@@ -617,8 +693,9 @@ def build_worker(
                 transcript.path,
                 env("GROQ_API_KEY"),
                 env("SUMMARY_MODEL_ID") or env("GROQ_MODEL_ID"),
+                attempts=int(env_float("SUMMARY_MAX_ATTEMPTS", DEFAULT_ATTEMPTS)),
+                deadline_secs=env_float("SUMMARY_DEADLINE_SECS", DEFAULT_DEADLINE_SECS),
             )
-    logger.info(f"Transcript -> {calls_dir}/{call_id}.jsonl (sensitive numbers masked)")
 
     @worker.event_handler("on_pipeline_started")
     async def greet(worker, frame):
@@ -632,8 +709,34 @@ def build_worker(
             {"role": "user", "content": "Start by concisely introducing yourself."}
         )
         await worker.queue_frames([LLMRunFrame()])
+        # The greeting is a reply too: a dead TTS would otherwise open in silence.
+        health.arm()
 
     return worker
+
+
+def build_tts_stack():
+    """The TTS for the pipeline, with an optional backup provider behind it.
+
+    Returns (processor for the pipeline, the services it can use, the switcher or None).
+    TTS_FALLBACK_PROVIDER names a second provider. Both are built at startup, so a
+    missing key stops the server at boot instead of surfacing mid-call, when the
+    primary has already failed and the backup is the only thing left.
+    """
+    primary = build_tts()
+    backup_name = (env("TTS_FALLBACK_PROVIDER") or "").strip().lower()
+    if not backup_name:
+        return primary, [primary], None
+    primary_name = (env("TTS_PROVIDER") or "deepgram").strip().lower()
+    if backup_name == primary_name:
+        logger.error(f"TTS_FALLBACK_PROVIDER={backup_name!r} is the same as TTS_PROVIDER.")
+        sys.exit(1)
+    backup = build_tts(backup_name)
+    switcher = ServiceSwitcher(
+        services=[primary, backup], strategy_type=ServiceSwitcherStrategyFailover
+    )
+    logger.info(f"TTS: {primary_name}, backed up by {backup_name}")
+    return switcher, [primary, backup], switcher
 
 
 async def main() -> None:
@@ -650,6 +753,9 @@ async def main() -> None:
 
     logger.info("Kaho AI voice agent is listening. Press Ctrl+C to stop.")
     await runner.run()
+    if worker.health.failed:
+        logger.error(f"The session ended because a provider failed: {worker.health.failed}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

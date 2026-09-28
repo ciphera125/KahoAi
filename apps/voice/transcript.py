@@ -61,7 +61,7 @@ class CallTranscript:
             return
         if self._looks_like_fragment(text):
             self._held.append({"event": "turn", "role": "user", "text": text})
-            if sum(r["role"] == "user" for r in self._held) >= _MAX_HELD:
+            if sum(r.get("role") == "user" for r in self._held) >= _MAX_HELD:
                 self._flush()
             return
         self._flush()
@@ -73,6 +73,14 @@ class CallTranscript:
             return
         record = {"event": "turn", "role": "assistant", "text": text, "interrupted": interrupted}
         # Held behind any pending fragments so the transcript stays in order.
+        if self._held:
+            self._held.append(record)
+        else:
+            self.write(record)
+
+    def event(self, name: str, **fields) -> None:
+        """A marker line (a failover, a failure). Fields are ours, never call content."""
+        record = {"event": name, **fields}
         if self._held:
             self._held.append(record)
         else:
@@ -99,14 +107,17 @@ class CallTranscript:
             return
         # Trailing punctuation would stop "5 6 7," and "8 9 1" reading as one run.
         joined = " ".join(
-            re.sub(r"[.,;]+$", "", r["text"]) for r in held if r["role"] == "user"
+            re.sub(r"[.,;]+$", "", r["text"]) for r in held if r.get("role") == "user"
         )
         if contains_sensitive(joined):
             self.write({"event": "turn", "role": "user", "text": joined})
             for r in held:
-                if r["role"] != "user":
+                if r.get("role") != "user":
                     # An echo of a partial number is as sensitive as the number.
-                    self.write({**r, "text": re.sub(r"\d", "X", r["text"])})
+                    # Markers (a failover, a failure) carry no text to mask.
+                    if "text" in r:
+                        r = {**r, "text": re.sub(r"\d", "X", r["text"])}
+                    self.write(r)
         else:
             for r in held:
                 self.write(r)
