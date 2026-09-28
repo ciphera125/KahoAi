@@ -18,7 +18,10 @@ is confirmed by real tests versus only simulated, and what is open.
 
 ```
 apps/voice/main.py       the pipeline (build_worker) and the local mic/speaker entrypoint
-apps/voice/server.py     phone entrypoint: Plivo inbound calls over a websocket
+apps/voice/server.py     phone entrypoint: Plivo calls (in and out) over a websocket
+apps/voice/duration_limit.py  hard ceiling on any call's length, enforced beside the pipeline
+apps/voice/personas.py   safe lookup of a persona by name (agent names can arrive from the network)
+scripts/call.py          dial out through Plivo into the same pipeline (--number, --agent)
 apps/voice/resilience.py  what happens when a provider fails mid-call (backup TTS, apology, hang-up rules)
 apps/voice/tools.py      tools the agent can call (decorator registry; TOOLS_ENABLED picks them)
 apps/voice/prompts/      personas; AGENT_SYSTEM_PROMPT_PATH picks one
@@ -42,6 +45,7 @@ env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
 python scripts/check_providers.py    # one real call per provider, fails loudly
 python apps/voice/main.py            # run the agent on your mic and speakers
 python apps/voice/server.py          # run it as a phone server for Plivo (see .env.example)
+python scripts/call.py --number +91XXXXXXXXXX --agent sales   # dial out; the server must be up
 python scripts/latency_summary.py    # per-stage latency from logs/turns.jsonl
 cd apps/voice && venv/bin/pytest -q
 ruff check --config apps/voice/pyproject.toml .
@@ -87,6 +91,15 @@ deadline); `summary.py` and `tools.py` show the pattern for calls off the path
 errors contained instead of raised). A new external call needs the same three
 things and a test that injects its failure. Stored or logged error text goes
 through `safe_reason`, since provider errors can echo headers and keys.
+
+**Every call has a hard maximum duration.** `MAX_CALL_DURATION_SECS` (default 600)
+is enforced by `duration_limit.py` from a timer that runs beside the pipeline, so
+a stuck pipeline cannot stop it; it hangs up via Plivo, cancels the pipeline, and
+closes the stream, each step with its own timeout. A request (`call.py
+--max-duration`) can only lower the ceiling. **Placing a call is never retried**:
+after a timeout the outcome is unknown and a retry could ring someone twice.
+Outbound calls need the person's consent (India's TRAI/DND rules); that is the
+operator's responsibility, and `call.py` says so before it dials.
 
 ## Before going live with real calls
 

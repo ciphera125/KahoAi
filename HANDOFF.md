@@ -12,7 +12,7 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-09-28, after the provider-failure work (`1064e67`). CI was confirmed
+Last updated: 2026-09-28, after outbound calling and the max-duration limit. CI was confirmed
 green on `a4e68f4` and `644a256` by reading the Actions tab through the owner's Chrome.
 
 ---
@@ -71,6 +71,9 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| (message: "Add scripts/call.py ...") | `scripts/call.py`: dial out through Plivo into the same pipeline |
+| `80fa24a` | Hard max call duration (`duration_limit.py`); outbound params on `/answer` and `/ws`; `personas.py`; `sales` persona |
+| `481621e` | HANDOFF.md update |
 | `1064e67` | Provider failure no longer leaves the caller in silence (`resilience.py`, backup TTS, apology, response deadline) |
 | `4961b56` | Summary retries on 429/5xx/timeouts within a deadline, marker file on failure |
 | `644a256` | HANDOFF.md |
@@ -83,8 +86,7 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Everything up to `644a256` is pushed; `4961b56` and `1064e67` are local until the owner
-says to push. Check `git log origin/main..` at the start of a session.
+Everything up to `481621e` is pushed. Check `git log origin/main..` at the start of a session.
 
 ## 3. What exists (file map)
 
@@ -95,9 +97,12 @@ apps/voice/tools.py      decorator tool registry; end_call, capture_lead
 apps/voice/masking.py    Aadhaar/PAN masking (any 12 digits; AAAAA9999A)
 apps/voice/transcript.py CallTranscript: only writer of call content; masks in write()
 apps/voice/summary.py    post-call LLM summary of the MASKED transcript; retry + failure marker
+apps/voice/duration_limit.py hard max call duration, enforced by a timer beside the pipeline
+apps/voice/personas.py   safe persona lookup by name (names arrive from the network)
+scripts/call.py          dial out via Plivo: --number, --agent, --max-duration, --dry-run
 apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md
-apps/voice/tests/        120 tests
+apps/voice/tests/        200 tests
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
@@ -112,7 +117,7 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 
 ## 4. Verified by Claude (simulated or offline, NOT real phone calls)
 
-- 120 tests pass; ruff clean; on Python 3.13 and 3.11, clean installs, and in a
+- 200 tests pass; ruff clean; on Python 3.13 and 3.11, clean installs, and in a
   Linux 3.11 container running the CI workflow's own steps (exit 0).
 - The server, driven by a **simulated Plivo client** over `/ws` with
   Deepgram-synthesised 8kHz mu-law speech: greeting audio returns as `playAudio`;
@@ -136,7 +141,24 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 - Backup-TTS switcher latency: no visible cost (TTS time-to-first-audio 0.51s vs
   0.56s; 4 samples each, one run each; not a rigorous benchmark).
 
+- **Max duration, live through the real pipeline:** asked for 9999s, clamped to the
+  10s server ceiling, cut off at 10.0s (the simulated client would have gone on for
+  40s); logged, `max_duration_exceeded` in the transcript, pipeline cancelled, stream
+  closed. Testing it found and fixed two defects (see the CLEANROOM row). The
+  hang-up step correctly reports `failed ... 401` with fake credentials.
+- `scripts/call.py`: input validation, dry run, preflight, dial request shape, error
+  mapping, no-retry-on-unknown-outcome and confirmation are covered by tests with a
+  mocked network. **It has never dialled a real number or fetched a real tunnel URL.**
+
 ## 5. UNVERIFIED (assume nothing)
+
+- **No outbound call has been placed.** Untested against real Plivo: the Make Call
+  request itself; the `time_limit` and `ring_timeout` parameter names (from memory of
+  the API); Plivo's `answer_method` POST to `/answer`; how the callee's audio and the
+  first greeting sound (the agent speaks first on answer). Voicemail/answering-machine
+  detection is not implemented: a call that reaches voicemail will be talked to.
+- The `sales` persona is a generic template that states no business facts; it must be
+  edited with the real business before anyone is dialled.
 
 - **Plivo `<Speak>` after a stream that ends without a hang-up.** The all-TTS-dead
   design leaves the line open on the assumption that Plivo continues to the next XML
@@ -171,7 +193,8 @@ failure), CI green. Remaining, in the owner's order:
 1. **Push `4961b56` and `1064e67`** when the owner says so, then check the Actions tab
    (they add no dependencies, and the workflow's steps passed in a clean Linux 3.11
    container).
-2. **First real inbound Plivo call.** Owner's setup steps: buy a number (Indian
+2. **First real Plivo calls, inbound and outbound.** (For outbound: `python scripts/call.py --number +91... --agent sales --dry-run` first, then without `--dry-run`; needs `PLIVO_FROM_NUMBER`.)
+   Inbound setup: Owner's setup steps: buy a number (Indian
    numbers may need KYC; a US number works for a test), `ngrok http 8000`, put
    `PUBLIC_HOST` (hostname only), `WEBHOOK_SECRET`, `PLIVO_AUTH_ID`,
    `PLIVO_AUTH_TOKEN` in `.env`, run `apps/voice/venv/bin/python apps/voice/server.py`,
@@ -225,6 +248,12 @@ failure), CI green. Remaining, in the owner's order:
   (`SARVAM_API_KEY=bad`, `DEEPGRAM_API_KEY=bad`, ...) and a simulated Plivo client
   sending 8kHz mu-law silence; look for `call_failed` in `logs/calls/<id>.jsonl`.
   Use the project's venv Python (the system one has no `websockets`).
+- Placing a call is not idempotent: `call.py` never retries, and tells you to check
+  the Plivo console after a timeout. Do not add a retry.
+- A request can only lower `MAX_CALL_DURATION_SECS`; the server clamps. The test
+  suite shrinks `duration_limit.FLOOR_SECS` to test the cutoff quickly.
+- The real-handler cutoff tests run the client in a daemon thread with a timeout, so a
+  broken cutoff fails in seconds instead of hanging pytest.
 - Free ngrok hostnames change on restart: update `PUBLIC_HOST` and the Plivo
   Answer URL together.
 
@@ -279,4 +308,15 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   overwritten). The owner's "CLAUDE.md §4" and "what done looks like" checklist are
   still not in the repo; the standard in section 0 was used.
 - Next: owner says whether to push, then the first real Plivo call.
+
+**2026-09-28, session 1 (outbound).**
+- Owner asked for `scripts/call.py`, a hard max call duration, tests proving the
+  cutoff fires, no changes to STT/TTS/summary code, and CI confirmed green.
+- `80fa24a`: `duration_limit.py`, outbound params on `/answer` and `/ws`, `personas.py`,
+  `sales.md`. Found and fixed two defects while testing the cutoff (guard cancelled
+  before its close step; Pipecat's hang-up hides failures). STT/TTS/summary code was
+  not touched (`main.py` only gained persona plumbing and exposes `worker.transcript`).
+- `call.py` commit: the dialler, its tests, docs.
+- Owner still owes: a Plivo number (`PLIVO_FROM_NUMBER`), the tunnel, and a real
+  inbound and outbound call.
 
