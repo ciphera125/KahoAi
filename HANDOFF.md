@@ -12,8 +12,10 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-09-28, after outbound calling and the max-duration limit. CI was confirmed
-green on `a4e68f4` and `644a256` by reading the Actions tab through the owner's Chrome.
+Last updated: 2026-09-28, after outbound calling and the max-duration limit
+(`c43c24a`). Everything up to `c43c24a` is pushed and CI is green on it (run #21); this
+file's own update is the commit after it. No real phone
+call, inbound or outbound, has happened yet: that is the next milestone.
 
 ---
 
@@ -34,7 +36,13 @@ green on `a4e68f4` and `644a256` by reading the Actions tab through the owner's 
   owner's real test calls.
 - **Commit and push only when asked.** Commit separately per concern, with a
   message that says what broke and why. Pushes have each been explicitly
-  requested; ask before pushing.
+  requested, with one exception: when the owner asked for CI to be confirmed green on a
+  new commit, that needs a push (Actions only runs on one), so Claude pushed and said so
+  in its report. Otherwise ask before pushing. Do not amend or rewrite pushed commits.
+- **A finished task is verified on the real thing, not just by unit tests.** Where it
+  can be done without a real phone, drive the real pipeline with real providers (bad
+  keys to inject failures, a simulated Plivo client), and mutation-check a safety test
+  by breaking the code and watching the test fail.
 - **Report honestly.** Say what was verified and how, and what was not. Never
   claim a live behaviour that was only simulated. Say "I could not check X".
 - **Do not move to new tasks while a gate is open.** The owner sets explicit
@@ -64,14 +72,18 @@ Do not redo these.
 ## 2. Repository state
 
 Branch `main`, remote `origin` = `github.com/ciphera125/KahoAi` (**private**; the
-GitHub API returns 404 unauthenticated, and `gh` is not installed, so Claude
-cannot read Actions logs; the owner has to paste them).
+GitHub API returns 404 unauthenticated and `gh` is not installed). **Claude can read
+Actions runs and logs through the owner's logged-in Chrome** (the Claude in Chrome
+tools): open `https://github.com/ciphera125/KahoAi/actions`, screenshot the run list,
+and open a run and then its job to read a failing step's log. Runs take about a minute;
+close the tab afterwards. A local equivalent for pre-checking: `git archive HEAD` into
+a temp dir and run the workflow's own steps in a `python:3.11` Docker container.
 
 Commits this project, newest first:
 
 | Commit | What |
 |---|---|
-| (message: "Add scripts/call.py ...") | `scripts/call.py`: dial out through Plivo into the same pipeline |
+| `c43c24a` | `scripts/call.py`: dial out through Plivo into the same pipeline (+ docs, tests, `.env.example`) |
 | `80fa24a` | Hard max call duration (`duration_limit.py`); outbound params on `/answer` and `/ws`; `personas.py`; `sales` persona |
 | `481621e` | HANDOFF.md update |
 | `1064e67` | Provider failure no longer leaves the caller in silence (`resilience.py`, backup TTS, apology, response deadline) |
@@ -86,7 +98,10 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Everything up to `481621e` is pushed. Check `git log origin/main..` at the start of a session.
+Everything up to `c43c24a` is pushed; the working tree was clean. CI is green on
+`a4e68f4`, `644a256`, `481621e` and `c43c24a` (runs #18 to #21); runs #15 to #17 and
+earlier-red ones were the pyaudio failure. Check `git log origin/main..` at the start of
+a session.
 
 ## 3. What exists (file map)
 
@@ -152,69 +167,81 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 
 ## 5. UNVERIFIED (assume nothing)
 
-- **No outbound call has been placed.** Untested against real Plivo: the Make Call
-  request itself; the `time_limit` and `ring_timeout` parameter names (from memory of
-  the API); Plivo's `answer_method` POST to `/answer`; how the callee's audio and the
-  first greeting sound (the agent speaks first on answer). Voicemail/answering-machine
-  detection is not implemented: a call that reaches voicemail will be talked to.
-- The `sales` persona is a generic template that states no business facts; it must be
-  edited with the real business before anyone is dialled.
+Never claim any of these works until a real call shows it.
 
-- **Plivo `<Speak>` after a stream that ends without a hang-up.** The all-TTS-dead
-  design leaves the line open on the assumption that Plivo continues to the next XML
-  element after `<Stream keepCallAlive="true">` and reads the apology. Not seen on a
-  real call. If it does not, the call just ends (still not indefinite silence).
+**The whole real-call path**
+- **No real Plivo call has happened, inbound or outbound.** Everything has been driven by
+  a simulated Plivo client over `/ws`. The `start` event parsing in `server.read_start`
+  was written from memory of Plivo's protocol; it logs the raw event at DEBUG ("Plivo
+  start event"), which is the first thing to read after a real call.
+- A real hang-up via `api.plivo.com` with real credentials has not been seen (it failed
+  with fake credentials, as expected, and the SSL problem behind an earlier failure is
+  fixed in `ensure_ca_bundle`).
+
+**Outbound (`scripts/call.py`)**
+- Never dialled a real number or fetched a real tunnel URL. Untested against real
+  Plivo: the Make Call request; the `time_limit` and `ring_timeout` parameter names
+  (from memory of the API); Plivo's POST to `/answer`; how the callee's first greeting
+  sounds (the agent speaks first on answer).
+- Voicemail / answering-machine detection is not implemented: a call that reaches
+  voicemail will be talked to.
+- The `sales` persona is a generic template that states no business facts; edit it with
+  the real business before anyone is dialled.
+
+**Provider failure**
+- **Plivo `<Speak>` after a stream that ends without a hang-up.** When every TTS is dead
+  the line is deliberately left open on the assumption that Plivo continues to the next
+  XML element after `<Stream keepCallAlive="true">` and reads the apology. If it does
+  not, the call just ends (still not indefinite silence).
 - There is **no backup STT**: a dead STT ends the call with an apology.
 - A settings update (language retune) reaches only the active TTS; after a failover
-  `FollowCallerLanguage.retune()` resends the current language, but this path has
-  only been checked in code, not with a real Hindi call.
-- Not simulated: a provider that hangs without raising (only covered by the response
-  deadline's unit tests, not a live hang).
+  `FollowCallerLanguage.retune()` resends the current language, but this has only been
+  checked in code, not with a real Hindi call.
+- A provider that hangs without raising is covered by the response deadline's unit tests
+  only, not by a live hang.
+- The summary retry's 429 path is proven with an injected clock, not yet seen against a
+  real 429 after the change (the 401 path was seen live).
 
-- **No real Plivo call has happened.** The `start` event parsing in
-  `server.read_start` was written from memory of Plivo's protocol and only tested
-  against my own simulator. It logs the raw event at DEBUG ("Plivo start event").
-- Smallest AI TTS has never run against the live API (no key when written).
+**Other**
+- Smallest AI TTS has never run against the live API (no key when written);
   `check_smallest` in `check_providers.py` is likewise untested live.
-- Plivo hang-up: it failed on this Mac with an SSL error (fixed in
-  `ensure_ca_bundle`); a real hang-up via `api.plivo.com` with real credentials
-  has not been seen.
 - Real-call behaviour of `capture_lead`: one live run stopped after the read-back,
-  probably because a second utterance interrupted the in-flight tool call
-  (Pipecat cancels function calls on interruption by default).
-- CI: green on `a4e68f4` and `644a256` (read from the Actions tab). Older runs stay
-  red for the pyaudio reason in section 7. New pushes need to be checked again.
+  probably because a second utterance interrupted the in-flight tool call (Pipecat
+  cancels function calls on interruption by default).
 
 ## 6. Open work, in the owner's order
 
-**Done this session:** the two known regressions (summary 429 retry; silence on provider
-failure), CI green. Remaining, in the owner's order:
+**Done and pushed this session:** Smallest AI TTS, Plivo inbound, masked transcripts,
+summary (+ 429 retry and failure marker), tool framework, `capture_lead`, provider-failure
+handling, HANDOFF.md, CI fixed, hard max call duration, `scripts/call.py`, `sales`
+persona. Remaining:
 
-1. **Push `4961b56` and `1064e67`** when the owner says so, then check the Actions tab
-   (they add no dependencies, and the workflow's steps passed in a clean Linux 3.11
-   container).
-2. **First real Plivo calls, inbound and outbound.** (For outbound: `python scripts/call.py --number +91... --agent sales --dry-run` first, then without `--dry-run`; needs `PLIVO_FROM_NUMBER`.)
-   Inbound setup: Owner's setup steps: buy a number (Indian
-   numbers may need KYC; a US number works for a test), `ngrok http 8000`, put
-   `PUBLIC_HOST` (hostname only), `WEBHOOK_SECRET`, `PLIVO_AUTH_ID`,
-   `PLIVO_AUTH_TOKEN` in `.env`, run `apps/voice/venv/bin/python apps/voice/server.py`,
-   set the Plivo XML application's Answer URL to
-   `https://<host>/answer?token=<secret>` (POST) and attach it to the number.
-   Owner sends the server output; look at the `Plivo start event` line and the
-   hang-up.
-3. Smallest AI vs Sarvam A/B on Hindi voices (needs `SMALLEST_API_KEY`; Pipecat
-   lists `meher`, `devansh`, `kartik`, `maithili` as Hindi-capable).
-4. Plivo V3 webhook signature validation (replaces the shared-secret token as the
-   main guard; do it against a real request).
-5. Audio recording, **blocked on a consent decision** (transcripts only for now).
-6. Outbound calls, concurrency, region (`ap-south-1`) before real traffic.
-7. Full regression across English/Hindi, inbound/outbound, once telephony works.
-8. Also owed: a proper latency benchmark for the phone path (only smoke timings and the
-   small backup-TTS comparison exist), and a PII test suite covering each store of
-   call content (transcript, summary, leads, and now the failure markers are covered
-   individually, but not as one suite).
-9. Optional hardening seen while doing the fallback: a backup STT provider; a live
-   test of a provider that hangs rather than errors.
+1. **First real Plivo calls, inbound then outbound.** The owner owes: a Plivo number
+   (Indian numbers may need KYC; a US number works for a test), `PLIVO_FROM_NUMBER`, and
+   a tunnel.
+   - Inbound: `ngrok http 8000`; in `.env` set `PUBLIC_HOST` (hostname only),
+     `WEBHOOK_SECRET`, `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`; run
+     `apps/voice/venv/bin/python apps/voice/server.py`; set the Plivo XML application's
+     Answer URL to `https://<host>/answer?token=<secret>` (POST) and attach it to the
+     number; call it. The owner sends the server output; read the `Plivo start event`
+     line and the hang-up.
+   - Outbound: with the server up, `python scripts/call.py --number +91... --agent sales
+     --dry-run`, then without `--dry-run`. Edit `prompts/sales.md` first.
+2. Smallest AI vs Sarvam A/B on Hindi voices (needs `SMALLEST_API_KEY`; Pipecat lists
+   `meher`, `devansh`, `kartik`, `maithili` as Hindi-capable).
+3. Plivo V3 webhook signature validation (replaces the shared-secret token as the main
+   guard; do it against a real request).
+4. Audio recording, **blocked on a consent decision** (transcripts only for now).
+5. Concurrency, and deploying to `ap-south-1` before real traffic (see CLAUDE.md).
+6. Full regression across English/Hindi, inbound/outbound, once telephony works.
+7. Still owed to the "done" standard: a proper latency benchmark for the phone path (only
+   smoke timings and the small backup-TTS comparison exist), and a PII test suite that
+   covers every store of call content (transcript, summary, leads, failure markers) as
+   one suite instead of individually.
+8. Optional hardening: a backup STT provider; voicemail detection for outbound calls; a
+   live test of a provider that hangs rather than errors.
+9. The owner's "CLAUDE.md §4" and "what done looks like" checklist are still not in the
+   repo (see section 0). Ask for them and add them.
 
 ## 7. Gotchas that cost time
 
@@ -254,6 +281,10 @@ failure), CI green. Remaining, in the owner's order:
   suite shrinks `duration_limit.FLOOR_SECS` to test the cutoff quickly.
 - The real-handler cutoff tests run the client in a daemon thread with a timeout, so a
   broken cutoff fails in seconds instead of hanging pytest.
+- A commit cannot cite its own hash, and `git commit --amend` changes it: do not put a
+  commit's own hash in a file inside that commit (refer to it by message instead).
+- Waiting in the browser tools: the `wait` action errors on a `chrome://newtab` tab; navigate
+  to a real page first.
 - Free ngrok hostnames change on restart: update `PUBLIC_HOST` and the Plivo
   Answer URL together.
 
@@ -316,7 +347,13 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   `sales.md`. Found and fixed two defects while testing the cutoff (guard cancelled
   before its close step; Pipecat's hang-up hides failures). STT/TTS/summary code was
   not touched (`main.py` only gained persona plumbing and exposes `worker.transcript`).
-- `call.py` commit: the dialler, its tests, docs.
-- Owner still owes: a Plivo number (`PLIVO_FROM_NUMBER`), the tunnel, and a real
-  inbound and outbound call.
+- `c43c24a`: the dialler (`scripts/call.py`), its 42 tests, docs, `.env.example`.
+  Verified: dry run and failure cases from the terminal; the real pipeline cut off a call
+  at the 10s ceiling; the workflow's steps in a clean Linux 3.11 container (200 passed).
+  Pushed both commits to get CI, which came back green (run #21).
+- Not done, deliberately: nothing dialled (no Plivo number yet); no change to STT, TTS or
+  summary code.
+- Owner still owes: a Plivo number (`PLIVO_FROM_NUMBER`), the tunnel, and a real inbound
+  and outbound call. Next session: review this file, then help run those calls and read
+  the server output.
 
