@@ -12,7 +12,8 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-09-28, after the CI fix (`a4e68f4`).
+Last updated: 2026-09-28, after the provider-failure work (`1064e67`). CI was confirmed
+green on `a4e68f4` and `644a256` by reading the Actions tab through the owner's Chrome.
 
 ---
 
@@ -70,6 +71,9 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| `1064e67` | Provider failure no longer leaves the caller in silence (`resilience.py`, backup TTS, apology, response deadline) |
+| `4961b56` | Summary retries on 429/5xx/timeouts within a deadline, marker file on failure |
+| `644a256` | HANDOFF.md |
 | `a4e68f4` | CI: install PortAudio so `pip install` can succeed |
 | `0ead791` | `capture_lead` tool; persona updates; `/answer` reads `From` from the POST form body |
 | `1fdbf3b` | Tool-calling framework (`tools.py`), `end_call`; aiohttp CA fix |
@@ -79,8 +83,8 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-All of the above are pushed. Check `git status` and `git log origin/main..` at the
-start of a session to confirm nothing local is unpushed.
+Everything up to `644a256` is pushed; `4961b56` and `1064e67` are local until the owner
+says to push. Check `git log origin/main..` at the start of a session.
 
 ## 3. What exists (file map)
 
@@ -90,9 +94,10 @@ apps/voice/server.py     FastAPI: POST/GET /answer (Plivo XML), WS /ws (audio); 
 apps/voice/tools.py      decorator tool registry; end_call, capture_lead
 apps/voice/masking.py    Aadhaar/PAN masking (any 12 digits; AAAAA9999A)
 apps/voice/transcript.py CallTranscript: only writer of call content; masks in write()
-apps/voice/summary.py    post-call LLM summary of the MASKED transcript
+apps/voice/summary.py    post-call LLM summary of the MASKED transcript; retry + failure marker
+apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md
-apps/voice/tests/        68 tests
+apps/voice/tests/        120 tests
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
@@ -101,13 +106,13 @@ CLEANROOM.md             decision log with sources; add a row for every non-obvi
 ```
 
 Pipeline: `transport -> Deepgram STT -> [FollowCallerLanguage] -> user aggregator ->
-Groq LLM -> TTS -> transport -> assistant aggregator`. `TTS_PROVIDER` is one of
+Groq LLM -> TTS (optionally a failover pair) -> transport -> assistant aggregator`. `TTS_PROVIDER` is one of
 deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 (default `end_call,capture_lead`).
 
 ## 4. Verified by Claude (simulated or offline, NOT real phone calls)
 
-- 68 tests pass; ruff clean; on Python 3.13 and 3.11, clean installs, and in a
+- 120 tests pass; ruff clean; on Python 3.13 and 3.11, clean installs, and in a
   Linux 3.11 container running the CI workflow's own steps (exit 0).
 - The server, driven by a **simulated Plivo client** over `/ws` with
   Deepgram-synthesised 8kHz mu-law speech: greeting audio returns as `playAudio`;
@@ -118,7 +123,31 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
   masking leaked it in pieces; fixed by holding number-like fragments and masking
   them as one run. Verified live: no digit or PAN letter reached disk.
 
+- **Provider failure, live, with deliberately bad keys through the phone path**
+  (simulated Plivo client, real Deepgram/Sarvam/ElevenLabs/Groq):
+  primary TTS dead with a backup -> failed over and audio was delivered; STT dead
+  -> spoken apology and hang-up attempt in 6s; every TTS dead -> the call ends in
+  2.9s with the line left open (`Leaving the call open for Plivo's own apology`).
+  The third scenario failed on the first run (37s of silence) and was fixed; the
+  three-scenario harness is in the session log below if it needs repeating.
+- Summary retry: verified live only for the non-retryable path (bad key -> 401, no
+  retry, marker written). The 429 path is covered by unit tests with an injected
+  clock, not yet seen against a real 429 after the change.
+- Backup-TTS switcher latency: no visible cost (TTS time-to-first-audio 0.51s vs
+  0.56s; 4 samples each, one run each; not a rigorous benchmark).
+
 ## 5. UNVERIFIED (assume nothing)
+
+- **Plivo `<Speak>` after a stream that ends without a hang-up.** The all-TTS-dead
+  design leaves the line open on the assumption that Plivo continues to the next XML
+  element after `<Stream keepCallAlive="true">` and reads the apology. Not seen on a
+  real call. If it does not, the call just ends (still not indefinite silence).
+- There is **no backup STT**: a dead STT ends the call with an apology.
+- A settings update (language retune) reaches only the active TTS; after a failover
+  `FollowCallerLanguage.retune()` resends the current language, but this path has
+  only been checked in code, not with a real Hindi call.
+- Not simulated: a provider that hangs without raising (only covered by the response
+  deadline's unit tests, not a live hang).
 
 - **No real Plivo call has happened.** The `start` event parsing in
   `server.read_start` was written from memory of Plivo's protocol and only tested
@@ -131,25 +160,17 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 - Real-call behaviour of `capture_lead`: one live run stopped after the read-back,
   probably because a second utterance interrupted the in-flight tool call
   (Pipecat cancels function calls on interruption by default).
-- CI on GitHub: the fix `a4e68f4` is pushed; the result is not yet confirmed.
-  Earlier runs (`eb80de9`, `1fdbf3b`, `0ead791`) were red for the pyaudio reason
-  below and will stay red; only the new head can go green.
+- CI: green on `a4e68f4` and `644a256` (read from the Actions tab). Older runs stay
+  red for the pyaudio reason in section 7. New pushes need to be checked again.
 
 ## 6. Open work, in the owner's order
 
-**Gate first:** confirm CI is green on `a4e68f4` (owner checks the Actions tab).
+**Done this session:** the two known regressions (summary 429 retry; silence on provider
+failure), CI green. Remaining, in the owner's order:
 
-1. **Two known regressions against the timeout-and-fallback standard** (owner
-   wants these fixed before the first real call):
-   - `summary.py`: no retry on a 429 (hit live: that call's summary was lost).
-     Needs bounded retry with backoff honouring `Retry-After`, a total deadline,
-     and a defined outcome when it gives up (log it, and leave a marker file so
-     the loss is visible, not silent).
-   - **STT/TTS failure means silence.** No fallback if Deepgram STT or the TTS
-     provider errors mid-call. Needs a defined behaviour (e.g. fall back to a
-     second TTS provider; if none, say a fixed apology via a pre-rendered clip or
-     a different voice, and hang up cleanly rather than staying silent), and a
-     test that injects the failure.
+1. **Push `4961b56` and `1064e67`** when the owner says so, then check the Actions tab
+   (they add no dependencies, and the workflow's steps passed in a clean Linux 3.11
+   container).
 2. **First real inbound Plivo call.** Owner's setup steps: buy a number (Indian
    numbers may need KYC; a US number works for a test), `ngrok http 8000`, put
    `PUBLIC_HOST` (hostname only), `WEBHOOK_SECRET`, `PLIVO_AUTH_ID`,
@@ -165,8 +186,12 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 5. Audio recording, **blocked on a consent decision** (transcripts only for now).
 6. Outbound calls, concurrency, region (`ap-south-1`) before real traffic.
 7. Full regression across English/Hindi, inbound/outbound, once telephony works.
-8. Also owed: a proper latency benchmark for the phone path (only smoke timings
-   exist), and a PII test suite covering each store of call content.
+8. Also owed: a proper latency benchmark for the phone path (only smoke timings and the
+   small backup-TTS comparison exist), and a PII test suite covering each store of
+   call content (transcript, summary, leads, and now the failure markers are covered
+   individually, but not as one suite).
+9. Optional hardening seen while doing the fallback: a backup STT provider; a live
+   test of a provider that hangs rather than errors.
 
 ## 7. Gotchas that cost time
 
@@ -188,6 +213,18 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 - `macOS sed` differs from GNU sed; use Python for scripted edits.
 - The default persona said "you are not a business", which made the model refuse
   callbacks; the "Leaving details" section now overrides that explicitly.
+- **Pipecat's worker `ProcessorUnusablePolicy` acts on the failed service even when
+  a backup exists**, so leave it on CONTINUE and decide in `CallHealth`.
+- An `ErrorFrame` can arrive a moment before its processor's `is_usable` flips;
+  `CallHealth` re-checks 0.5s later for that reason.
+- A `ServiceSwitcher` pushes its own error once every service behind it is dead;
+  that frame's processor is the switcher, not a service.
+- Never store or log a provider error verbatim: it can embed request headers.
+  Use `resilience.safe_reason`.
+- The live failure harness: run the real server with one service given a bad key
+  (`SARVAM_API_KEY=bad`, `DEEPGRAM_API_KEY=bad`, ...) and a simulated Plivo client
+  sending 8kHz mu-law silence; look for `call_failed` in `logs/calls/<id>.jsonl`.
+  Use the project's venv Python (the system one has no `websockets`).
 - Free ngrok hostnames change on restart: update `PUBLIC_HOST` and the Plivo
   Answer URL together.
 
@@ -227,3 +264,19 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   `capture_lead`, the tool framework or the masking.
 - Owner set the standard in section 0 and asked for this file. Next: confirm CI
   green, then fix the two regressions in section 6.1, then the real Plivo call.
+
+**2026-09-28, session 1 (continued).**
+- CI: read the real failing log through the owner's Chrome (repo is private): the
+  install step died building `pyaudio` (`portaudio.h: No such file`), exactly as
+  diagnosed from the container. `a4e68f4` went green, so did `644a256`. Also
+  confirmed from the run list that `4c89535` was already red, so CI was red before
+  this work.
+- Summary retry (`4961b56`): bounded retries, Retry-After, deadline, marker file.
+- Provider failure (`1064e67`): `resilience.py`, backup TTS, apology-then-hang-up or
+  leave-the-line-to-Plivo, error-rate check, response deadline, sanitised reasons.
+  Live failure runs found and fixed a real bug (all-TTS-dead stayed silent for 37s)
+  and two smaller ones (transcript flush crash on a held marker, marker `role`
+  overwritten). The owner's "CLAUDE.md §4" and "what done looks like" checklist are
+  still not in the repo; the standard in section 0 was used.
+- Next: owner says whether to push, then the first real Plivo call.
+
