@@ -6,6 +6,14 @@ app, no telephony. You run it, you talk into your mic, it talks back.
 Built clean-room. Every non-obvious decision is logged in `CLEANROOM.md` with
 the source or the measurement behind it — add a row when you make another one.
 
+## Session handoff
+
+`HANDOFF.md` is the memory between sessions. **At the start of a session, read it
+and check it against `git log` and `git status` before doing anything.** When
+asked to end a session or "update the handoff", rewrite its state sections and
+append to its session log. It also records the owner's working agreements, what
+is confirmed by real tests versus only simulated, and what is open.
+
 ## Layout
 
 ```
