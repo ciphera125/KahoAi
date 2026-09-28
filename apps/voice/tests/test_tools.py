@@ -105,7 +105,7 @@ def test_duplicate_registration_is_rejected(registry):
 
 
 def test_default_is_end_call_only():
-    assert tools.enabled_names(None) == ["end_call"]
+    assert tools.enabled_names(None) == ["end_call", "capture_lead"]
     assert tools.enabled_names(" a , b ,") == ["a", "b"]
 
 
@@ -129,3 +129,88 @@ async def test_end_call_without_a_hangup_hook_says_so(tmp_path):
     p, got = params()
     await run(schemas, "end_call", p)
     assert "error" in got[0]
+
+
+# --- capture_lead -----------------------------------------------------------
+
+
+@pytest.fixture
+def leads(tmp_path, monkeypatch):
+    monkeypatch.setenv("LEADS_DIR", str(tmp_path / "leads"))
+    return tmp_path / "leads"
+
+
+def lead_rows(directory):
+    files = list(directory.glob("*.jsonl"))
+    assert len(files) == 1, "one file per day"
+    return [json.loads(x) for x in files[0].read_text(encoding="utf-8").splitlines()]
+
+
+async def capture(tmp_path, caller=None, **args):
+    call, transcript = make_call(tmp_path)
+    call.caller_number = caller
+    schemas = tools.build_tool_schemas(call, ["capture_lead"])
+    p, got = params(**args)
+    await run(schemas, "capture_lead", p)
+    return got[0], transcript
+
+
+async def test_lead_is_saved_with_the_number_they_gave(leads, tmp_path):
+    result, _ = await capture(
+        tmp_path,
+        caller="+911111111111",
+        name="Asha Rao",
+        reason="wants a callback about pricing",
+        phone="98765 43210",
+    )
+    assert result == {"status": "saved", "phone_saved": "9876543210"}
+    (row,) = lead_rows(leads)
+    assert row["name"] == "Asha Rao" and row["reason"] == "wants a callback about pricing"
+    assert row["phone"] == "9876543210" and row["phone_source"] == "caller_stated"
+    assert row["call_id"] == "t1" and row["at"].endswith("+00:00")
+
+
+async def test_number_falls_back_to_the_one_they_called_from(leads, tmp_path):
+    result, _ = await capture(tmp_path, caller="+919999988888", name="Ravi", reason="interested")
+    assert result["phone_saved"] == "+919999988888"
+    (row,) = lead_rows(leads)
+    assert row["phone_source"] == "call_metadata"
+
+
+async def test_no_number_anywhere_asks_the_model_to_get_one(leads, tmp_path):
+    result, _ = await capture(tmp_path, caller=None, name="Ravi", reason="interested")
+    assert "error" in result and "number" in result["error"]
+    assert not leads.exists()
+
+
+async def test_missing_name_or_reason_is_refused(leads, tmp_path):
+    for args in ({"name": "", "reason": "x"}, {"name": "Ravi", "reason": "  "}):
+        result, _ = await capture(tmp_path, caller="+919999988888", **args)
+        assert "error" in result
+    assert not leads.exists()
+
+
+async def test_aadhaar_and_pan_in_the_reason_never_reach_disk(leads, tmp_path):
+    await capture(
+        tmp_path,
+        caller="+919999988888",
+        name="Ravi",
+        reason="loan enquiry, aadhaar 2345 6789 1234, pan ABCDE1234F",
+    )
+    raw = next(leads.glob("*.jsonl")).read_text(encoding="utf-8")
+    for secret in ("2345 6789", "234567891234", "ABCDE"):
+        assert secret not in raw
+    assert "XXXX XXXX 1234" in raw and "XXXXXX234F" in raw
+
+
+async def test_phone_numbers_are_not_masked(leads, tmp_path):
+    """A callback number is the whole point; only Aadhaar/PAN are masked."""
+    await capture(tmp_path, caller=None, name="Ravi", reason="callback", phone="+91 98765 43210")
+    (row,) = lead_rows(leads)
+    assert row["phone"] == "+919876543210"
+
+
+async def test_two_leads_append_to_the_same_days_file(leads, tmp_path):
+    await capture(tmp_path, caller="+919999988888", name="A", reason="one")
+    await capture(tmp_path, caller="+919999988888", name="B", reason="two")
+    assert [r["name"] for r in lead_rows(leads)] == ["A", "B"]

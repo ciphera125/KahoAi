@@ -27,12 +27,18 @@ without having to remember them:
 """
 
 import asyncio
+import json
+import os
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from loguru import logger
+from masking import mask_sensitive
 from pipecat.adapters.schemas.function_schema import FunctionSchema
 from pipecat.services.llm_service import FunctionCallParams
 
@@ -47,6 +53,8 @@ class CallContext:
 
     call_id: str
     transcript: Any = None
+    # The caller's own number from the telephony webhook; None on a local run.
+    caller_number: str | None = None
     # Set by whoever builds the pipeline: ends the call once queued speech is done.
     hang_up: Callable[[], Awaitable[None]] | None = None
     # Room for per-call state a deployment's tools want to share (a looked-up
@@ -102,7 +110,7 @@ def _wrap(t: Tool, call: CallContext, timeout: float):
 
 
 def enabled_names(raw: str | None) -> list[str]:
-    return [n.strip() for n in (raw or "end_call").split(",") if n.strip()]
+    return [n.strip() for n in (raw or "end_call,capture_lead").split(",") if n.strip()]
 
 
 def build_tool_schemas(
@@ -138,3 +146,69 @@ async def end_call(args: dict, call: CallContext) -> dict:
         return {"error": "this call cannot be ended from here"}
     await call.hang_up()
     return {"status": "ending"}
+
+
+def leads_dir() -> Path:
+    return Path(os.getenv("LEADS_DIR") or Path(__file__).resolve().parent.parent.parent / "leads")
+
+
+def clean_phone(raw: str | None) -> str | None:
+    """Digits with an optional leading +, or None if nothing phone-like is there."""
+    raw = (raw or "").strip()
+    digits = re.sub(r"\D", "", raw)
+    if len(digits) < 7:
+        return None
+    return ("+" if raw.startswith("+") else "") + digits
+
+
+@tool(
+    "capture_lead",
+    "Save a caller's details so a person can follow up. Use it whenever the caller "
+    "wants to leave contact information, asks for a callback, or shows interest in "
+    "something, as soon as you have their name and what they want, not only at the "
+    "end of the call. Read the details back and save only after the caller confirms.",
+    properties={
+        "name": {"type": "string", "description": "The caller's name."},
+        "reason": {
+            "type": "string",
+            "description": "One line on what they want, in their own terms.",
+        },
+        "phone": {
+            "type": "string",
+            "description": "Number to reach them on, only if they gave one different "
+            "from the one they are calling from.",
+        },
+    },
+    required=["name", "reason"],
+)
+async def capture_lead(args: dict, call: CallContext) -> dict:
+    name = " ".join(str(args.get("name") or "").split())
+    reason = " ".join(str(args.get("reason") or "").split())
+    if not name or not reason:
+        return {"error": "a name and a reason are both needed; ask the caller for the missing one"}
+
+    stated = clean_phone(args.get("phone"))
+    phone = stated or clean_phone(call.caller_number)
+    if not phone:
+        return {"error": "there is no number to reach them on; ask the caller for one"}
+
+    # Free text can hold anything a caller said, including a full Aadhaar or PAN,
+    # which must never reach disk. Same rule as the transcript, same function.
+    now = datetime.now(UTC)
+    lead = {
+        "at": now.isoformat(),
+        "call_id": call.call_id,
+        "name": mask_sensitive(name),
+        "phone": phone,
+        "phone_source": "caller_stated" if stated else "call_metadata",
+        "reason": mask_sensitive(reason),
+    }
+    directory = leads_dir()
+    directory.mkdir(parents=True, exist_ok=True)
+    # One file per day; a single small write per lead keeps concurrent calls from
+    # interleaving lines.
+    with (directory / f"{now:%Y-%m-%d}.jsonl").open("a", encoding="utf-8") as f:
+        f.write(json.dumps(lead, ensure_ascii=False) + "\n")
+    logger.info(f"Lead captured for call {call.call_id}")
+    return {"status": "saved", "phone_saved": phone}
+

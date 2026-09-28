@@ -510,7 +510,10 @@ def build_tts() -> (
 
 
 def build_worker(
-    transport, params: PipelineParams | None = None, call_id: str | None = None
+    transport,
+    params: PipelineParams | None = None,
+    call_id: str | None = None,
+    caller_number: str | None = None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -550,7 +553,7 @@ def build_worker(
     logger.info(f"Transcript -> {calls_dir}/{call_id}.jsonl (sensitive numbers masked)")
 
     # Tools are opt-in per deployment through TOOLS_ENABLED (default: end_call).
-    call = CallContext(call_id=call_id, transcript=transcript)
+    call = CallContext(call_id=call_id, transcript=transcript, caller_number=caller_number)
     call.hang_up = lambda: llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
     try:
         tool_schemas = build_tool_schemas(

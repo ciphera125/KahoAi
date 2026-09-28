@@ -31,3 +31,5 @@ npm-debug.log*
 *.wav
 *.log
 logs/
+# Captured leads hold callers' names and numbers.
+leads/

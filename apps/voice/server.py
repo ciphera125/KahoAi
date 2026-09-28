@@ -16,7 +16,9 @@ STT, LLM and TTS bills. The answer XML carries the token into the stream URL.
 import hmac
 import json
 import os
+import re
 from html import escape
+from urllib.parse import parse_qs, quote
 
 import uvicorn
 from dotenv import load_dotenv
@@ -40,9 +42,20 @@ def authorized(token: str | None) -> bool:
     return bool(secret and token) and hmac.compare_digest(token, secret)
 
 
-def answer_xml(host: str, token: str) -> str:
-    """The Plivo XML that connects a live call to our websocket."""
-    url = escape(f"wss://{host}/ws?token={token}")
+def clean_caller(raw: str | None) -> str | None:
+    """A phone number as digits with an optional +, or None. It arrives from the network."""
+    digits = re.sub(r"[^\d+]", "", raw or "")[:20]
+    return digits or None
+
+
+def answer_xml(host: str, token: str, caller: str | None = None) -> str:
+    """The Plivo XML that connects a live call to our websocket.
+
+    The caller's number arrives on this webhook and not on the websocket, so it
+    rides along on the stream URL for the tools to use.
+    """
+    query = f"token={token}" + (f"&from={quote(caller)}" if caller else "")
+    url = escape(f"wss://{host}/ws?{query}")
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
@@ -56,8 +69,12 @@ def answer_xml(host: str, token: str) -> str:
 async def answer(request: Request, token: str | None = Query(None)):
     if not authorized(token):
         return Response(status_code=403)
-    logger.info(f"Inbound call from {request.query_params.get('From', 'unknown')}")
-    return Response(answer_xml(env("PUBLIC_HOST"), token), media_type="text/xml")
+    # Plivo posts its parameters as a form body; a GET carries them in the query.
+    params = parse_qs((await request.body()).decode("utf-8", "replace"))
+    params.update(parse_qs(request.url.query))
+    caller = clean_caller((params.get("From") or [None])[0])
+    logger.info(f"Inbound call from {caller or 'unknown'}")
+    return Response(answer_xml(env("PUBLIC_HOST"), token, caller), media_type="text/xml")
 
 
 async def read_start(websocket: WebSocket) -> dict:
@@ -70,7 +87,11 @@ async def read_start(websocket: WebSocket) -> dict:
 
 
 @app.websocket("/ws")
-async def stream(websocket: WebSocket, token: str | None = Query(None)):
+async def stream(
+    websocket: WebSocket,
+    token: str | None = Query(None),
+    caller: str | None = Query(None, alias="from"),
+):
     if not authorized(token):
         await websocket.close(code=1008)
         return
@@ -98,7 +119,8 @@ async def stream(websocket: WebSocket, token: str | None = Query(None)):
         ),
     )
     worker = build_worker(
-        transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id
+        transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id,
+        caller_number=clean_caller(caller),
     )
 
     @transport.event_handler("on_client_disconnected")
