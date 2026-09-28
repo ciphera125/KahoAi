@@ -55,6 +55,7 @@ from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransp
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.workers.runner import WorkerRunner
+from transcript import CallTranscript
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_PROMPT_PATH = HERE / "prompts" / "default.md"
@@ -486,7 +487,9 @@ def build_tts() -> (
     )
 
 
-def build_worker(transport, params: PipelineParams | None = None) -> PipelineWorker:
+def build_worker(
+    transport, params: PipelineParams | None = None, call_id: str | None = None
+) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
     The local mic/speaker run and each phone call get exactly the same STT, LLM,
@@ -556,6 +559,13 @@ def build_worker(transport, params: PipelineParams | None = None) -> PipelineWor
     params.enable_usage_metrics = True
     worker = PipelineWorker(pipeline, params=params, observers=[TurnTimingLogger(timings)])
     logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
+
+    # Masked transcript of every call. See transcript.py for why it is written
+    # as text and with Aadhaar/PAN masked at the point of writing.
+    call_id = call_id or datetime.now(UTC).strftime("local-%Y%m%dT%H%M%S")
+    calls_dir = Path(env("CALL_LOG_DIR") or HERE.parent.parent / "logs" / "calls")
+    CallTranscript(call_id, calls_dir).attach(user_aggregator, assistant_aggregator, worker)
+    logger.info(f"Transcript -> {calls_dir}/{call_id}.jsonl (sensitive numbers masked)")
 
     @worker.event_handler("on_pipeline_started")
     async def greet(worker, frame):

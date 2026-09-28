@@ -14,6 +14,7 @@ apps/voice/server.py     phone entrypoint: Plivo inbound calls over a websocket
 apps/voice/prompts/      personas; AGENT_SYSTEM_PROMPT_PATH picks one
 scripts/                 command-line helpers
 logs/turns.jsonl         per-turn timings (gitignored)
+logs/calls/              per-call masked transcripts (gitignored)
 ```
 
 ## The pipeline
@@ -54,6 +55,13 @@ have.
 **Tune against measurements, not vibes.** Latency knobs are env vars precisely
 so they can be changed per deployment. Change one, make real calls, compare
 `latency_summary.py` before and after.
+
+**Anything stored goes through `masking.py`.** Aadhaar and PAN reach the agent
+live, because it has to hear them, and never reach disk in full. `CallTranscript`
+is the only writer for call content and masks inside `write`, so a new caller
+cannot forget. Numbers arrive split across turns ("2 3 4" / "5 6 7"), so
+digit-like turns are held and checked together; do not "simplify" that back to
+per-turn masking. Any new store of call content must write through it too.
 
 ## Before going live with real calls
 

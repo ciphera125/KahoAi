@@ -98,7 +98,7 @@ async def stream(websocket: WebSocket, token: str | None = Query(None)):
         ),
     )
     worker = build_worker(
-        transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE)
+        transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id
     )
 
     @transport.event_handler("on_client_disconnected")
