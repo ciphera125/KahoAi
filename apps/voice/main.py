@@ -1,7 +1,7 @@
 """Kaho AI voice agent entrypoint.
 
 A terminal-only pipeline: your mic/speakers -> Deepgram (STT) -> Groq (LLM)
--> Deepgram or ElevenLabs (TTS), with Silero VAD driving turn-taking. No web
+-> Deepgram, ElevenLabs, Sarvam or Smallest (TTS), with Silero VAD driving turn-taking. No web
 server, no browser — run it with `python main.py` (or `./scripts/run_agent.sh`)
 and talk.
 
@@ -48,7 +48,9 @@ from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.groq.llm import GroqLLMService
 from pipecat.services.sarvam.tts import SarvamTTSService
 from pipecat.services.settings import TTSSettings
+from pipecat.services.smallest.tts import SmallestTTSService
 from pipecat.services.tts_service import TextAggregationMode
+from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
@@ -94,7 +96,7 @@ guess at a name or a number.
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
 SUPPORTED_LLM_PROVIDERS = ("groq",)
-SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam")
+SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam", "smallest")
 
 
 def ensure_ca_bundle() -> None:
@@ -398,7 +400,9 @@ def env_int(name: str) -> int | None:
         sys.exit(1)
 
 
-def build_tts() -> DeepgramTTSService | ElevenLabsTTSService | SarvamTTSService:
+def build_tts() -> (
+    DeepgramTTSService | ElevenLabsTTSService | SarvamTTSService | SmallestTTSService
+):
     provider = (env("TTS_PROVIDER") or "deepgram").lower()
     if provider not in SUPPORTED_TTS_PROVIDERS:
         logger.error(
@@ -429,6 +433,32 @@ def build_tts() -> DeepgramTTSService | ElevenLabsTTSService | SarvamTTSService:
         return SarvamTTSService(
             api_key=env("SARVAM_API_KEY"),
             settings=SarvamTTSService.Settings(
+                **{k: v for k, v in options.items() if v is not None}
+            ),
+            text_filters=speech_text_filters(),
+            text_aggregation_mode=text_aggregation_mode(),
+        )
+
+    if provider == "smallest":
+        require_env("SMALLEST_API_KEY", "SMALLEST_VOICE_ID")
+        raw_language = env("SMALLEST_LANGUAGE")
+        try:
+            language = Language(raw_language) if raw_language else None
+        except ValueError:
+            logger.error(f"SMALLEST_LANGUAGE={raw_language!r} is not a language code.")
+            sys.exit(1)
+        # Unset options are left out so the service's own defaults apply, the
+        # same rule as Sarvam: a None here would be sent as an explicit null.
+        options = {
+            "voice": env("SMALLEST_VOICE_ID"),
+            "model": env("SMALLEST_MODEL_ID"),
+            "language": language,
+            "speed": env_float("SMALLEST_SPEED", 1.0),
+        }
+        return SmallestTTSService(
+            api_key=env("SMALLEST_API_KEY"),
+            max_buffer_delay_ms=env_int("SMALLEST_MAX_BUFFER_DELAY_MS"),
+            settings=SmallestTTSService.Settings(
                 **{k: v for k, v in options.items() if v is not None}
             ),
             text_filters=speech_text_filters(),
@@ -494,9 +524,10 @@ async def main() -> None:
     )
 
     # Only worth doing for a voice that speaks more than one language. Aura is
-    # English-only, so retuning it would be noise; Sarvam and ElevenLabs are
-    # the multilingual ones. TTS_FOLLOW_CALLER_LANGUAGE=false opts out.
-    multilingual = (env("TTS_PROVIDER") or "deepgram").lower() in ("sarvam", "elevenlabs")
+    # English-only, so retuning it would be noise; Sarvam, Smallest and
+    # ElevenLabs are the multilingual ones. TTS_FOLLOW_CALLER_LANGUAGE=false opts out.
+    provider = (env("TTS_PROVIDER") or "deepgram").lower()
+    multilingual = provider in ("sarvam", "smallest", "elevenlabs")
     follow = (env("TTS_FOLLOW_CALLER_LANGUAGE") or str(multilingual)).strip().lower() == "true"
     if follow and not multilingual:
         logger.warning(

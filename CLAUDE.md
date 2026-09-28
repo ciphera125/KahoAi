@@ -21,7 +21,7 @@ logs/turns.jsonl         per-turn timings (gitignored)
 
 Silero VAD decides when the caller's turn has ended. Providers are swappable by
 env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
-(deepgram or elevenlabs).
+(deepgram, elevenlabs, sarvam or smallest).
 
 ## Commands
 
@@ -66,4 +66,5 @@ voice service itself is hosted.
 
 Also still open before real traffic: telephony (no provider chosen),
 concurrency, call recording and consent, and a real answer on Hindi TTS —
-Deepgram Aura is English-only, so Hindi output needs ElevenLabs.
+Deepgram Aura is English-only, so Hindi output needs ElevenLabs, Sarvam or
+Smallest; the Hindi voice is still being chosen between Sarvam and Smallest.

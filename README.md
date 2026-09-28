@@ -4,7 +4,7 @@ A voice AI calling agent for the Indian market. Stage 1 is a terminal-only voice
 agent: no website, no telephony. Run it, talk into your mic, it talks back.
 
 **Stack:** Python · Pipecat · Silero VAD · Deepgram nova-3 (STT) · Groq (LLM) ·
-Deepgram Aura or ElevenLabs (TTS)
+Deepgram Aura, ElevenLabs, Sarvam or Smallest (TTS)
 
 ## Layout
 

@@ -9,6 +9,7 @@ Never prints API key values — only whether each call succeeded, and the
 provider's own error message if it didn't.
 """
 import io
+import json
 import os
 import sys
 import wave
@@ -236,6 +237,55 @@ def check_bedrock() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
+def check_smallest() -> tuple[bool, str]:
+    """Synthesize a short phrase over the same websocket the agent streams from.
+
+    Smallest's Pipecat service is websocket-only, so this checks the endpoint
+    and message shape the agent really uses rather than a separate REST route.
+    """
+    api_key = env("SMALLEST_API_KEY")
+    voice = env("SMALLEST_VOICE_ID")
+    missing = [
+        name
+        for name, value in [("SMALLEST_API_KEY", api_key), ("SMALLEST_VOICE_ID", voice)]
+        if not value
+    ]
+    if missing:
+        return False, f"missing: {', '.join(missing)}"
+    from websockets.exceptions import InvalidStatus, WebSocketException
+    from websockets.sync.client import connect
+
+    message = {
+        "text": "Namaste",
+        "voice_id": voice,
+        "model": env("SMALLEST_MODEL_ID") or "lightning_v3.1_pro",
+        "language": env("SMALLEST_LANGUAGE") or "hi",
+        "sample_rate": 24000,
+        "continue": False,
+        "output_format": "pcm",
+    }
+    try:
+        with connect(
+            "wss://api.smallest.ai/waves/v1/tts/live",
+            additional_headers={"Authorization": f"Bearer {api_key}"},
+            open_timeout=TIMEOUT,
+        ) as ws:
+            ws.send(json.dumps(message))
+            while True:
+                reply = json.loads(ws.recv(timeout=TIMEOUT))
+                status = reply.get("status")
+                if status == "chunk":
+                    return True, ""
+                if status == "error":
+                    return False, str(reply.get("error", reply))[:200]
+                if status == "complete":
+                    return False, "the request succeeded but returned no audio"
+    except InvalidStatus as e:
+        return False, f"HTTP {e.response.status_code}"
+    except (WebSocketException, OSError, TimeoutError) as e:
+        return False, f"{type(e).__name__}: {e}"
+
+
 LLM_CHECKS = {
     "groq": ("Groq (LLM)", check_groq),
     "bedrock": ("AWS Bedrock (LLM)", check_bedrock),
@@ -245,6 +295,7 @@ TTS_CHECKS = {
     "deepgram": ("Deepgram Aura (TTS)", check_deepgram_tts),
     "elevenlabs": ("ElevenLabs (TTS)", check_elevenlabs),
     "sarvam": ("Sarvam Bulbul (TTS)", check_sarvam),
+    "smallest": ("Smallest AI (TTS)", check_smallest),
 }
 
 
