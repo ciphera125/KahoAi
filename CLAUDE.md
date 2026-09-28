@@ -9,7 +9,8 @@ the source or the measurement behind it — add a row when you make another one.
 ## Layout
 
 ```
-apps/voice/main.py       the whole pipeline
+apps/voice/main.py       the pipeline (build_worker) and the local mic/speaker entrypoint
+apps/voice/server.py     phone entrypoint: Plivo inbound calls over a websocket
 apps/voice/prompts/      personas; AGENT_SYSTEM_PROMPT_PATH picks one
 scripts/                 command-line helpers
 logs/turns.jsonl         per-turn timings (gitignored)
@@ -27,7 +28,8 @@ env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
 
 ```bash
 python scripts/check_providers.py    # one real call per provider, fails loudly
-python apps/voice/main.py            # run the agent
+python apps/voice/main.py            # run the agent on your mic and speakers
+python apps/voice/server.py          # run it as a phone server for Plivo (see .env.example)
 python scripts/latency_summary.py    # per-stage latency from logs/turns.jsonl
 cd apps/voice && venv/bin/pytest -q
 ruff check --config apps/voice/pyproject.toml .
@@ -64,7 +66,7 @@ in local development and very visible on a call from Pune.
 Note `AWS_REGION` in `.env` is for Bedrock, a separate thing from where the
 voice service itself is hosted.
 
-Also still open before real traffic: telephony (no provider chosen),
-concurrency, call recording and consent, and a real answer on Hindi TTS —
+Also still open before real traffic: telephony is wired for Plivo inbound but has
+not taken a real call yet (and no outbound), concurrency, call recording and consent, and a real answer on Hindi TTS —
 Deepgram Aura is English-only, so Hindi output needs ElevenLabs, Sarvam or
 Smallest; the Hindi voice is still being chosen between Sarvam and Smallest.

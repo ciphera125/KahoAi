@@ -486,14 +486,14 @@ def build_tts() -> (
     )
 
 
-async def main() -> None:
-    load_dotenv()
-    ensure_ca_bundle()
-    require_env("DEEPGRAM_API_KEY")
+def build_worker(transport, params: PipelineParams | None = None) -> PipelineWorker:
+    """Everything between the transport's input and output, shared by every entry point.
 
-    transport = LocalAudioTransport(
-        LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
-    )
+    The local mic/speaker run and each phone call get exactly the same STT, LLM,
+    TTS and turn-taking; only the transport differs. Call load_dotenv() and
+    ensure_ca_bundle() first.
+    """
+    require_env("DEEPGRAM_API_KEY")
 
     # keyterm biases nova-3 toward words it would otherwise mangle: brand names,
     # drug names, place names, anything domain-specific. Worth filling in per
@@ -551,11 +551,10 @@ async def main() -> None:
     )
 
     timings = Path(env("LATENCY_LOG_PATH") or HERE.parent.parent / "logs" / "turns.jsonl")
-    worker = PipelineWorker(
-        pipeline,
-        params=PipelineParams(enable_metrics=True, enable_usage_metrics=True),
-        observers=[TurnTimingLogger(timings)],
-    )
+    params = params or PipelineParams()
+    params.enable_metrics = True
+    params.enable_usage_metrics = True
+    worker = PipelineWorker(pipeline, params=params, observers=[TurnTimingLogger(timings)])
     logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
 
     @worker.event_handler("on_pipeline_started")
@@ -570,6 +569,18 @@ async def main() -> None:
             {"role": "user", "content": "Start by concisely introducing yourself."}
         )
         await worker.queue_frames([LLMRunFrame()])
+
+    return worker
+
+
+async def main() -> None:
+    load_dotenv()
+    ensure_ca_bundle()
+
+    transport = LocalAudioTransport(
+        LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)
+    )
+    worker = build_worker(transport)
 
     runner = WorkerRunner()
     await runner.add_workers(worker)
