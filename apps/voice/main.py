@@ -240,13 +240,16 @@ class TurnTimingLogger(BaseObserver):
             self._write(record)
 
 
-def load_system_prompt() -> str:
+def load_system_prompt(persona_path: Path | None = None) -> str:
     """Build the system instruction: the voice rules, then the chosen persona.
 
     AGENT_SYSTEM_PROMPT_PATH swaps the persona without touching code — that file
     alone decides what the agent is, knows and does. See apps/voice/prompts/.
+    A per-call `persona_path` (an outbound call's agent) wins over it. This exits
+    the process on an unreadable file, so a caller taking names from the network
+    must resolve them with personas.resolve() first.
     """
-    path = Path(env("AGENT_SYSTEM_PROMPT_PATH") or DEFAULT_PROMPT_PATH)
+    path = persona_path or Path(env("AGENT_SYSTEM_PROMPT_PATH") or DEFAULT_PROMPT_PATH)
     if not path.is_absolute():
         path = (HERE / path).resolve()
     try:
@@ -303,7 +306,7 @@ class PortableGroqLLMService(GroqLLMService):
         return params
 
 
-def build_llm() -> GroqLLMService:
+def build_llm(persona_path: Path | None = None) -> GroqLLMService:
     provider = (env("LLM_PROVIDER") or "groq").lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
         logger.error(
@@ -323,7 +326,7 @@ def build_llm() -> GroqLLMService:
         api_key=env("GROQ_API_KEY"),
         settings=GroqLLMService.Settings(
             model=env("GROQ_MODEL_ID"),
-            system_instruction=load_system_prompt(),
+            system_instruction=load_system_prompt(persona_path),
             max_tokens=int(max_tokens) if max_tokens else None,
             temperature=float(temperature) if temperature else None,
             reasoning_effort=reasoning_effort,
@@ -537,6 +540,7 @@ def build_worker(
     call_id: str | None = None,
     caller_number: str | None = None,
     on_abort=None,
+    persona_path: Path | None = None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -545,8 +549,9 @@ def build_worker(
     ensure_ca_bundle() first.
 
     on_abort(spoken) replaces the default hard stop when a provider failure ends
-    the call; `spoken` is whether the caller heard an apology. The worker carries
-    its CallHealth as `worker.health`.
+    the call; `spoken` is whether the caller heard an apology. persona_path picks
+    this call's persona (an outbound agent). The worker carries its CallHealth as
+    `worker.health` and its CallTranscript as `worker.transcript`.
     """
     require_env("DEEPGRAM_API_KEY")
 
@@ -569,7 +574,7 @@ def build_worker(
         ),
     )
 
-    llm = build_llm()
+    llm = build_llm(persona_path)
     tts, tts_services, switcher = build_tts_stack()
 
     # Masked transcript of every call. See transcript.py for why it is written
@@ -661,6 +666,7 @@ def build_worker(
         observers=[TurnTimingLogger(timings), BotSpeechObserver(health)],
     )
     worker.health = health
+    worker.transcript = transcript
     logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
 
     transcript.attach(user_aggregator, assistant_aggregator)

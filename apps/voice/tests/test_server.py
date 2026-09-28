@@ -8,6 +8,7 @@ from starlette.websockets import WebSocketDisconnect
 def client(monkeypatch):
     monkeypatch.setenv("WEBHOOK_SECRET", "s3cret")
     monkeypatch.setenv("PUBLIC_HOST", "kaho.example.com")
+    monkeypatch.delenv("MAX_CALL_DURATION_SECS", raising=False)
     return TestClient(server.app)
 
 
@@ -22,7 +23,7 @@ def test_answer_streams_call_audio_to_our_websocket(client):
     assert resp.headers["content-type"].startswith("text/xml")
     assert 'bidirectional="true"' in resp.text
     assert 'contentType="audio/x-mulaw;rate=8000"' in resp.text
-    assert "/ws?token=s3cret&amp;from=%2B919999999999</Stream>" in resp.text
+    assert "/ws?token=s3cret&amp;from=%2B919999999999&amp;max=600</Stream>" in resp.text
 
 
 def test_answer_works_for_get_too(client):
@@ -48,11 +49,11 @@ def test_callers_number_from_the_post_form_rides_on_the_stream_url(client):
         content="From=%2B919876543210&To=%2B918000000000&CallUUID=abc",
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
-    assert "/ws?token=s3cret&amp;from=%2B919876543210</Stream>" in resp.text
+    assert "/ws?token=s3cret&amp;from=%2B919876543210&amp;max=600</Stream>" in resp.text
 
 
 def test_no_caller_number_means_no_from_param(client):
-    assert ">wss://kaho.example.com/ws?token=s3cret</Stream>" in client.post(
+    assert ">wss://kaho.example.com/ws?token=s3cret&amp;max=600</Stream>" in client.post(
         "/answer?token=s3cret"
     ).text
 
