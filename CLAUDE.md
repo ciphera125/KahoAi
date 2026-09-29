@@ -35,6 +35,14 @@ leads/                   captured leads, one JSON-lines file per day (gitignored
 
 `mic -> Deepgram STT -> context aggregator -> Groq LLM -> TTS -> speaker`
 
+The LLM is `qwen/qwen3.8-27b` (`GROQ_MODEL_ID`). On a 429, a 5xx or a connection
+error from it, the same turn is retried once on `openai/gpt-oss-20b`
+(`LLM_FALLBACK_MODEL_ID`, `off` disables) under its own deadline
+(`LLM_FALLBACK_TIMEOUT_SECS`, default 3s), logged as `LLM fallback` and as an
+`llm_fallback` line in the call transcript. Only after that fails does
+`resilience.py` apologise. **This covers a qwen-specific failure only, not a full
+Groq outage**: both models share one service, account and key. Known, accepted gap.
+
 Silero VAD decides when the caller's turn has ended. Providers are swappable by
 env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
 (deepgram, elevenlabs, sarvam or smallest).

@@ -22,6 +22,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import certifi
+import openai
 from dotenv import load_dotenv
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
@@ -66,6 +67,7 @@ from resilience import (
     RESPONSE_DEADLINE_SECS,
     BotSpeechObserver,
     CallHealth,
+    safe_reason,
 )
 from summary import DEFAULT_ATTEMPTS, DEFAULT_DEADLINE_SECS, summarise_call
 from tools import DEFAULT_TIMEOUT_SECS, CallContext, build_tool_schemas, enabled_names
@@ -293,6 +295,71 @@ class PortableGroqLLMService(GroqLLMService):
 
     PORTABLE_ROLES = {"developer": "user"}
 
+    # Retry the same turn on this model when the primary refuses it. Both models
+    # are Groq's, on the same account and key, so this covers a failure specific
+    # to the primary (its per-model rate limit, an outage of that model) and NOT
+    # a Groq-wide outage: that is a known, accepted gap, left to resilience.py.
+    DEFAULT_FALLBACK_MODEL = "openai/gpt-oss-20b"
+    DEFAULT_FALLBACK_TIMEOUT_SECS = 3.0
+
+    def __init__(
+        self,
+        *args,
+        fallback_model: str | None = None,
+        fallback_timeout_secs: float = DEFAULT_FALLBACK_TIMEOUT_SECS,
+        on_fallback=None,
+        **kwargs,
+    ):
+        super().__init__(*args, **kwargs)
+        self._fallback_model = fallback_model
+        self._fallback_timeout_secs = fallback_timeout_secs
+        self._on_fallback = on_fallback
+
+    @staticmethod
+    def _worth_falling_back(exc: Exception) -> bool:
+        """Rate limits, server errors and unreachable service. A 400 or 401 is
+        our request or key, and the second model would fail the same way."""
+        if isinstance(exc, openai.RateLimitError | openai.APIConnectionError):
+            return True  # APITimeoutError is a subclass of APIConnectionError
+        return isinstance(exc, openai.APIStatusError) and exc.status_code >= 500
+
+    async def get_chat_completions(self, context):
+        try:
+            return await super().get_chat_completions(context)
+        except Exception as e:
+            model = self._settings.model
+            if (
+                not self._fallback_model
+                or self._fallback_model == model
+                or not self._worth_falling_back(e)
+            ):
+                raise
+            reason = safe_reason(e)
+            logger.warning(
+                f"LLM fallback: {model} failed ({reason}); retrying this turn on "
+                f"{self._fallback_model} with a {self._fallback_timeout_secs}s deadline"
+            )
+            if self._on_fallback:
+                self._on_fallback(model, self._fallback_model, reason)
+            return await self._fallback_completions(context)
+
+    async def _fallback_completions(self, context):
+        """The same request against the fallback model, bounded by its own deadline
+        so a slow fallback cannot stretch the turn past the response deadline."""
+        adapter = self.get_llm_adapter()
+        params = self.build_chat_completion_params(
+            adapter.get_llm_invocation_params(
+                context,
+                system_instruction=self._settings.system_instruction,
+                convert_developer_to_user=not self.supports_developer_role,
+            )
+        )
+        params["model"] = self._fallback_model
+        return await asyncio.wait_for(
+            self._client.chat.completions.create(**params),
+            timeout=self._fallback_timeout_secs,
+        )
+
     def build_chat_completion_params(self, params_from_context) -> dict:
         params = super().build_chat_completion_params(params_from_context)
         messages = params.get("messages")
@@ -306,7 +373,7 @@ class PortableGroqLLMService(GroqLLMService):
         return params
 
 
-def build_llm(persona_path: Path | None = None) -> GroqLLMService:
+def build_llm(persona_path: Path | None = None, on_fallback=None) -> GroqLLMService:
     provider = (env("LLM_PROVIDER") or "groq").lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
         logger.error(
@@ -322,8 +389,17 @@ def build_llm(persona_path: Path | None = None) -> GroqLLMService:
     # word. "low" keeps that in check; non-reasoning models reject the param,
     # so it stays unset unless asked for.
     reasoning_effort = env("GROQ_REASONING_EFFORT")
+    fallback = env("LLM_FALLBACK_MODEL_ID") or PortableGroqLLMService.DEFAULT_FALLBACK_MODEL
+    fallback_secs = env("LLM_FALLBACK_TIMEOUT_SECS")
     return PortableGroqLLMService(
         api_key=env("GROQ_API_KEY"),
+        fallback_model=None if fallback.lower() in ("off", "none") else fallback,
+        fallback_timeout_secs=(
+            float(fallback_secs)
+            if fallback_secs
+            else PortableGroqLLMService.DEFAULT_FALLBACK_TIMEOUT_SECS
+        ),
+        on_fallback=on_fallback,
         settings=GroqLLMService.Settings(
             model=env("GROQ_MODEL_ID"),
             system_instruction=load_system_prompt(persona_path),
@@ -574,7 +650,13 @@ def build_worker(
         ),
     )
 
-    llm = build_llm(persona_path)
+    # The fallback callback reaches the transcript, which is created just below.
+    llm = build_llm(
+        persona_path,
+        on_fallback=lambda primary, backup, reason: transcript.event(
+            "llm_fallback", primary=primary, to=backup, reason=reason
+        ),
+    )
     tts, tts_services, switcher = build_tts_stack()
 
     # Masked transcript of every call. See transcript.py for why it is written
