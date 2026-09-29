@@ -24,7 +24,9 @@ apps/voice/duration_limit.py  hard ceiling on any call's length, enforced beside
 apps/voice/personas.py   safe lookup of a persona by name (agent names can arrive from the network)
 scripts/call.py          dial out through Plivo into the same pipeline (--number, --agent)
 apps/voice/resilience.py  what happens when a provider fails mid-call (backup TTS, apology, hang-up rules)
-apps/voice/tools.py      tools the agent can call (decorator registry; TOOLS_ENABLED picks them)
+apps/voice/tools.py      tools the agent can call (decorator registry; TOOLS_ENABLED picks them):
+                         end_call, capture_lead, transfer_to_human, call_webhook
+scripts/talk.py          local mic/speaker run (same as apps/voice/main.py)
 apps/voice/prompts/      personas; AGENT_SYSTEM_PROMPT_PATH picks one
 scripts/                 command-line helpers
 logs/turns.jsonl         per-turn timings (gitignored)

@@ -336,3 +336,70 @@ async def test_the_recorded_reason_is_the_sanitised_one():
     reason = h.events[0][1]["reason"]
     assert "secret" not in reason and "Authorization" not in reason
     h.health.finished()
+
+
+# --- a slow reply gets a spoken filler, not dead air ----------------------------
+
+
+def filler_harness(**kw):
+    spoken = []
+
+    async def say(text):
+        spoken.append(text)
+
+    h = Harness(
+        response_deadline_secs=0.3, say=say, filler="One moment.", filler_after_secs=0.05, **kw
+    )
+    return h, spoken
+
+
+async def test_a_slow_reply_gets_the_filler_line_once():
+    h, spoken = filler_harness()
+    h.health.arm()
+    await asyncio.sleep(0.15)
+    assert spoken == ["One moment."]
+    assert ("filler_spoken", {"after_secs": 0.05}) in h.events
+    h.health.finished()
+
+
+async def test_a_reply_before_the_filler_time_gets_no_filler():
+    h, spoken = filler_harness()
+    h.health.arm()
+    await asyncio.sleep(0.02)
+    h.health.disarm()
+    await asyncio.sleep(0.1)
+    assert spoken == []
+    h.health.finished()
+
+
+async def test_the_fillers_own_audio_does_not_stop_the_deadline():
+    """If the reply never comes, playing the filler must not hide that."""
+    h, spoken = filler_harness()
+    h.health.arm()
+    await asyncio.sleep(0.1)  # filler queued
+    h.health.disarm()  # the filler's audio starts: BotSpeechObserver calls this
+    await asyncio.sleep(0.9)  # the reply still never arrives
+    assert spoken and h.health.failed and h.health.failed.startswith("response:")
+    h.health.finished()
+
+
+async def test_the_real_reply_after_the_filler_disarms_normally():
+    h, spoken = filler_harness()
+    h.health.arm()
+    await asyncio.sleep(0.1)
+    h.health.disarm()  # filler audio
+    h.health.disarm()  # the real reply
+    await asyncio.sleep(0.4)
+    assert h.health.failed is None
+    h.health.finished()
+
+
+async def test_a_filler_that_cannot_be_queued_still_leaves_the_deadline_running():
+    async def broken(text):
+        raise RuntimeError("tts down")
+
+    h = Harness(response_deadline_secs=0.2, say=broken, filler_after_secs=0.05)
+    h.health.arm()
+    await asyncio.sleep(0.6)
+    assert h.health.failed and h.health.failed.startswith("response:")
+    h.health.finished()

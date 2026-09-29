@@ -27,6 +27,7 @@ without having to remember them:
 """
 
 import asyncio
+import ipaddress
 import json
 import os
 import re
@@ -37,6 +38,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 from loguru import logger
 from masking import mask_sensitive
 from pipecat.adapters.schemas.function_schema import FunctionSchema
@@ -57,6 +59,8 @@ class CallContext:
     caller_number: str | None = None
     # Set by whoever builds the pipeline: ends the call once queued speech is done.
     hang_up: Callable[[], Awaitable[None]] | None = None
+    # Set by the phone server: hands the live call to a human. None on a local run.
+    transfer: Callable[[], Awaitable[None]] | None = None
     # Room for per-call state a deployment's tools want to share (a looked-up
     # customer, a chosen slot) without reaching for globals.
     state: dict = field(default_factory=dict)
@@ -212,3 +216,91 @@ async def capture_lead(args: dict, call: CallContext) -> dict:
     logger.info(f"Lead captured for call {call.call_id}")
     return {"status": "saved", "phone_saved": phone}
 
+
+
+@tool(
+    "transfer_to_human",
+    "Hand the call to a person. Use it when the caller asks for a human, or has a "
+    "need you cannot meet. Say one short line that you are connecting them, in the "
+    "same turn.",
+)
+async def transfer_to_human(args: dict, call: CallContext) -> dict:
+    # The destination is server configuration (TRANSFER_NUMBER), never something the
+    # model or the caller can choose.
+    if call.transfer is None:
+        return {"error": "this call cannot be transferred from here; offer to take a message"}
+    await call.transfer()
+    return {"status": "transferring"}
+
+
+WEBHOOK_TIMEOUT_SECS = 6.0
+WEBHOOK_MAX_REPLY_CHARS = 500
+
+
+def webhook_url_problem(url: str | None) -> str | None:
+    """Why this URL may not be used, or None. https only; plain http for loopback dev."""
+    if not url:
+        return "TOOL_WEBHOOK_URL is not set"
+    parsed = re.match(r"^(https?)://([^/:?#]+)", url)
+    if not parsed:
+        return "TOOL_WEBHOOK_URL is not an http(s) URL"
+    scheme, host = parsed.groups()
+    if scheme == "https":
+        return None
+    try:
+        loopback = host == "localhost" or ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = False
+    return None if loopback else "TOOL_WEBHOOK_URL must be https (http only for localhost)"
+
+
+@tool(
+    "call_webhook",
+    "Save or look something up in the business's own system. Use it only for what the "
+    "persona says it is for. The answer comes back as text for you to use.",
+    properties={
+        "action": {
+            "type": "string",
+            "description": "What to do, as the persona names it, e.g. 'check_order'.",
+        },
+        "details": {
+            "type": "string",
+            "description": "The facts the action needs, in one short line.",
+        },
+    },
+    required=["action"],
+)
+async def call_webhook(args: dict, call: CallContext) -> dict:
+    """POST to one fixed URL from the environment, never one the model supplies.
+
+    The URL is configuration so a caller cannot steer the server at an internal
+    address; redirects are not followed for the same reason. The body is masked like
+    everything else that leaves our process about a caller.
+    """
+    url = os.getenv("TOOL_WEBHOOK_URL")
+    if problem := webhook_url_problem(url):
+        return {"error": f"{problem}; tell the caller you cannot do that right now"}
+    body = {
+        "call_id": call.call_id,
+        "caller": call.caller_number,
+        "action": mask_sensitive(" ".join(str(args.get("action") or "").split())),
+        "details": mask_sensitive(" ".join(str(args.get("details") or "").split())),
+    }
+    if not body["action"]:
+        return {"error": "an action is needed"}
+    headers = {}
+    if secret := os.getenv("TOOL_WEBHOOK_SECRET"):
+        headers["Authorization"] = f"Bearer {secret}"
+    timeout = aiohttp.ClientTimeout(total=WEBHOOK_TIMEOUT_SECS)
+    try:
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.post(url, json=body, headers=headers, allow_redirects=False) as r:
+                text = (await r.text())[:WEBHOOK_MAX_REPLY_CHARS]
+                status = r.status
+    except (TimeoutError, aiohttp.ClientError) as e:
+        logger.error(f"Webhook for call {call.call_id} failed: {type(e).__name__}")
+        return {"error": "the business system did not answer; tell the caller you could not"}
+    if not 200 <= status < 300:
+        logger.error(f"Webhook for call {call.call_id} returned HTTP {status}")
+        return {"error": f"the business system refused (HTTP {status}); tell the caller"}
+    return {"status": "ok", "reply": mask_sensitive(text)}

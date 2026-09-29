@@ -40,6 +40,7 @@ from resilience import DEFAULT_APOLOGY
 # Pipecat's own hang-up request has no timeout, and a hang-up that stalls is a call
 # that keeps running, so it gets one here.
 HANGUP_TIMEOUT_SECS = 10.0
+TRANSFER_TIMEOUT_SECS = 10.0
 # Three cutoff steps, each bounded by duration_limit.STEP_TIMEOUT_SECS, plus slack.
 CUTOFF_FINISH_SECS = 35.0
 
@@ -157,6 +158,45 @@ def answer_xml(
     )
 
 
+def transfer_number() -> str | None:
+    """The human line the agent may hand calls to, from TRANSFER_NUMBER only."""
+    number = clean_caller(env("TRANSFER_NUMBER"))
+    return number if number and len(re.sub(r"\D", "", number)) >= 7 else None
+
+
+def transfer_xml(number: str, message: str = "Connecting you now.") -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<Response><Speak language="en-IN">{escape(message)}</Speak>'
+        f"<Dial><Number>{escape(number)}</Number></Dial></Response>"
+    )
+
+
+@app.api_route("/transfer", methods=["GET", "POST"])
+async def transfer(token: str | None = Query(None)):
+    """Plivo fetches this after a transfer request and dials the human."""
+    number = transfer_number()
+    if not authorized(token) or not number:
+        return Response(status_code=403)
+    return Response(transfer_xml(number), media_type="text/xml")
+
+
+async def request_transfer(
+    auth_id: str, auth_token: str, call_id: str, url: str, api_base: str = "https://api.plivo.com"
+) -> None:
+    """Ask Plivo to move the live call onto `url`. Raises unless Plivo accepts it."""
+    api = f"{api_base}/v1/Account/{auth_id}/Call/{call_id}/"
+    timeout = aiohttp.ClientTimeout(total=TRANSFER_TIMEOUT_SECS)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
+        async with session.post(
+            api,
+            json={"legs": "aleg", "aleg_url": url, "aleg_method": "POST"},
+            headers={"Authorization": aiohttp.encode_basic_auth(auth_id, auth_token)},
+        ) as r:
+            if r.status not in (200, 201, 202):
+                raise RuntimeError(f"Plivo refused the transfer (HTTP {r.status})")
+
+
 @app.api_route("/answer", methods=["GET", "POST"])
 async def answer(request: Request, token: str | None = Query(None)):
     if not authorized(token):
@@ -252,6 +292,12 @@ async def stream(
             serializer=serializer,
         ),
     )
+    async def hand_to_human() -> None:
+        await request_transfer(
+            auth_id, auth_token, call_id,
+            f"https://{env('PUBLIC_HOST')}/transfer?token={quote(token)}",
+        )
+
     async def abort(spoken: bool) -> None:
         # Not spoken means the caller heard nothing: leave the line to Plivo.
         serializer.fail_open = not spoken
@@ -262,6 +308,7 @@ async def stream(
         caller_number=clean_caller(caller),
         on_abort=abort,
         persona_path=persona_path,
+        transfer=hand_to_human if transfer_number() else None,
     )
 
     async def cancel_pipeline() -> None:
@@ -313,6 +360,52 @@ async def stream(
     logger.info(f"Call {call_id} finished")
 
 
+WARMUP_TIMEOUT_SECS = 5.0
+
+
+async def warm_up() -> None:
+    """Pay the first-use costs at startup, not on the first caller's first turn.
+
+    Loads the VAD and turn-analysis models and makes one free authenticated request
+    to Groq, so DNS, TLS and the credentials are known good before a call arrives.
+    Each call still opens its own provider connections (Pipecat owns those); this
+    does not pool them. A failure is logged, never fatal: the server is still useful.
+    """
+    import time
+
+    from main import build_turn_strategies, build_vad
+
+    started = time.perf_counter()
+    build_vad()
+    build_turn_strategies().stop  # noqa: B018 - constructs the turn-analysis model
+    key = env("GROQ_API_KEY")
+    if key:
+        try:
+            timeout = aiohttp.ClientTimeout(total=WARMUP_TIMEOUT_SECS)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(
+                    "https://api.groq.com/openai/v1/models",
+                    headers={"Authorization": f"Bearer {key}"},
+                ) as r:
+                    if r.status != 200:
+                        logger.warning(f"Warm-up: Groq answered HTTP {r.status}; check the key")
+        except (TimeoutError, aiohttp.ClientError) as e:
+            logger.warning(f"Warm-up: Groq not reachable ({type(e).__name__})")
+    logger.info(f"Warm-up finished in {time.perf_counter() - started:.2f}s")
+
+
+def check_region() -> None:
+    """Real calls belong in Mumbai: every turn crosses the network three times."""
+    region = env("DEPLOY_REGION")
+    if region == "ap-south-1":
+        logger.info("Deploy region: ap-south-1")
+    else:
+        logger.warning(
+            f"DEPLOY_REGION is {region or 'unset'}, not ap-south-1. Fine for local "
+            "testing; before real traffic, host in Mumbai (see CLAUDE.md)."
+        )
+
+
 def main() -> None:
     load_dotenv()
     ensure_ca_bundle()
@@ -322,6 +415,13 @@ def main() -> None:
     except ValueError as e:
         logger.error(str(e))
         raise SystemExit(1) from e
+    check_region()
+    if transfer_number():
+        logger.info("Transfer to a human is available")
+    try:
+        asyncio.run(warm_up())
+    except Exception as e:
+        logger.warning(f"Warm-up failed: {type(e).__name__}")
     uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT") or 8000))
 
 

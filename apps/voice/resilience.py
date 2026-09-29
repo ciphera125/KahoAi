@@ -31,6 +31,10 @@ from pipecat.frames.frames import BotStartedSpeakingFrame
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.utils.errors import ErrorCategory
 
+DEFAULT_FILLER = "One moment."
+# Speak the filler if the reply is this slow, well before the deadline gives up.
+FILLER_AFTER_SECS = 3.0
+
 DEFAULT_APOLOGY = "Sorry, we're having a technical problem. Please call back in a few minutes."
 
 ERROR_THRESHOLD = 3
@@ -66,6 +70,7 @@ class CallHealth:
     say_and_end:  speak text, then end the call gracefully
     abort:        stop the call now; spoken says whether the caller heard an apology
     switch_to:    force a role over to another of its services
+    say:          speak text without ending the call (the "one moment" filler); optional
     wrappers:     role -> processors that stand for the whole role (a ServiceSwitcher).
                   Its own error means every service behind it has been tried.
     """
@@ -78,6 +83,9 @@ class CallHealth:
         say_and_end: Callable[[str], Awaitable[None]],
         abort: Callable[[bool], Awaitable[None]],
         switch_to: Callable[[object], Awaitable[None]] | None = None,
+        say: Callable[[str], Awaitable[None]] | None = None,
+        filler: str = DEFAULT_FILLER,
+        filler_after_secs: float = FILLER_AFTER_SECS,
         wrappers: dict[str, list] | None = None,
         apology: str = DEFAULT_APOLOGY,
         error_threshold: int = ERROR_THRESHOLD,
@@ -94,6 +102,12 @@ class CallHealth:
         self._say_and_end = say_and_end
         self._abort = abort
         self._switch_to = switch_to
+        self._say = say
+        self._filler = filler
+        self._filler_after = filler_after_secs
+        # True from the moment the filler is queued until its own audio starts, so
+        # that audio is not mistaken for the reply and does not disarm the deadline.
+        self._filler_pending = False
         self._apology = apology
         self._threshold = error_threshold
         self._window = error_window_secs
@@ -198,6 +212,10 @@ class CallHealth:
 
     def disarm(self, reset_misses: bool = True) -> None:
         """The bot has started speaking, so the pipeline is alive."""
+        if self._filler_pending:
+            # This is the filler's audio, not the reply: keep the deadline running.
+            self._filler_pending = False
+            return
         if self._watch_task:
             self._watch_task.cancel()
             self._watch_task = None
@@ -206,9 +224,16 @@ class CallHealth:
 
     async def _watch(self) -> None:
         try:
-            await asyncio.sleep(self._deadline)
+            remaining = self._deadline
+            # A slow reply gets a spoken "one moment" rather than dead air, once.
+            if self._say and self._filler and 0 < self._filler_after < self._deadline:
+                await asyncio.sleep(self._filler_after)
+                remaining -= self._filler_after
+                await self._speak_filler()
+            await asyncio.sleep(remaining)
         except asyncio.CancelledError:
             return
+        self._filler_pending = False
         self._watch_task = None
         if self._closed:
             return
@@ -222,6 +247,17 @@ class CallHealth:
         else:
             # Keep watching: a silent caller must not give a dead line more time.
             self.arm()
+
+    async def _speak_filler(self) -> None:
+        logger.warning(f"No reply after {self._filler_after:g}s; saying the filler line")
+        self._record("filler_spoken", after_secs=self._filler_after)
+        self._filler_pending = True
+        try:
+            await self._say(self._filler)
+        except Exception as e:
+            # The deadline still runs, so a filler that cannot be spoken costs nothing.
+            self._filler_pending = False
+            logger.error(f"Could not queue the filler line: {safe_reason(e)}")
 
     # -- ending the call -------------------------------------------------------
 

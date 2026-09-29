@@ -12,9 +12,10 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-09-28, after outbound calling and the max-duration limit
-(`c43c24a`). Everything up to `c43c24a` is pushed and CI is green on it (run #21); this
-file's own update is the commit after it. No real phone
+Last updated: 2026-09-29, after the LLM fallback (`af8e967`), the interruption filter
+(`6819dc2`) and the human-transfer / webhook / filler / warm-up work (the commit after
+those; refer to it by its message). CI was green on `af8e967` (#23) and `6819dc2` (#24);
+check the newest run at the start of the next session. No real phone
 call, inbound or outbound, has happened yet: that is the next milestone.
 
 ---
@@ -83,6 +84,9 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| (2026-09-29) | Transfer-to-human and webhook tools, spoken filler for a slow reply, startup warm-up, region warning, `scripts/talk.py` |
+| `6819dc2` | Interruption filter (`interruptions.py`): coughs and backchannel no longer interrupt the agent |
+| `af8e967` | LLM fallback: a qwen 429/5xx retries the turn on `openai/gpt-oss-20b` before the apology |
 | `c43c24a` | `scripts/call.py`: dial out through Plivo into the same pipeline (+ docs, tests, `.env.example`) |
 | `80fa24a` | Hard max call duration (`duration_limit.py`); outbound params on `/answer` and `/ws`; `personas.py`; `sales` persona |
 | `481621e` | HANDOFF.md update |
@@ -108,7 +112,9 @@ a session.
 ```
 apps/voice/main.py       build_worker(transport) = the whole pipeline; local mic entrypoint
 apps/voice/server.py     FastAPI: POST/GET /answer (Plivo XML), WS /ws (audio); token-gated
-apps/voice/tools.py      decorator tool registry; end_call, capture_lead
+apps/voice/tools.py      decorator tool registry; end_call, capture_lead, transfer_to_human, call_webhook
+apps/voice/interruptions.py  which caller sounds may interrupt (words only; backchannel ignored)
+scripts/talk.py          local mic/speaker run, same as apps/voice/main.py
 apps/voice/masking.py    Aadhaar/PAN masking (any 12 digits; AAAAA9999A)
 apps/voice/transcript.py CallTranscript: only writer of call content; masks in write()
 apps/voice/summary.py    post-call LLM summary of the MASKED transcript; retry + failure marker
@@ -117,7 +123,7 @@ apps/voice/personas.py   safe persona lookup by name (names arrive from the netw
 scripts/call.py          dial out via Plivo: --number, --agent, --max-duration, --dry-run
 apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md
-apps/voice/tests/        200 tests
+apps/voice/tests/        254 tests
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
@@ -132,7 +138,7 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 
 ## 4. Verified by Claude (simulated or offline, NOT real phone calls)
 
-- 200 tests pass; ruff clean; on Python 3.13 and 3.11, clean installs, and in a
+- 254 tests pass; ruff clean; on Python 3.13 and 3.11, clean installs, and in a
   Linux 3.11 container running the CI workflow's own steps (exit 0).
 - The server, driven by a **simulated Plivo client** over `/ws` with
   Deepgram-synthesised 8kHz mu-law speech: greeting audio returns as `playAudio`;
@@ -165,6 +171,29 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
   mapping, no-retry-on-unknown-outcome and confirmation are covered by tests with a
   mocked network. **It has never dialled a real number or fetched a real tunnel URL.**
 
+- **LLM fallback (`af8e967`):** a 429 on qwen retries the turn on gpt-oss-20b under a 3s
+  deadline, logged and recorded as `llm_fallback`; 7 tests through Pipecat's real
+  request path with the HTTP client stubbed, mutation-checked. The 429 is injected; a
+  real one was seen once in the benchmark run. Covers a qwen-specific failure only, not
+  a Groq-wide outage (same account and key): accepted gap.
+- **A/B of models (2026-09-29):** gpt-oss-20b median 0.57s to first token vs qwen 0.40s,
+  so qwen stays the default (see CLEANROOM).
+- **Interruptions (`6819dc2`):** while the agent speaks, only STT words interrupt; the
+  VAD alone (a cough) and backchannel ("okay", "hmm", "haan", "theek hai", Devanagari
+  too) do not. 22 tests run a real LLMUserAggregator; mutation-checked. NOT measured on
+  real speech: an interruption now waits for STT words (a few hundred ms) instead of the
+  first VAD frame, and the backchannel word list is our own judgement. Tune with
+  `INTERRUPT_MIN_WORDS`, `INTERRUPT_IGNORE_WORDS`, `INTERRUPT_FILTER=false`.
+- **Tools added:** `transfer_to_human` (destination is `TRANSFER_NUMBER`, never the model's
+  choice; `/transfer` route returns `<Dial>` XML; Plivo's transfer request tested against a
+  local server only) and `call_webhook` (fixed `TOOL_WEBHOOK_URL`, https only, no redirects,
+  6s deadline, masked). Both are off unless named in `TOOLS_ENABLED`.
+- **Filler line:** a reply slower than `FILLER_AFTER_SECS` (3) gets `FILLER_MESSAGE` once; its
+  audio does not disarm the response deadline. Unit tests, mutation-checked; never heard on
+  a real call.
+- **Warm-up:** server start loads the VAD/turn models (about 50ms per call anyway) and makes one
+  free Groq request; verified live. Does not pool provider connections across calls.
+
 ## 5. UNVERIFIED (assume nothing)
 
 Never claim any of these works until a real call shows it.
@@ -188,6 +217,14 @@ Never claim any of these works until a real call shows it.
 - The `sales` persona is a generic template that states no business facts; edit it with
   the real business before anyone is dialled.
 
+**New this session (all simulated or unit-tested only)**
+- Plivo's call-transfer API request (`legs=aleg`, `aleg_url`, `aleg_method`) is from memory;
+  whether Plivo then plays `<Speak>` and dials the number is unseen. A transfer also ends our
+  websocket; the disconnect handler then cancels the pipeline (not exercised for this case).
+- The filler and the interruption filter have never been heard or felt on a real call.
+- Hindi/Hinglish quality, Smallest AI, and everything in the real-call path are unchanged from
+  above.
+
 **Provider failure**
 - **Plivo `<Speak>` after a stream that ends without a hang-up.** When every TTS is dead
   the line is deliberately left open on the assumption that Plivo continues to the next
@@ -210,6 +247,23 @@ Never claim any of these works until a real call shows it.
   cancels function calls on interruption by default).
 
 ## 6. Open work, in the owner's order
+
+**Ready for when the owner has Plivo (the owner is doing the Plivo setup themselves; give
+Claude the auth id/token, number and tunnel and item 1 starts).** Also needed for the new
+tools: `TRANSFER_NUMBER` (a human's number) and, for webhooks, `TOOL_WEBHOOK_URL`.
+
+**Gaps against the owner's original 15-item build plan (audit 2026-09-29), not built:**
+- Bedrock/Claude Haiku 4.5 is not the LLM (Groq qwen is); `BEDROCK` is stubbed.
+- Prompt caching (not applicable to the current Groq path; unmeasured).
+- Per-agent language setting in a config file, and 5 sample conversations per language with a
+  pronunciation check: needs a person's ear. Hindi voice choice (Sarvam vs Smallest) is open.
+- Audio recording of calls: blocked on the consent decision.
+- A real local database: tools write JSON-lines files.
+- Backup STT.
+- The 20 inbound + 20 outbound test calls, the top-5 fix pass, and Mumbai (ap-south-1)
+  hosting: need real calls and a deployment.
+- Connection reuse across calls.
+
 
 **Done and pushed this session:** Smallest AI TTS, Plivo inbound, masked transcripts,
 summary (+ 429 retry and failure marker), tool framework, `capture_lead`, provider-failure
@@ -357,3 +411,17 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   and outbound call. Next session: review this file, then help run those calls and read
   the server output.
 
+**2026-09-29.**
+- Read the handoff, checked against git (clean, level with origin). The owner's pasted Groq
+  switch did not match the repo (Groq/qwen was already the LLM; no CLAUDE.md section 3); asked,
+  and the owner chose to A/B gpt-oss-20b. It was slower (0.57s vs 0.40s), so qwen stays.
+- `af8e967`: LLM fallback to gpt-oss-20b on a qwen 429/5xx/connection error. CI #23 green.
+- `6819dc2`: interruption filter (`interruptions.py`). Pipecat already did the cancelling; what
+  was missing was telling noise and backchannel from a real interruption. CI #24 green.
+- Audited the owner's 15-item plan against the repo and reported what is done, simulated and
+  missing (see section 6).
+- Then, with Plivo left to the owner: `transfer_to_human`, `call_webhook`, the slow-reply
+  filler, server warm-up and region warning, `scripts/talk.py`; 254 tests, ruff clean. Not
+  built, deliberately: language config (needs a listener), recording (consent), Bedrock.
+- Next session: review this file, check CI on the newest commit, then the first real Plivo
+  calls once the owner supplies the credentials.

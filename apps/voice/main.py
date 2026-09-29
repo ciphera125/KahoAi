@@ -66,6 +66,8 @@ from pipecat.utils.types import NOT_GIVEN
 from pipecat.workers.runner import WorkerRunner
 from resilience import (
     DEFAULT_APOLOGY,
+    DEFAULT_FILLER,
+    FILLER_AFTER_SECS,
     RESPONSE_DEADLINE_SECS,
     BotSpeechObserver,
     CallHealth,
@@ -635,6 +637,7 @@ def build_worker(
     caller_number: str | None = None,
     on_abort=None,
     persona_path: Path | None = None,
+    transfer=None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -645,7 +648,8 @@ def build_worker(
     on_abort(spoken) replaces the default hard stop when a provider failure ends
     the call; `spoken` is whether the caller heard an apology. persona_path picks
     this call's persona (an outbound agent). The worker carries its CallHealth as
-    `worker.health` and its CallTranscript as `worker.transcript`.
+    `worker.health` and its CallTranscript as `worker.transcript`. `transfer` is an
+    async callable that hands the live call to a human (phone server only).
     """
     require_env("DEEPGRAM_API_KEY")
 
@@ -686,6 +690,7 @@ def build_worker(
 
     # Tools are opt-in per deployment through TOOLS_ENABLED (default: end_call).
     call = CallContext(call_id=call_id, transcript=transcript, caller_number=caller_number)
+    call.transfer = transfer
     call.hang_up = lambda: llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
     try:
         tool_schemas = build_tool_schemas(
@@ -749,6 +754,9 @@ def build_worker(
         else:
             await worker.cancel(reason="provider failure")
 
+    async def say(text: str) -> None:
+        await worker.queue_frame(TTSSpeakFrame(text))
+
     async def switch_to(service) -> None:
         await worker.queue_frame(ManuallySwitchServiceFrame(service=service))
 
@@ -758,6 +766,9 @@ def build_worker(
         say_and_end=say_and_end,
         abort=abort,
         switch_to=switch_to if switcher else None,
+        say=say,
+        filler=env("FILLER_MESSAGE") or DEFAULT_FILLER,
+        filler_after_secs=env_float("FILLER_AFTER_SECS", FILLER_AFTER_SECS),
         wrappers={"tts": [switcher]} if switcher else None,
         apology=env("FAILURE_MESSAGE") or DEFAULT_APOLOGY,
         response_deadline_secs=env_float("RESPONSE_DEADLINE_SECS", RESPONSE_DEADLINE_SECS),
