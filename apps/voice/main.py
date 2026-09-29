@@ -24,6 +24,7 @@ from pathlib import Path
 import certifi
 import openai
 from dotenv import load_dotenv
+from interruptions import build_start_strategies
 from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -58,6 +59,7 @@ from pipecat.services.smallest.tts import SmallestTTSService
 from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.utils.types import NOT_GIVEN
@@ -187,6 +189,22 @@ def build_vad() -> SileroVADAnalyzer:
             start_secs=env_float("VAD_START_SECS", 0.2),
             stop_secs=env_float("VAD_STOP_SECS", 0.25),
             min_volume=env_float("VAD_MIN_VOLUME", 0.6),
+        )
+    )
+
+
+def build_turn_strategies() -> UserTurnStrategies:
+    """What counts as the caller taking the turn, and so as interrupting the agent.
+
+    See interruptions.py. Only the start strategies are ours; how a turn *ends*
+    stays Pipecat's default (smart-turn analysis on top of the VAD's stop_secs).
+    """
+    ignore = frozenset(w.strip().lower() for w in (env("INTERRUPT_IGNORE_WORDS") or "").split(","))
+    return UserTurnStrategies(
+        start=build_start_strategies(
+            enabled=(env("INTERRUPT_FILTER") or "true").strip().lower() != "false",
+            min_words=int(env_float("INTERRUPT_MIN_WORDS", 1)),
+            extra_ignore=ignore - {""},
         )
     )
 
@@ -682,7 +700,9 @@ def build_worker(
     context = LLMContext(tools=tool_schemas or NOT_GIVEN)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
-        user_params=LLMUserAggregatorParams(vad_analyzer=build_vad()),
+        user_params=LLMUserAggregatorParams(
+            vad_analyzer=build_vad(), user_turn_strategies=build_turn_strategies()
+        ),
     )
 
     # Only worth doing for a voice that speaks more than one language. Aura is

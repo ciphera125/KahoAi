@@ -19,6 +19,7 @@ is confirmed by real tests versus only simulated, and what is open.
 ```
 apps/voice/main.py       the pipeline (build_worker) and the local mic/speaker entrypoint
 apps/voice/server.py     phone entrypoint: Plivo calls (in and out) over a websocket
+apps/voice/interruptions.py  which caller sounds may interrupt the agent (words, not noise or backchannel)
 apps/voice/duration_limit.py  hard ceiling on any call's length, enforced beside the pipeline
 apps/voice/personas.py   safe lookup of a persona by name (agent names can arrive from the network)
 scripts/call.py          dial out through Plivo into the same pipeline (--number, --agent)
@@ -42,6 +43,13 @@ error from it, the same turn is retried once on `openai/gpt-oss-20b`
 `llm_fallback` line in the call transcript. Only after that fails does
 `resilience.py` apologise. **This covers a qwen-specific failure only, not a full
 Groq outage**: both models share one service, account and key. Known, accepted gap.
+
+Barge-in is Pipecat's (a started caller turn broadcasts an interruption that cancels
+the LLM and TTS); `interruptions.py` decides what starts one. While the agent speaks,
+only words interrupt: the VAD alone (a cough) never does, and backchannel ("okay",
+"hmm", "haan") is ignored. Tune with `INTERRUPT_MIN_WORDS`, `INTERRUPT_IGNORE_WORDS`;
+`INTERRUPT_FILTER=false` restores Pipecat's default. Cost: an interruption waits for
+STT words (a few hundred ms) instead of the first VAD frame.
 
 Silero VAD decides when the caller's turn has ended. Providers are swappable by
 env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
