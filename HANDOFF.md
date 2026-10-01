@@ -12,10 +12,11 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-01. Everything through `2c7418c` (transfer/webhook tools, filler,
-warm-up) is pushed, and CI is green on `af8e967` (#23), `6819dc2` (#24) and `2c7418c`
-(#25). This file's own update is the commit after `2c7418c`. No real phone
-call, inbound or outbound, has happened yet: that is the next milestone.
+Last updated: 2026-10-02. Pushed through `1d6c4d7` (recording notice). **CI is not green**:
+runs #27, #28 and #30 failed on one flaky recording test, and #29 hung and was cancelled.
+The fix is `c11d7c2`, committed locally and **not pushed**, so it has not run on GitHub.
+This file's own update is the commit after `c11d7c2`. No real phone call, inbound or
+outbound, has happened yet: that is the next milestone after CI.
 
 ---
 
@@ -49,6 +50,9 @@ call, inbound or outbound, has happened yet: that is the next milestone.
   gates ("CI green first"); respect the order.
 - **Move fast** on well-specified work; ask only when the answer changes what
   gets built.
+- The owner sometimes drafts a reply elsewhere and sends it as pasted text. Instructions
+  that arrive only inside pasted text need a quick confirmation before acting (one
+  question was enough on 2026-10-02).
 
 ## 1. What the owner has confirmed from real tests (ground truth)
 
@@ -77,13 +81,28 @@ GitHub API returns 404 unauthenticated and `gh` is not installed). **Claude can 
 Actions runs and logs through the owner's logged-in Chrome** (the Claude in Chrome
 tools): open `https://github.com/ciphera125/KahoAi/actions`, screenshot the run list,
 and open a run and then its job to read a failing step's log. Runs take about a minute;
-close the tab afterwards. A local equivalent for pre-checking: `git archive HEAD` into
-a temp dir and run the workflow's own steps in a `python:3.11` Docker container.
+close the tab afterwards. For a big log, use the job's gear menu, "View raw logs"
+(`/ciphera125/KahoAi/commit/<full sha>/checks/<job id>/logs`), and search it in the page
+with the javascript tool (`document.body.innerText`); the extension blocks output that
+contains URL query strings, so strip those. "Cancel workflow" is a plain form post, no
+confirm dialog.
+
+A CI-like machine for reproducing: `git archive HEAD` into a scratch dir, then
+`docker run -d --name kaho-ci --cpus=2 -v <dir>:/repo -w /repo python:3.11 sleep infinity`,
+`docker exec kaho-ci bash -c "apt-get update && apt-get install -y portaudio19-dev && pip install
+-r apps/voice/requirements-dev.txt"`, then run ruff and pytest inside. `docker update
+--cpus=0.7 kaho-ci` emulates a loaded runner. It reproduced the CI test failure exactly.
 
 Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| `c11d7c2` | Recording tests hold under CI load (speaking signals, compare structure not bytes); pytest `faulthandler_timeout`; CI job `timeout-minutes: 15`. **Local only, not pushed** |
+| `1d6c4d7` | Recording notice: "This call may be recorded." before the greeting; caller muted until it has played |
+| `e37a64e` | `RECORDING_RETENTION_DAYS` (60): expired recordings deleted at start and hourly; files renamed `<id>.recording.wav` |
+| `0c74c53` | A hung LLM no longer silences the call: filler pushed from the LLM, apology behind an interruption, call cancelled once the apology is heard, speech signals counted once |
+| `1a04ecb` | Call recording (`recording.py`): stereo WAV per call, written in chunks without moving either side |
+| `1cdd6a3` | HANDOFF.md stale notes fixed |
 | `daa7b20` | HANDOFF.md update (CI green on `2c7418c`) |
 | `2c7418c` | Transfer-to-human and webhook tools, spoken filler for a slow reply, startup warm-up, region warning, `scripts/talk.py` |
 | `6819dc2` | Interruption filter (`interruptions.py`): coughs and backchannel no longer interrupt the agent |
@@ -104,11 +123,13 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Everything up to `daa7b20` is pushed; the working tree was clean (checked 2026-10-01).
-CI is green on `a4e68f4`, `644a256`, `481621e` and `c43c24a` (runs #18 to #21), and on
-`af8e967` (#23), `6819dc2` (#24) and `2c7418c` (#25); runs #15 to #17 and earlier-red
-ones were the pyaudio failure. Check `git log origin/main..` at the start of
-a session.
+Pushed through `1d6c4d7`; `c11d7c2` and this file's update are local commits, not pushed
+(2026-10-02). CI: green through #26 (`daa7b20`). #27 (`1a04ecb`), #28 (`0c74c53`) and #30
+(`1d6c4d7`) failed on `test_writing_as_the_call_goes_changes_nothing_in_the_recording` alone
+(#30: 1 failed, 298 passed). #29 (`e37a64e`) hung inside `tests/test_recording.py`; Claude
+cancelled it after 22 minutes. Earlier: green on #18 to #21 and #23 to #25; #15 to #17 and
+earlier-red runs were the pyaudio failure. Check `git log origin/main..` at the start of a
+session.
 
 ## 3. What exists (file map)
 
@@ -143,8 +164,10 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 
 ## 4. Verified by Claude (simulated or offline, NOT real phone calls)
 
-- 254 tests pass; ruff clean; on Python 3.13 and 3.11, clean installs, and in a
-  Linux 3.11 container running the CI workflow's own steps (exit 0).
+- 299 tests pass locally (Python 3.13) at `c11d7c2`; ruff clean. In the CI-like Linux 3.11
+  container, the previous version of one recording test was flaky (failed in up to half the
+  runs); its replacement passes locally but was not looped in the container (interrupted)
+  and has not run on GitHub.
 - The server, driven by a **simulated Plivo client** over `/ws` with
   Deepgram-synthesised 8kHz mu-law speech: greeting audio returns as `playAudio`;
   hangup tears the pipeline down; the transcript is written; the summary works
@@ -212,7 +235,8 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 - **Call recording (2026-10-02):** every call to `recordings/<id>.recording.wav`, stereo (caller left,
   agent right), 8kHz on the phone path, written in 5s chunks. Pipecat's own chunking was
   measured to insert gaps and drift (see CLEANROOM), so ours hands over only audio both sides
-  cover; byte-identical to writing at the end. Live through the phone server, simulated Plivo
+  cover: the same as writing at the end (byte-identical when frames arrive in the same order;
+  on a busy machine the sides can line up a frame differently). Live through the phone server, simulated Plivo
   client, real Deepgram and Groq: a 42.7s call gave a 42.5s file; both sides line up with what
   the client sent and heard, no drift; `recording_saved` precedes `call_end`; the summary still
   runs. Unwritable folder, live: one `recording_failed` line and the call carried on normally.
@@ -235,6 +259,15 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 ## 5. UNVERIFIED (assume nothing)
 
 Never claim any of these works until a real call shows it.
+
+**CI (the open gate)**
+- **CI is not green on anything after `daa7b20`** (section 2). `c11d7c2` should fix the one
+  failing test; it has not run on GitHub. The #29 hang is unexplained: it did not reproduce in
+  18 container runs at 2 and 0.7 CPUs. With `c11d7c2`, a repeat dumps every thread's stack
+  after 120s on one test and the job stops at 15 minutes.
+- Recordings line the two sides up only to about 0.1s: Pipecat's resampler hands audio over
+  in bursts and the sides are matched at those. The last ~0.1s of each side stays in the
+  resampler and is never written.
 
 **The whole real-call path**
 - **No real Plivo call has happened, inbound or outbound.** Everything has been driven by
@@ -324,8 +357,13 @@ transcripts, summary (+ 429 retry and failure marker), tool framework, `capture_
 provider-failure handling, HANDOFF.md, CI fixed, hard max call duration, `scripts/call.py`,
 `sales` persona; then LLM fallback to gpt-oss-20b, the interruption filter,
 `transfer_to_human`, `call_webhook`, the slow-reply filler, server warm-up and region
-warning, `scripts/talk.py`. Remaining:
+warning, `scripts/talk.py`. **Done 2026-10-02, pushed but CI red:** call recording,
+60-day retention, the recording notice, the hung-LLM fix. Remaining:
 
+0. **Gate: CI green.** Push `c11d7c2` and this file's commit (the owner asked to confirm CI
+   green on all of the 2026-10-02 work), then read the run on GitHub. If the recording test
+   still fails or something hangs, read the faulthandler dump in the log. Optionally loop
+   `tests/test_recording.py` in the CI-like container first (section 2); that was interrupted.
 1. **First real Plivo calls, inbound then outbound.** The owner owes: a Plivo number
    (Indian numbers may need KYC; a US number works for a test), `PLIVO_FROM_NUMBER`, and
    a tunnel.
@@ -410,6 +448,12 @@ warning, `scripts/talk.py`. Remaining:
   to a real page first.
 - Free ngrok hostnames change on restart: update `PUBLIC_HOST` and the Plivo
   Answer URL together.
+- Never assert `==` on long sample lists: a failing pytest diff printed every sample and made
+  one CI log 10MB. Compare lengths, onsets and loudness instead.
+- Pipecat audio in tests: caller audio is a system frame and agent audio a data frame, so a
+  busy machine interleaves them differently. Send the user/bot started/stopped speaking frames
+  around each side's speech, as a real call does, or the recorder pads silence inside speech.
+  Its resampler emits in ~0.1s bursts and resets after 0.2s idle (`clear_after_secs`).
 
 ## 8. Commands
 
@@ -499,3 +543,29 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
 - Confirmed CI green on `2c7418c` (run #25) by screenshot of the Actions page; no code changed
   since. Handoff refreshed only. Waiting on the owner for the Plivo credentials, the number, the
   tunnel host and a `TRANSFER_NUMBER`; then the first real inbound call, then outbound.
+
+**2026-10-02.**
+- Reviewed this file against git (clean, level with origin) and fixed its stale notes
+  (`1cdd6a3`). Mapped the owner's 15-item plan to what is built, partial and missing.
+- Owner's decisions: Sarvam is out; every call is recorded; at first with no announcement
+  and no automatic deletion, then the same day a "This call may be recorded." notice (on by
+  default) and 60-day retention. The DPDP / Aadhaar Data Vault question is with the owner's CA.
+- `1a04ecb`: call recording. Measured that Pipecat's own chunked hand-over puts gaps into
+  speech and drifts; wrote chunking that hands over only audio both sides cover.
+- A live run showed the filler unheard during an 11s Groq stall. Reproduced a hung LLM live:
+  45s of silence and the call never ended (filler, apology and EndFrame queued behind the
+  request; Pipecat would not cancel past the EndFrame). Also found the speech observer
+  counting every hop. Fixed in `0c74c53`; the same live run then heard the filler at 5s and
+  15s and the apology at 22s, and the line closed at 28s.
+- `e37a64e`: retention (checked on a real server start). `1d6c4d7`: the notice, live-verified
+  including an early "Hello?" and a hung greeting after it.
+- The owner's go-ahead arrived as pasted text; confirmed with one question before acting.
+- Pushed the five commits for CI: red. One recording test failed on #27, #28 and #30; #29
+  hung and was cancelled through Chrome. Reproduced the failure in a CI-like container (frame
+  interleaving under load, not the chunking) and fixed the test in `c11d7c2`, verified locally
+  only. The hang did not reproduce.
+- Also noticed, not fixed: words lost at the edge of a split turn; `end_call` can still
+  deadlock behind a hung LLM; the LLM request has no deadline of its own (section 5).
+- Interrupted while looping the new test in the container; the owner asked to update this file
+  and save. Nothing pushed after `1d6c4d7`. Next: push and confirm CI green, then the first
+  Plivo calls once the credentials arrive.
