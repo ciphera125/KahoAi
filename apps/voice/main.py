@@ -64,6 +64,7 @@ from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.utils.types import NOT_GIVEN
 from pipecat.workers.runner import WorkerRunner
+from recording import CallRecorder
 from resilience import (
     DEFAULT_APOLOGY,
     DEFAULT_FILLER,
@@ -638,6 +639,7 @@ def build_worker(
     on_abort=None,
     persona_path: Path | None = None,
     transfer=None,
+    recording_sample_rate: int = 16000,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -650,6 +652,8 @@ def build_worker(
     this call's persona (an outbound agent). The worker carries its CallHealth as
     `worker.health` and its CallTranscript as `worker.transcript`. `transfer` is an
     async callable that hands the live call to a human (phone server only).
+    recording_sample_rate is the rate the call's recording is saved at; the phone
+    server passes the phone line's 8kHz, since anything higher stores no more sound.
     """
     require_env("DEEPGRAM_API_KEY")
 
@@ -687,6 +691,15 @@ def build_worker(
     calls_dir = Path(env("CALL_LOG_DIR") or HERE.parent.parent / "logs" / "calls")
     transcript = CallTranscript(call_id, calls_dir)
     logger.info(f"Transcript -> {calls_dir}/{call_id}.jsonl (sensitive numbers masked)")
+
+    # Audio of every call, unannounced and unmasked by the owner's decision; see
+    # recording.py. RECORDING_ENABLED=false turns it off.
+    recorder = None
+    if (env("RECORDING_ENABLED") or "true").strip().lower() == "true":
+        recordings_dir = Path(env("RECORDING_DIR") or HERE.parent.parent / "recordings")
+        recorder = CallRecorder(
+            call_id, recordings_dir, recording_sample_rate, record=transcript.event
+        )
 
     # Tools are opt-in per deployment through TOOLS_ENABLED (default: end_call).
     call = CallContext(call_id=call_id, transcript=transcript, caller_number=caller_number)
@@ -735,6 +748,8 @@ def build_worker(
             llm,
             tts,
             transport.output(),
+            # After the output, so it records what was actually sent to the caller.
+            *([recorder.processor()] if recorder else []),
             assistant_aggregator,
         ]
     )
@@ -780,6 +795,7 @@ def build_worker(
     )
     worker.health = health
     worker.transcript = transcript
+    worker.recorder = recorder
     logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
 
     transcript.attach(user_aggregator, assistant_aggregator)
@@ -804,6 +820,8 @@ def build_worker(
     @worker.event_handler("on_pipeline_finished")
     async def call_finished(worker, frame):
         health.finished()
+        if recorder is not None:
+            recorder.close()  # normally already closed when the recording stopped
         transcript.end()
         # SUMMARY_ENABLED=false skips it. It runs after the call, so it adds no
         # latency for the caller, and it never raises into teardown.

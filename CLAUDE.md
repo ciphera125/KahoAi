@@ -23,6 +23,7 @@ apps/voice/interruptions.py  which caller sounds may interrupt the agent (words,
 apps/voice/duration_limit.py  hard ceiling on any call's length, enforced beside the pipeline
 apps/voice/personas.py   safe lookup of a persona by name (agent names can arrive from the network)
 scripts/call.py          dial out through Plivo into the same pipeline (--number, --agent)
+apps/voice/recording.py  call audio to recordings/<call_id>.wav (caller left, agent right)
 apps/voice/resilience.py  what happens when a provider fails mid-call (backup TTS, apology, hang-up rules)
 apps/voice/tools.py      tools the agent can call (decorator registry; TOOLS_ENABLED picks them):
                          end_call, capture_lead, transfer_to_human, call_webhook
@@ -32,6 +33,7 @@ scripts/                 command-line helpers
 logs/turns.jsonl         per-turn timings (gitignored)
 logs/calls/              per-call masked transcripts and summaries (gitignored)
 leads/                   captured leads, one JSON-lines file per day (gitignored)
+recordings/              call audio, NOT masked (gitignored)
 ```
 
 ## The pipeline
@@ -95,6 +97,9 @@ is the only writer for call content and masks inside `write`, so a new caller
 cannot forget. Numbers arrive split across turns ("2 3 4" / "5 6 7"), so
 digit-like turns are held and checked together; do not "simplify" that back to
 per-turn masking. Any new store of call content must write through it too.
+The one exception is call audio, which cannot be masked: `recording.py` keeps it
+in `recordings/`, in full, by the owner's decision (2026-10-02). Anything derived
+from a recording (a re-transcription, say) is call content and is masked again.
 
 **Tools are one decorated function.** See `tools.py`. What a tool does is code;
 when to use it goes in the persona, not `VOICE_RULES`. Don't call handlers around
@@ -131,6 +136,9 @@ Note `AWS_REGION` in `.env` is for Bedrock, a separate thing from where the
 voice service itself is hosted.
 
 Also still open before real traffic: telephony is wired for Plivo inbound but has
-not taken a real call yet (and no outbound), concurrency, call recording and consent, and a real answer on Hindi TTS —
+not taken a real call yet (and no outbound), concurrency, and a real answer on Hindi TTS —
 Deepgram Aura is English-only, so Hindi output needs ElevenLabs, Sarvam or
-Smallest; the Hindi voice is still being chosen between Sarvam and Smallest.
+Smallest; the owner ruled Sarvam out (2026-10-02), so Hindi is to be Smallest,
+which has not yet run against the live API. Calls are recorded without an
+announcement, by the owner's decision; whether that meets India's notice and
+Aadhaar-storage rules is the owner's call to settle before real traffic.

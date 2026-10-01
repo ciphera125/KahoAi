@@ -11,9 +11,9 @@ twelve digits. Turns that look like number fragments are therefore held back
 and checked together, as one run, before anything is written. If the run holds a
 sensitive number the fragments are stored as one masked turn.
 
-Nothing is recorded as audio. Storing a caller's voice needs a consent decision
-that has not been made yet (see CLAUDE.md), and a transcript carries what the
-summary and the tools need without it.
+Call audio is recorded separately by recording.py and cannot be masked; this
+file stays the only store of call content as text, and the summary and the
+tools read only this.
 """
 
 import json

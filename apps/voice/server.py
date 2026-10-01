@@ -44,6 +44,9 @@ TRANSFER_TIMEOUT_SECS = 10.0
 # Three cutoff steps, each bounded by duration_limit.STEP_TIMEOUT_SECS, plus slack.
 CUTOFF_FINISH_SECS = 35.0
 
+# Plivo carries the call as 8kHz mu-law in both directions.
+PHONE_LINE_RATE = 8000
+
 # Silero VAD only accepts 8kHz or 16kHz. The phone line is 8kHz, and the
 # serializer upsamples it to this before it reaches VAD and STT.
 PIPELINE_INPUT_RATE = 16000
@@ -150,7 +153,7 @@ def answer_xml(
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
         '<Stream bidirectional="true" keepCallAlive="true" '
-        f'contentType="audio/x-mulaw;rate=8000">{url}</Stream>'
+        f'contentType="audio/x-mulaw;rate={PHONE_LINE_RATE}">{url}</Stream>'
         # Reached only if the stream ends without the call being hung up, which is
         # what a provider failure that stops us speaking does on purpose.
         f'<Speak language="en-IN">{escape(apology)}</Speak>'
@@ -309,6 +312,7 @@ async def stream(
         on_abort=abort,
         persona_path=persona_path,
         transfer=hand_to_human if transfer_number() else None,
+        recording_sample_rate=PHONE_LINE_RATE,
     )
 
     async def cancel_pipeline() -> None:

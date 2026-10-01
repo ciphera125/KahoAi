@@ -65,7 +65,8 @@ Do not redo these.
 - `VAD_STOP_SECS` configurable (0.25s default); barge-in confirmed on real speech.
 - Sarvam Bulbul as a TTS option: Hindi works, 0.716s vs Aura 0.781s time to first
   audio, hi-IN and en-IN switching works live. The owner does **not** like
-  Sarvam's default Hindi voice, hence Smallest AI below.
+  Sarvam's default Hindi voice, hence Smallest AI below. **Sarvam is ruled out**
+  (owner, 2026-10-02); the code stays, unused.
 - `PortableGroqLLMService` (developer to user role rewrite) fixes the qwen crash on
   interruption; committed and pushed (`4c89535`).
 
@@ -119,17 +120,19 @@ apps/voice/interruptions.py  which caller sounds may interrupt (words only; back
 scripts/talk.py          local mic/speaker run, same as apps/voice/main.py
 apps/voice/masking.py    Aadhaar/PAN masking (any 12 digits; AAAAA9999A)
 apps/voice/transcript.py CallTranscript: only writer of call content; masks in write()
+apps/voice/recording.py  CallRecorder: call audio to recordings/<id>.wav (NOT masked; owner's decision)
 apps/voice/summary.py    post-call LLM summary of the MASKED transcript; retry + failure marker
 apps/voice/duration_limit.py hard max call duration, enforced by a timer beside the pipeline
 apps/voice/personas.py   safe persona lookup by name (names arrive from the network)
 scripts/call.py          dial out via Plivo: --number, --agent, --max-duration, --dry-run
 apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
-apps/voice/tests/        254 tests
+apps/voice/tests/        269 tests
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
 leads/<date>.jsonl       captured leads          (gitignored; holds names/numbers)
+recordings/<id>.wav      call audio, caller left, agent right   (gitignored; unmasked)
 CLEANROOM.md             decision log with sources; add a row for every non-obvious choice
 ```
 
@@ -195,6 +198,15 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
   a real call.
 - **Warm-up:** server start loads the VAD/turn models (about 50ms per call anyway) and makes one
   free Groq request; verified live. Does not pool provider connections across calls.
+- **Call recording (2026-10-02):** every call to `recordings/<id>.wav`, stereo (caller left,
+  agent right), 8kHz on the phone path, written in 5s chunks. Pipecat's own chunking was
+  measured to insert gaps and drift (see CLEANROOM), so ours hands over only audio both sides
+  cover; byte-identical to writing at the end. Live through the phone server, simulated Plivo
+  client, real Deepgram and Groq: a 42.7s call gave a 42.5s file; both sides line up with what
+  the client sent and heard, no drift; `recording_saved` precedes `call_end`; the summary still
+  runs. Unwritable folder, live: one `recording_failed` line and the call carried on normally.
+  TTS first audio 0.51s avg with it (4 turns) vs 0.53s without (6); not rigorous. 15 tests;
+  six mutations, all caught.
 
 ## 5. UNVERIFIED (assume nothing)
 
@@ -223,7 +235,17 @@ Never claim any of these works until a real call shows it.
 - Plivo's call-transfer API request (`legs=aleg`, `aleg_url`, `aleg_method`) is from memory;
   whether Plivo then plays `<Speak>` and dials the number is unseen. A transfer also ends our
   websocket; the disconnect handler then cancels the pipeline (not exercised for this case).
-- The filler and the interruption filter have never been heard or felt on a real call.
+- The interruption filter has never been felt on a real call.
+- **The filler line looks broken when the LLM stalls.** Seen live 2026-10-02: Groq gave no first
+  token for 11s; `filler_spoken` was logged at 3s but the client heard nothing until after its
+  own next turn. From Pipecat's source: the filler is queued at the start of the pipeline as a
+  `TTSSpeakFrame` (a data frame), and the LLM handles a request inline, so the frame waits behind
+  the stalled request. The apology from `say_and_end` goes the same way, so a hung LLM may also
+  hold back the apology and the end of the call (not tested live). Likely fix: push them
+  downstream from the LLM, as `call.hang_up` already pushes from it; then test against an LLM
+  endpoint that never answers.
+- Call recordings have not been listened to by a person (checked by levels and timings) and
+  have not run on a real Plivo call.
 - Hindi/Hinglish quality, Smallest AI, and everything in the real-call path are unchanged from
   above.
 
@@ -258,8 +280,11 @@ tools: `TRANSFER_NUMBER` (a human's number) and, for webhooks, `TOOL_WEBHOOK_URL
 - Bedrock/Claude Haiku 4.5 is not the LLM (Groq qwen is); `BEDROCK` is stubbed.
 - Prompt caching (not applicable to the current Groq path; unmeasured).
 - Per-agent language setting in a config file, and 5 sample conversations per language with a
-  pronunciation check: needs a person's ear. Hindi voice choice (Sarvam vs Smallest) is open.
-- Audio recording of calls: blocked on the consent decision.
+  pronunciation check: needs a person's ear. Sarvam is ruled out; the Hindi voice is to be
+  Smallest, which has not run live.
+- Audio recording: built 2026-10-02, unannounced, unmasked and kept until deleted, all by the
+  owner's decision. Whether that meets India's notice rules (DPDP Act) and UIDAI's rules on
+  storing Aadhaar numbers is for the owner to settle before real traffic.
 - A real local database: tools write JSON-lines files.
 - Backup STT.
 - The 20 inbound + 20 outbound test calls, the top-5 fix pass, and Mumbai (ap-south-1)
@@ -285,11 +310,12 @@ warning, `scripts/talk.py`. Remaining:
      line and the hang-up.
    - Outbound: with the server up, `python scripts/call.py --number +91... --agent sales
      --dry-run`, then without `--dry-run`. Edit `prompts/sales.md` first.
-2. Smallest AI vs Sarvam A/B on Hindi voices (needs `SMALLEST_API_KEY`; Pipecat lists
-   `meher`, `devansh`, `kartik`, `maithili` as Hindi-capable).
+2. Smallest AI for Hindi: first live run and a voice choice (needs `SMALLEST_API_KEY`;
+   Pipecat lists `meher`, `devansh`, `kartik`, `maithili` as Hindi-capable). Sarvam is out.
 3. Plivo V3 webhook signature validation (replaces the shared-secret token as the main
    guard; do it against a real request).
-4. Audio recording, **blocked on a consent decision** (transcripts only for now).
+4. Fix the filler and apology being held behind a stalled LLM (section 5), with a live test
+   against an LLM that never answers.
 5. Concurrency, and deploying to `ap-south-1` before real traffic (see CLAUDE.md).
 6. Full regression across English/Hindi, inbound/outbound, once telephony works.
 7. Still owed to the "done" standard: a proper latency benchmark for the phone path (only
@@ -317,7 +343,9 @@ warning, `scripts/talk.py`. Remaining:
 - Plivo posts webhook parameters as a **form body**, not the query string.
 - Deepgram ends a turn at every pause, so read-out numbers arrive fragmented;
   masking must work across turns.
-- Groq returns 429 after repeated smoke runs on this account. Space them out.
+- Groq returns 429 after repeated smoke runs on this account. Space them out. A stall can
+  also show up only as a long LLM TTFB (11s on 2026-10-02) with no 429 in the log: the OpenAI
+  client underneath retries quietly.
 - `macOS sed` differs from GNU sed; use Python for scripted edits.
 - The default persona said "you are not a business", which made the model refuse
   callbacks; the "Leaving details" section now overrides that explicitly.

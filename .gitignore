@@ -33,3 +33,5 @@ npm-debug.log*
 logs/
 # Captured leads hold callers' names and numbers.
 leads/
+# Call recordings hold callers' voices, and any ID number they read out, unmasked.
+recordings/
