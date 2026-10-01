@@ -83,9 +83,11 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| `daa7b20` | HANDOFF.md update (CI green on `2c7418c`) |
 | `2c7418c` | Transfer-to-human and webhook tools, spoken filler for a slow reply, startup warm-up, region warning, `scripts/talk.py` |
 | `6819dc2` | Interruption filter (`interruptions.py`): coughs and backchannel no longer interrupt the agent |
 | `af8e967` | LLM fallback: a qwen 429/5xx retries the turn on `openai/gpt-oss-20b` before the apology |
+| `9ee23d5` | HANDOFF.md update |
 | `c43c24a` | `scripts/call.py`: dial out through Plivo into the same pipeline (+ docs, tests, `.env.example`) |
 | `80fa24a` | Hard max call duration (`duration_limit.py`); outbound params on `/answer` and `/ws`; `personas.py`; `sales` persona |
 | `481621e` | HANDOFF.md update |
@@ -101,9 +103,10 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Everything up to `c43c24a` is pushed; the working tree was clean. CI is green on
-`a4e68f4`, `644a256`, `481621e` and `c43c24a` (runs #18 to #21); runs #15 to #17 and
-earlier-red ones were the pyaudio failure. Check `git log origin/main..` at the start of
+Everything up to `daa7b20` is pushed; the working tree was clean (checked 2026-10-01).
+CI is green on `a4e68f4`, `644a256`, `481621e` and `c43c24a` (runs #18 to #21), and on
+`af8e967` (#23), `6819dc2` (#24) and `2c7418c` (#25); runs #15 to #17 and earlier-red
+ones were the pyaudio failure. Check `git log origin/main..` at the start of
 a session.
 
 ## 3. What exists (file map)
@@ -121,7 +124,7 @@ apps/voice/duration_limit.py hard max call duration, enforced by a timer beside 
 apps/voice/personas.py   safe persona lookup by name (names arrive from the network)
 scripts/call.py          dial out via Plivo: --number, --agent, --max-duration, --dry-run
 apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
-apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md
+apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
 apps/voice/tests/        254 tests
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
@@ -216,7 +219,7 @@ Never claim any of these works until a real call shows it.
 - The `sales` persona is a generic template that states no business facts; edit it with
   the real business before anyone is dialled.
 
-**New this session (all simulated or unit-tested only)**
+**New on 2026-09-29 (all simulated or unit-tested only)**
 - Plivo's call-transfer API request (`legs=aleg`, `aleg_url`, `aleg_method`) is from memory;
   whether Plivo then plays `<Speak>` and dials the number is unseen. A transfer also ends our
   websocket; the disconnect handler then cancels the pipeline (not exercised for this case).
@@ -264,10 +267,12 @@ tools: `TRANSFER_NUMBER` (a human's number) and, for webhooks, `TOOL_WEBHOOK_URL
 - Connection reuse across calls.
 
 
-**Done and pushed this session:** Smallest AI TTS, Plivo inbound, masked transcripts,
-summary (+ 429 retry and failure marker), tool framework, `capture_lead`, provider-failure
-handling, HANDOFF.md, CI fixed, hard max call duration, `scripts/call.py`, `sales`
-persona. Remaining:
+**Done and pushed (2026-09-28 to 2026-09-29):** Smallest AI TTS, Plivo inbound, masked
+transcripts, summary (+ 429 retry and failure marker), tool framework, `capture_lead`,
+provider-failure handling, HANDOFF.md, CI fixed, hard max call duration, `scripts/call.py`,
+`sales` persona; then LLM fallback to gpt-oss-20b, the interruption filter,
+`transfer_to_human`, `call_webhook`, the slow-reply filler, server warm-up and region
+warning, `scripts/talk.py`. Remaining:
 
 1. **First real Plivo calls, inbound then outbound.** The owner owes: a Plivo number
    (Indian numbers may need KYC; a US number works for a test), `PLIVO_FROM_NUMBER`, and
