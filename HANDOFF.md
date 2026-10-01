@@ -127,7 +127,7 @@ apps/voice/personas.py   safe persona lookup by name (names arrive from the netw
 scripts/call.py          dial out via Plivo: --number, --agent, --max-duration, --dry-run
 apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
-apps/voice/tests/        290 tests
+apps/voice/tests/        299 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
@@ -218,6 +218,14 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
   runs. Unwritable folder, live: one `recording_failed` line and the call carried on normally.
   TTS first audio 0.51s avg with it (4 turns) vs 0.53s without (6); not rigorous. 15 tests;
   six mutations, all caught.
+- **Recording notice (2026-10-02):** every recorded call opens with `RECORDING_NOTICE` ("This call
+  may be recorded."), word for word, then the greeting is asked for once it has played, so the
+  two are separate stretches of speech and the deadline still watches the greeting. The caller
+  is muted until the notice has played (Pipecat's `MuteUntilFirstBotCompleteUserMuteStrategy`),
+  so an early "hello?" cannot cancel it. It stays out of the LLM context; the greeting
+  instruction says it was said; the transcript gets `recording_notice_played`. Live through the
+  phone server: notice heard 1.6-3.1s, greeting 4.0s, a "Hello?" at connect ignored, and with a
+  hung LLM: notice, filler, filler, apology, call ended at 29.6s. Five mutations, all caught.
 - **Recording retention (2026-10-02):** `RECORDING_RETENTION_DAYS` (default 60). The phone server
   deletes expired recordings at start and hourly; a local run at start. Only `*.recording.wav`
   directly in the folder, never through a symlink; a file that cannot be deleted is logged and
@@ -260,7 +268,11 @@ Never claim any of these works until a real call shows it.
 - The LLM request itself still has no deadline of its own (the OpenAI client's default is
   600s, with quiet retries); the response deadline is what catches a hang.
 - Call recordings have not been listened to by a person (checked by levels and timings) and
-  have not run on a real Plivo call.
+  have not run on a real Plivo call. Neither has the recording notice been heard on one.
+- **Words at the edge of a split turn can be lost.** When STT splits one sentence into two
+  turns ("Hi there." / "...can you help me with today?"), a word in the gap went missing in 3
+  of 8 simulated calls: "today?" once before the notice existed, "What" twice after. Not
+  caused by the notice's mute (released seconds earlier). Not investigated.
 - Hindi/Hinglish quality, Smallest AI, and everything in the real-call path are unchanged from
   above.
 

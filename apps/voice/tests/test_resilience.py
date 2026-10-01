@@ -482,3 +482,53 @@ async def test_a_filler_that_cannot_be_queued_still_leaves_the_deadline_running(
     await asyncio.sleep(0.6)
     assert h.health.failed and h.health.failed.startswith("response:")
     h.health.finished()
+
+
+# --- something to do once the bot has finished speaking (the recording notice) ---
+
+
+async def test_after_next_speech_runs_once_the_speech_has_started_and_stopped():
+    h = Harness()
+    ran = []
+
+    async def then():
+        ran.append(1)
+
+    h.health.after_next_speech(then)
+    await h.health.bot_stopped()  # no speech has started yet
+    assert ran == []
+    h.health.bot_started()
+    await h.health.bot_stopped()
+    await h.health.bot_stopped()
+    assert ran == [1]
+    h.health.finished()
+
+
+async def test_after_next_speech_does_not_run_once_the_call_has_failed():
+    h = Harness()
+    ran = []
+
+    async def then():
+        ran.append(1)
+
+    h.health.after_next_speech(then)
+    h.health.bot_started()
+    h.stt.is_usable = False
+    await h.error(h.stt)
+    await h.health.bot_stopped()  # (the apology's stop ends the call instead)
+    assert ran == []
+    h.health.finished()
+
+
+async def test_if_what_follows_the_speech_fails_the_deadline_watches_the_silence():
+    h = Harness(response_deadline_secs=0.05)
+
+    async def then():
+        raise RuntimeError("queue closed")
+
+    h.health.after_next_speech(then)
+    h.health.bot_started()
+    await h.health.bot_stopped()
+    await asyncio.sleep(0.2)
+    assert h.health.failed and h.health.failed.startswith("response:")
+    h.health.finished()

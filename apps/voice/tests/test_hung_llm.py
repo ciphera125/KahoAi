@@ -12,54 +12,10 @@ import time
 
 import main
 import pytest
-from pipecat.frames.frames import BotStartedSpeakingFrame, BotStoppedSpeakingFrame, TTSSpeakFrame
-from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.workers.runner import WorkerRunner
+from pipeline_fakes import PassThrough, SpeakingTTS, Transport
+from recording import DEFAULT_NOTICE
 from resilience import DEFAULT_APOLOGY, DEFAULT_FILLER
-
-
-class PassThrough(FrameProcessor):
-    """Stands in for the transport ends and for Deepgram STT."""
-
-    class Settings:
-        def __init__(self, **kwargs):
-            pass
-
-    def __init__(self, **kwargs):
-        super().__init__()
-
-    async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
-        await self.push_frame(frame, direction)
-
-
-class SpeakingTTS(FrameProcessor):
-    """Says each TTSSpeakFrame: bot speech starts, lasts a moment, stops."""
-
-    def __init__(self):
-        super().__init__()
-        self.said = []
-
-    async def process_frame(self, frame, direction):
-        await super().process_frame(frame, direction)
-        if isinstance(frame, TTSSpeakFrame):
-            self.said.append(frame.text)
-            await self.push_frame(BotStartedSpeakingFrame())
-            await asyncio.sleep(0.05)
-            await self.push_frame(BotStoppedSpeakingFrame())
-            return
-        await self.push_frame(frame, direction)
-
-
-class Transport:
-    def __init__(self):
-        self._in, self._out = PassThrough(), PassThrough()
-
-    def input(self):
-        return self._in
-
-    def output(self):
-        return self._out
 
 
 @pytest.fixture
@@ -71,12 +27,19 @@ def hung_call(monkeypatch, tmp_path):
         "CALL_LOG_DIR": str(tmp_path / "calls"),
         "LATENCY_LOG_PATH": str(tmp_path / "turns.jsonl"),
         "RECORDING_ENABLED": "false",
+        "RECORDING_DIR": str(tmp_path / "recordings"),
         "SUMMARY_ENABLED": "false",
         "FILLER_AFTER_SECS": "0.2",
         "RESPONSE_DEADLINE_SECS": "0.6",
     }.items():
         monkeypatch.setenv(name, value)
-    for name in ("FILLER_MESSAGE", "FAILURE_MESSAGE", "TTS_FALLBACK_PROVIDER"):
+    for name in (
+        "FILLER_MESSAGE",
+        "FAILURE_MESSAGE",
+        "TTS_FALLBACK_PROVIDER",
+        "RECORDING_NOTICE",
+        "RECORDING_NOTICE_ENABLED",
+    ):
         monkeypatch.delenv(name, raising=False)
 
     async def hang(self, context):
@@ -108,3 +71,19 @@ async def test_a_hung_llm_gets_the_filler_then_the_apology_then_the_call_ends(hu
     assert aborts == [True]
     assert time.monotonic() - started < 5
     assert worker.health.failed.startswith("response:")
+
+
+async def test_a_hung_greeting_after_the_recording_notice_is_still_caught(hung_call, monkeypatch):
+    """The notice is bot speech too: it must not stand in for the greeting it precedes."""
+    monkeypatch.setenv("RECORDING_ENABLED", "true")
+    tts = hung_call
+    aborts = []
+
+    async def on_abort(spoken):
+        aborts.append(spoken)
+        await worker.cancel(reason="provider failure")
+
+    worker = main.build_worker(Transport(), call_id="hung-notice", on_abort=on_abort)
+    await asyncio.wait_for(WorkerRunner(handle_sigint=False).run(worker), timeout=8)
+    assert tts.said == [DEFAULT_NOTICE, DEFAULT_FILLER, DEFAULT_FILLER, DEFAULT_APOLOGY]
+    assert aborts == [True]

@@ -59,12 +59,18 @@ from pipecat.services.smallest.tts import SmallestTTSService
 from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
+from pipecat.turns.user_mute import MuteUntilFirstBotCompleteUserMuteStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.utils.types import NOT_GIVEN
 from pipecat.workers.runner import WorkerRunner
-from recording import CallRecorder, delete_expired_recordings, recording_retention_days
+from recording import (
+    DEFAULT_NOTICE,
+    CallRecorder,
+    delete_expired_recordings,
+    recording_retention_days,
+)
 from resilience import (
     DEFAULT_APOLOGY,
     DEFAULT_FILLER,
@@ -700,6 +706,14 @@ def build_worker(
             call_id, recordings_dir(), recording_sample_rate, record=transcript.event
         )
 
+    # A recorded call opens with RECORDING_NOTICE, word for word, before anything else
+    # is said. RECORDING_NOTICE_ENABLED=false leaves it out; an unrecorded call never
+    # hears it, since it would not be true.
+    notice = None
+    notice_on = (env("RECORDING_NOTICE_ENABLED") or "true").strip().lower() == "true"
+    if recorder is not None and notice_on:
+        notice = env("RECORDING_NOTICE") or DEFAULT_NOTICE
+
     # Tools are opt-in per deployment through TOOLS_ENABLED (default: end_call).
     call = CallContext(call_id=call_id, transcript=transcript, caller_number=caller_number)
     call.transfer = transfer
@@ -718,7 +732,11 @@ def build_worker(
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            vad_analyzer=build_vad(), user_turn_strategies=build_turn_strategies()
+            vad_analyzer=build_vad(),
+            user_turn_strategies=build_turn_strategies(),
+            # The caller can neither talk over the notice nor, with an early "hello?",
+            # cancel it before it starts. Released once it has played, or if it fails.
+            user_mute_strategies=[MuteUntilFirstBotCompleteUserMuteStrategy()] if notice else [],
         ),
     )
 
@@ -846,12 +864,31 @@ def build_worker(
         # opens in silence. gpt-oss happens to tolerate "developer"; a role
         # every model accepts is the portable choice, since the whole point of
         # GROQ_MODEL_ID is being able to swap models freely.
-        context.add_message(
-            {"role": "user", "content": "Start by concisely introducing yourself."}
-        )
-        await worker.queue_frames([LLMRunFrame()])
-        # The greeting is a reply too: a dead TTS would otherwise open in silence.
-        health.arm()
+        instruction = "Start by concisely introducing yourself."
+
+        async def ask_for_the_greeting():
+            context.add_message({"role": "user", "content": instruction})
+            await worker.queue_frames([LLMRunFrame()])
+            # The greeting is a reply too: a dead TTS would otherwise open in silence.
+            health.arm()
+
+        if not notice:
+            await ask_for_the_greeting()
+            return
+        # The notice plays on its own and the greeting is asked for once it has: run
+        # together they can merge into one stretch of speech, and the deadline would
+        # then take the notice for the greeting. It stays out of the LLM's context (a
+        # trailing assistant line can be taken as one to continue); the instruction
+        # tells the model instead.
+        instruction += f' The caller has just heard "{notice}"; do not repeat it.'
+
+        async def after_the_notice():
+            transcript.event("recording_notice_played", notice=notice)
+            await ask_for_the_greeting()
+
+        health.after_next_speech(after_the_notice)
+        await worker.queue_frame(TTSSpeakFrame(notice, append_to_context=False))
+        health.arm()  # the notice is due now: a TTS that says nothing is still caught
 
     return worker
 

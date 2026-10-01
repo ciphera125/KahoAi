@@ -145,6 +145,6 @@ Also still open before real traffic: telephony is wired for Plivo inbound but ha
 not taken a real call yet (and no outbound), concurrency, and a real answer on Hindi TTS —
 Deepgram Aura is English-only, so Hindi output needs ElevenLabs, Sarvam or
 Smallest; the owner ruled Sarvam out (2026-10-02), so Hindi is to be Smallest,
-which has not yet run against the live API. Calls are recorded without an
-announcement, by the owner's decision; whether that meets India's notice and
-Aadhaar-storage rules is the owner's call to settle before real traffic.
+which has not yet run against the live API. Every recorded call opens with
+"This call may be recorded." (`RECORDING_NOTICE`), which the caller cannot talk
+over; the deeper DPDP / Aadhaar Data Vault question is with the owner's CA.

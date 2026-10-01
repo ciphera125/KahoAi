@@ -120,6 +120,9 @@ class CallHealth:
         # None, then "queued", "playing" (its audio started) and "heard" (it stopped).
         self._apology_state: str | None = None
         self._ended = False
+        # after_next_speech(): what to run once the bot's next speech has played.
+        self._after_speech: Callable[[], Awaitable[None]] | None = None
+        self._after_speech_started = False
         self._threshold = error_threshold
         self._window = error_window_secs
         self._deadline = response_deadline_secs
@@ -221,17 +224,36 @@ class CallHealth:
         self.disarm(reset_misses=False)
         self._watch_task = asyncio.create_task(self._watch())
 
+    def after_next_speech(self, then: Callable[[], Awaitable[None]]) -> None:
+        """Run `then` once the bot's next speech has started and finished (the
+        recording notice, before the greeting is asked for)."""
+        self._after_speech = then
+        self._after_speech_started = False
+
     def bot_started(self) -> None:
         """The bot's audio started. BotSpeechObserver calls this once per utterance."""
         if self._apology_state == "queued":
             self._apology_state = "playing"
+        if self._after_speech is not None:
+            self._after_speech_started = True
         self.disarm()
 
     async def bot_stopped(self) -> None:
         """The bot's audio stopped. If that was the apology, the call is over."""
-        if self._apology_state == "playing" and not self._closed:
+        if self._closed:
+            return
+        if self._apology_state == "playing":
             self._apology_state = "heard"
             await self._end(spoken=True)
+            return
+        if self._after_speech is not None and self._after_speech_started and not self.failed:
+            then, self._after_speech = self._after_speech, None
+            try:
+                await then()
+            except Exception as e:
+                # Whatever was meant to follow did not start: let the deadline catch the silence.
+                logger.error(f"Could not continue after the bot's speech: {safe_reason(e)}")
+                self.arm()
 
     def disarm(self, reset_misses: bool = True) -> None:
         """The bot has started speaking, so the pipeline is alive."""

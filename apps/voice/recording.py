@@ -46,6 +46,9 @@ CHUNK_SECS = 5.0
 SUFFIX = ".recording.wav"
 DEFAULT_RETENTION_DAYS = 60.0
 
+# Said word for word at the start of every recorded call, before the greeting.
+DEFAULT_NOTICE = "This call may be recorded."
+
 
 def recording_retention_days() -> float:
     """RECORDING_RETENTION_DAYS, or the default. An invalid value is an error, not a default."""
