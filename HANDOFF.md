@@ -120,19 +120,19 @@ apps/voice/interruptions.py  which caller sounds may interrupt (words only; back
 scripts/talk.py          local mic/speaker run, same as apps/voice/main.py
 apps/voice/masking.py    Aadhaar/PAN masking (any 12 digits; AAAAA9999A)
 apps/voice/transcript.py CallTranscript: only writer of call content; masks in write()
-apps/voice/recording.py  CallRecorder: call audio to recordings/<id>.wav (NOT masked; owner's decision)
+apps/voice/recording.py  CallRecorder: call audio to recordings/<id>.recording.wav (NOT masked); retention
 apps/voice/summary.py    post-call LLM summary of the MASKED transcript; retry + failure marker
 apps/voice/duration_limit.py hard max call duration, enforced by a timer beside the pipeline
 apps/voice/personas.py   safe persona lookup by name (names arrive from the network)
 scripts/call.py          dial out via Plivo: --number, --agent, --max-duration, --dry-run
 apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
-apps/voice/tests/        275 tests
+apps/voice/tests/        290 tests
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
 leads/<date>.jsonl       captured leads          (gitignored; holds names/numbers)
-recordings/<id>.wav      call audio, caller left, agent right   (gitignored; unmasked)
+recordings/<id>.recording.wav  call audio, caller left, agent right (gitignored; unmasked; 60 days)
 CLEANROOM.md             decision log with sources; add a row for every non-obvious choice
 ```
 
@@ -209,7 +209,7 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
   LLM; four mutations, all caught.
 - **Warm-up:** server start loads the VAD/turn models (about 50ms per call anyway) and makes one
   free Groq request; verified live. Does not pool provider connections across calls.
-- **Call recording (2026-10-02):** every call to `recordings/<id>.wav`, stereo (caller left,
+- **Call recording (2026-10-02):** every call to `recordings/<id>.recording.wav`, stereo (caller left,
   agent right), 8kHz on the phone path, written in 5s chunks. Pipecat's own chunking was
   measured to insert gaps and drift (see CLEANROOM), so ours hands over only audio both sides
   cover; byte-identical to writing at the end. Live through the phone server, simulated Plivo
@@ -218,6 +218,11 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
   runs. Unwritable folder, live: one `recording_failed` line and the call carried on normally.
   TTS first audio 0.51s avg with it (4 turns) vs 0.53s without (6); not rigorous. 15 tests;
   six mutations, all caught.
+- **Recording retention (2026-10-02):** `RECORDING_RETENTION_DAYS` (default 60). The phone server
+  deletes expired recordings at start and hourly; a local run at start. Only `*.recording.wav`
+  directly in the folder, never through a symlink; a file that cannot be deleted is logged and
+  skipped; an invalid value stops startup. 15 tests; seven mutations, all caught. Not yet run
+  against a real 60-day-old file (tests age files with `os.utime`).
 
 ## 5. UNVERIFIED (assume nothing)
 
@@ -292,9 +297,9 @@ tools: `TRANSFER_NUMBER` (a human's number) and, for webhooks, `TOOL_WEBHOOK_URL
 - Per-agent language setting in a config file, and 5 sample conversations per language with a
   pronunciation check: needs a person's ear. Sarvam is ruled out; the Hindi voice is to be
   Smallest, which has not run live.
-- Audio recording: built 2026-10-02, unannounced, unmasked and kept until deleted, all by the
-  owner's decision. Whether that meets India's notice rules (DPDP Act) and UIDAI's rules on
-  storing Aadhaar numbers is for the owner to settle before real traffic.
+- Audio recording: built 2026-10-02, unmasked, deleted after `RECORDING_RETENTION_DAYS` (60),
+  by the owner's decision. The owner is taking the deeper DPDP / Aadhaar Data Vault question to
+  a CA; it does not block development.
 - A real local database: tools write JSON-lines files.
 - Backup STT.
 - The 20 inbound + 20 outbound test calls, the top-5 fix pass, and Mumbai (ap-south-1)

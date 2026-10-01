@@ -1,11 +1,11 @@
-"""Per-call audio recordings: recordings/<call_id>.wav, caller left, agent right.
+"""Per-call audio recordings: recordings/<call_id>.recording.wav, caller left, agent right.
 
-The owner's decisions (2026-10-02): every call is recorded, the caller is not
-told, and recordings are kept until the owner deletes them. Audio cannot be
+The owner's decisions (2026-10-02): every call is recorded and recordings are
+deleted RECORDING_RETENTION_DAYS (default 60) after the call. Audio cannot be
 masked the way text is, so a recording holds any Aadhaar or PAN the caller reads
-out, in full. That is accepted; it is why recordings live in their own gitignored
-directory, apart from the masked transcripts in logs/calls/, and why nothing
-else (summary, tools) ever reads them.
+out, in full; that is the exposure the retention limit bounds. It is also why
+recordings live in their own gitignored directory, apart from the masked
+transcripts in logs/calls/, and why nothing else (summary, tools) ever reads them.
 
 Pipecat's AudioBufferProcessor keeps the two sides in step. Its own way of
 handing over audio in chunks (`buffer_size`) pads the shorter side to the longer
@@ -22,7 +22,10 @@ logged, recorded in the transcript as `recording_failed`, and recording stops fo
 that call; the conversation goes on. Nothing is raised.
 """
 
+import math
+import os
 import re
+import time
 import wave
 from pathlib import Path
 
@@ -36,6 +39,59 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 # Audio is written every this many seconds of call, which bounds both the memory
 # a call holds and what a crash can lose.
 CHUNK_SECS = 5.0
+
+# Recordings are <call_id>.recording.wav, and retention deletes files with this
+# ending and nothing else, so a RECORDING_DIR that shares a folder with other
+# audio cannot lose that audio to the sweep.
+SUFFIX = ".recording.wav"
+DEFAULT_RETENTION_DAYS = 60.0
+
+
+def recording_retention_days() -> float:
+    """RECORDING_RETENTION_DAYS, or the default. An invalid value is an error, not a default."""
+    raw = (os.getenv("RECORDING_RETENTION_DAYS") or "").strip()
+    if not raw:
+        return DEFAULT_RETENTION_DAYS
+    try:
+        days = float(raw)
+    except ValueError:
+        raise ValueError(f"RECORDING_RETENTION_DAYS={raw!r} is not a number") from None
+    if not math.isfinite(days) or days <= 0:
+        raise ValueError(f"RECORDING_RETENTION_DAYS={raw!r} must be a positive number of days")
+    return days
+
+
+def delete_expired_recordings(directory: Path, days: float, now: float | None = None) -> int:
+    """Delete recordings last written more than `days` ago; return how many went.
+
+    Only <id>.recording.wav files directly in `directory`: never a symlink, never
+    anything in a subfolder. A file that cannot be deleted is logged and skipped,
+    and nothing is raised, so one bad file cannot stop the rest from going.
+    """
+    cutoff = (time.time() if now is None else now) - days * 86400
+    try:
+        entries = list(os.scandir(directory))
+    except FileNotFoundError:
+        return 0
+    except OSError as e:
+        logger.error(f"Could not list recordings for deletion in {directory}: {safe_reason(e)}")
+        return 0
+    deleted = 0
+    for entry in entries:
+        if not entry.name.endswith(SUFFIX) or not entry.is_file(follow_symlinks=False):
+            continue
+        try:
+            if entry.stat(follow_symlinks=False).st_mtime >= cutoff:
+                continue
+            os.remove(entry.path)
+            deleted += 1
+        except FileNotFoundError:
+            continue  # already gone
+        except OSError as e:
+            logger.error(f"Could not delete expired recording {entry.name}: {safe_reason(e)}")
+    if deleted:
+        logger.info(f"Deleted {deleted} recording(s) older than {days:g} days from {directory}")
+    return deleted
 
 
 class CallRecorder:
@@ -51,7 +107,7 @@ class CallRecorder:
         # The id comes from the network on a phone call, so it is not trusted to
         # be a safe filename.
         safe_id = _UNSAFE.sub("_", call_id)[:100] or "unknown"
-        self.path = directory / f"{safe_id}.wav"
+        self.path = directory / f"{safe_id}{SUFFIX}"
         self.sample_rate = sample_rate
         self._directory = directory
         self._record = record or (lambda *a, **k: None)

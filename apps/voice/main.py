@@ -64,7 +64,7 @@ from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.utils.types import NOT_GIVEN
 from pipecat.workers.runner import WorkerRunner
-from recording import CallRecorder
+from recording import CallRecorder, delete_expired_recordings, recording_retention_days
 from resilience import (
     DEFAULT_APOLOGY,
     DEFAULT_FILLER,
@@ -696,9 +696,8 @@ def build_worker(
     # recording.py. RECORDING_ENABLED=false turns it off.
     recorder = None
     if (env("RECORDING_ENABLED") or "true").strip().lower() == "true":
-        recordings_dir = Path(env("RECORDING_DIR") or HERE.parent.parent / "recordings")
         recorder = CallRecorder(
-            call_id, recordings_dir, recording_sample_rate, record=transcript.event
+            call_id, recordings_dir(), recording_sample_rate, record=transcript.event
         )
 
     # Tools are opt-in per deployment through TOOLS_ENABLED (default: end_call).
@@ -857,6 +856,10 @@ def build_worker(
     return worker
 
 
+def recordings_dir() -> Path:
+    return Path(env("RECORDING_DIR") or HERE.parent.parent / "recordings")
+
+
 def build_tts_stack():
     """The TTS for the pipeline, with an optional backup provider behind it.
 
@@ -884,6 +887,12 @@ def build_tts_stack():
 async def main() -> None:
     load_dotenv()
     ensure_ca_bundle()
+    # Recordings past RECORDING_RETENTION_DAYS go before anything is recorded.
+    try:
+        delete_expired_recordings(recordings_dir(), recording_retention_days())
+    except ValueError as e:
+        logger.error(str(e))
+        sys.exit(1)
 
     transport = LocalAudioTransport(
         LocalAudioTransportParams(audio_in_enabled=True, audio_out_enabled=True)

@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+from contextlib import asynccontextmanager
 from html import escape
 from urllib.parse import parse_qs, quote
 
@@ -30,12 +31,13 @@ from dotenv import load_dotenv
 from duration_limit import configured_ceiling, enforce_max_duration, resolve_max_duration
 from fastapi import FastAPI, Query, Request, Response, WebSocket
 from loguru import logger
-from main import build_worker, ensure_ca_bundle, env, require_env
+from main import build_worker, ensure_ca_bundle, env, recordings_dir, require_env
 from pipecat.pipeline.worker import PipelineParams
 from pipecat.serializers.plivo import PlivoFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
-from resilience import DEFAULT_APOLOGY
+from recording import delete_expired_recordings, recording_retention_days
+from resilience import DEFAULT_APOLOGY, safe_reason
 
 # Pipecat's own hang-up request has no timeout, and a hang-up that stalls is a call
 # that keeps running, so it gets one here.
@@ -51,7 +53,32 @@ PHONE_LINE_RATE = 8000
 # serializer upsamples it to this before it reaches VAD and STT.
 PIPELINE_INPUT_RATE = 16000
 
-app = FastAPI()
+# A running server deletes recordings past RECORDING_RETENTION_DAYS at start and
+# then this often, so nothing outlives the window by more than an hour.
+RETENTION_SWEEP_SECS = 3600.0
+
+
+async def enforce_recording_retention(days: float) -> None:
+    while True:
+        try:
+            await asyncio.to_thread(delete_expired_recordings, recordings_dir(), days)
+        except Exception as e:  # noqa: BLE001 - one bad pass must not end the sweeping
+            logger.error(f"Recording retention sweep failed: {safe_reason(e)}")
+        await asyncio.sleep(RETENTION_SWEEP_SECS)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    days = recording_retention_days()
+    logger.info(f"Recordings are deleted {days:g} days after the call (checked hourly)")
+    sweeper = asyncio.create_task(enforce_recording_retention(days))
+    try:
+        yield
+    finally:
+        sweeper.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
 
 
 class FailOpenPlivoSerializer(PlivoFrameSerializer):
@@ -416,6 +443,7 @@ def main() -> None:
     require_env("WEBHOOK_SECRET", "PUBLIC_HOST", "PLIVO_AUTH_ID", "PLIVO_AUTH_TOKEN")
     try:
         logger.info(f"Calls are capped at {configured_ceiling():g}s")
+        recording_retention_days()  # checked here so a bad value stops the server at once
     except ValueError as e:
         logger.error(str(e))
         raise SystemExit(1) from e

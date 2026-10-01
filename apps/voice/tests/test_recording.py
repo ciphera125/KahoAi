@@ -3,6 +3,8 @@
 import array
 import json
 import math
+import os
+import time
 import wave
 from pathlib import Path
 
@@ -17,7 +19,7 @@ from pipecat.frames.frames import (
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.frame_processor import FrameProcessor
 from pipecat.tests.utils import SleepFrame, run_test
-from recording import CallRecorder
+from recording import CallRecorder, delete_expired_recordings, recording_retention_days
 from transcript import CallTranscript
 
 RATE = 8000
@@ -114,7 +116,7 @@ async def test_a_hang_up_still_saves_the_recording(tmp_path, transcript):
     left, _, _ = channels(rec.path)
     assert len(left) == pytest.approx(RATE, abs=RATE // 10)
     saved = [e for e in events(transcript) if e["event"] == "recording_saved"]
-    assert saved == [saved[0]] and saved[0]["file"] == "call-1.wav"
+    assert saved == [saved[0]] and saved[0]["file"] == "call-1.recording.wav"
     assert saved[0]["seconds"] == pytest.approx(1.0, abs=0.1)
 
 
@@ -273,7 +275,7 @@ def test_every_call_is_recorded_right_after_the_transport_output(worker_env, tmp
     transport = FakeTransport()
     worker = build_worker(transport, call_id="call-9", recording_sample_rate=RATE)
 
-    assert worker.recorder.path == tmp_path / "recordings" / "call-9.wav"
+    assert worker.recorder.path == tmp_path / "recordings" / "call-9.recording.wav"
     assert worker.recorder.sample_rate == RATE
     procs = pipeline_processors(worker)
     after_output = procs[procs.index(transport.out) + 1]
@@ -294,3 +296,125 @@ def test_the_recordings_folder_is_never_committed():
     """Recordings hold callers' voices and any ID number they read out, unmasked."""
     gitignore = Path(__file__).resolve().parents[3] / ".gitignore"
     assert "recordings/" in gitignore.read_text(encoding="utf-8").splitlines()
+
+
+# --- retention: recordings are deleted RECORDING_RETENTION_DAYS after the call --
+
+
+DAY = 86400
+
+
+def aged(path: Path, days: float, now: float) -> Path:
+    path.write_bytes(b"RIFF")
+    os.utime(path, (now - days * DAY, now - days * DAY))
+    return path
+
+
+def test_recordings_past_the_window_are_deleted_and_newer_ones_kept(tmp_path):
+    now = time.time()
+    old = aged(tmp_path / "a.recording.wav", 61, now)
+    recent = aged(tmp_path / "b.recording.wav", 59, now)
+    assert delete_expired_recordings(tmp_path, 60, now=now) == 1
+    assert not old.exists() and recent.exists()
+
+
+def test_only_files_the_recorder_writes_are_ever_deleted(tmp_path):
+    """A RECORDING_DIR pointed at a folder of other audio must not lose that audio."""
+    now = time.time()
+    keep = [
+        aged(tmp_path / "song.wav", 400, now),
+        aged(tmp_path / "notes.recording.txt", 400, now),
+        aged(tmp_path / "x.recording.wav.bak", 400, now),
+    ]
+    (tmp_path / "sub").mkdir()
+    keep.append(aged(tmp_path / "sub" / "c.recording.wav", 400, now))
+    elsewhere = aged(tmp_path / "sub" / "target.recording.wav", 400, now)
+    (tmp_path / "link.recording.wav").symlink_to(elsewhere)
+    assert delete_expired_recordings(tmp_path, 60, now=now) == 0
+    assert all(p.exists() for p in keep) and elsewhere.exists()
+
+
+def test_a_missing_folder_is_not_an_error(tmp_path):
+    assert delete_expired_recordings(tmp_path / "never-made", 60) == 0
+
+
+def test_a_file_that_cannot_be_deleted_is_skipped_and_the_rest_still_go(tmp_path, monkeypatch):
+    now = time.time()
+    stuck = aged(tmp_path / "a.recording.wav", 90, now)
+    gone = aged(tmp_path / "b.recording.wav", 90, now)
+    real_remove = os.remove
+
+    def remove(path):
+        if str(path).endswith("a.recording.wav"):
+            raise PermissionError(13, "Permission denied")
+        real_remove(path)
+
+    monkeypatch.setattr(os, "remove", remove)
+    assert delete_expired_recordings(tmp_path, 60, now=now) == 1
+    assert stuck.exists() and not gone.exists()
+
+
+def test_retention_defaults_to_60_days(monkeypatch):
+    monkeypatch.delenv("RECORDING_RETENTION_DAYS", raising=False)
+    assert recording_retention_days() == 60
+
+
+@pytest.mark.parametrize("raw", ["30", "0.5", " 90 "])
+def test_a_valid_retention_is_used(monkeypatch, raw):
+    monkeypatch.setenv("RECORDING_RETENTION_DAYS", raw)
+    assert recording_retention_days() == float(raw)
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "sixty", "inf", "nan"])
+def test_an_invalid_retention_is_an_error_not_a_silent_default(monkeypatch, raw):
+    monkeypatch.setenv("RECORDING_RETENTION_DAYS", raw)
+    with pytest.raises(ValueError):
+        recording_retention_days()
+
+
+def test_the_phone_server_deletes_expired_recordings_at_start_and_then_periodically(
+    monkeypatch, tmp_path
+):
+    import server
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setenv("RECORDING_DIR", str(tmp_path))
+    monkeypatch.setenv("RECORDING_RETENTION_DAYS", "60")
+    monkeypatch.setattr(server, "RETENTION_SWEEP_SECS", 0.05)
+    now = time.time()
+    first = aged(tmp_path / "a.recording.wav", 61, now)
+    recent = aged(tmp_path / "b.recording.wav", 1, now)
+
+    def gone(path, timeout=3.0):
+        end = time.monotonic() + timeout
+        while path.exists() and time.monotonic() < end:
+            time.sleep(0.02)
+        return not path.exists()
+
+    with TestClient(server.app):
+        assert gone(first)  # the sweep at start
+        later = aged(tmp_path / "c.recording.wav", 61, time.time())
+        assert gone(later)  # and the next one, while the server runs
+    assert recent.exists()
+
+
+def test_the_phone_server_refuses_to_start_with_an_invalid_retention(monkeypatch):
+    import server
+
+    for name, value in {
+        "WEBHOOK_SECRET": "s",
+        "PUBLIC_HOST": "h",
+        "PLIVO_AUTH_ID": "i",
+        "PLIVO_AUTH_TOKEN": "t",
+        "RECORDING_RETENTION_DAYS": "forever",
+    }.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.delenv("MAX_CALL_DURATION_SECS", raising=False)
+    monkeypatch.setattr(server, "load_dotenv", lambda: None)
+    monkeypatch.setattr(server, "ensure_ca_bundle", lambda: None)
+    reached = []
+    monkeypatch.setattr(server, "check_region", lambda: reached.append("startup went on"))
+    monkeypatch.setattr(server.uvicorn, "run", lambda *a, **k: reached.append("served"))
+    with pytest.raises(SystemExit):
+        server.main()
+    assert reached == []
