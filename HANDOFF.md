@@ -12,10 +12,9 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-09-29, after the LLM fallback (`af8e967`), the interruption filter
-(`6819dc2`) and the human-transfer / webhook / filler / warm-up work (the commit after
-those; refer to it by its message). CI was green on `af8e967` (#23) and `6819dc2` (#24);
-check the newest run at the start of the next session. No real phone
+Last updated: 2026-10-01. Everything through `2c7418c` (transfer/webhook tools, filler,
+warm-up) is pushed, and CI is green on `af8e967` (#23), `6819dc2` (#24) and `2c7418c`
+(#25). This file's own update is the commit after `2c7418c`. No real phone
 call, inbound or outbound, has happened yet: that is the next milestone.
 
 ---
@@ -84,7 +83,7 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
-| (2026-09-29) | Transfer-to-human and webhook tools, spoken filler for a slow reply, startup warm-up, region warning, `scripts/talk.py` |
+| `2c7418c` | Transfer-to-human and webhook tools, spoken filler for a slow reply, startup warm-up, region warning, `scripts/talk.py` |
 | `6819dc2` | Interruption filter (`interruptions.py`): coughs and backchannel no longer interrupt the agent |
 | `af8e967` | LLM fallback: a qwen 429/5xx retries the turn on `openai/gpt-oss-20b` before the apology |
 | `c43c24a` | `scripts/call.py`: dial out through Plivo into the same pipeline (+ docs, tests, `.env.example`) |
@@ -425,3 +424,8 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   built, deliberately: language config (needs a listener), recording (consent), Bedrock.
 - Next session: review this file, check CI on the newest commit, then the first real Plivo
   calls once the owner supplies the credentials.
+
+**2026-10-01.**
+- Confirmed CI green on `2c7418c` (run #25) by screenshot of the Actions page; no code changed
+  since. Handoff refreshed only. Waiting on the owner for the Plivo credentials, the number, the
+  tunnel host and a `TRANSFER_NUMBER`; then the first real inbound call, then outbound.
