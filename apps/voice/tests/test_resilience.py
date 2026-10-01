@@ -3,6 +3,8 @@ import json
 from types import SimpleNamespace
 
 import resilience
+from pipecat.frames.frames import BotStartedSpeakingFrame, BotStoppedSpeakingFrame, TextFrame
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.utils.errors import ErrorCategory
 from resilience import CallHealth
 from transcript import CallTranscript
@@ -35,7 +37,7 @@ class Harness:
         self.health = CallHealth(
             {"stt": [self.stt], "llm": [self.llm], "tts": self.tts},
             record=lambda name, **f: self.events.append((name, f)),
-            say_and_end=say,
+            interrupt_and_say=say,
             abort=abort,
             switch_to=switch,
             wrappers=wrappers,
@@ -52,14 +54,17 @@ class Harness:
 # --- a role with nothing left ends the call on purpose -------------------------
 
 
-async def test_dead_stt_says_an_apology_and_ends():
+async def test_dead_stt_says_an_apology_and_ends_the_call_once_it_is_heard():
     h = Harness()
     h.stt.is_usable = False
     await h.error(h.stt)
     assert h.said == [resilience.DEFAULT_APOLOGY]
-    assert h.aborts == []  # the apology ends the call itself, gracefully
+    assert h.aborts == []  # not yet: the caller has not heard it
     assert h.health.failed.startswith("stt:")
     assert h.events[0][0] == "call_failed" and h.events[0][1]["role"] == "stt"
+    h.health.bot_started()
+    await h.health.bot_stopped()
+    assert h.aborts == [True]
     h.health.finished()
 
 
@@ -165,12 +170,45 @@ async def test_only_the_first_failure_acts():
 # --- the apology cannot hang the call forever ----------------------------------
 
 
-async def test_an_apology_that_never_finishes_is_cut_off_by_the_backstop():
+async def test_an_apology_that_never_starts_is_cut_off_by_the_backstop_unspoken():
     h = Harness(apology_backstop_secs=0.05)
     h.stt.is_usable = False
     await h.error(h.stt)
     await asyncio.sleep(0.15)
     assert h.aborts == [False]
+
+
+async def test_an_apology_that_stalls_part_way_is_cut_off_as_spoken():
+    h = Harness(apology_backstop_secs=0.05)
+    h.stt.is_usable = False
+    await h.error(h.stt)
+    h.health.bot_started()
+    await asyncio.sleep(0.15)
+    assert h.aborts == [True]
+
+
+async def test_the_stop_of_whatever_the_apology_interrupted_does_not_end_the_call():
+    """Interrupting the bot makes it stop speaking before the apology starts."""
+    h = Harness()
+    h.stt.is_usable = False
+    await h.error(h.stt)
+    await h.health.bot_stopped()  # the interrupted speech
+    assert h.aborts == []
+    h.health.bot_started()
+    await h.health.bot_stopped()
+    assert h.aborts == [True]
+    h.health.finished()
+
+
+async def test_a_heard_apology_ends_the_call_once_and_stops_the_backstop():
+    h = Harness(apology_backstop_secs=0.05)
+    h.stt.is_usable = False
+    await h.error(h.stt)
+    h.health.bot_started()
+    await h.health.bot_stopped()
+    await h.health.bot_stopped()
+    await asyncio.sleep(0.15)
+    assert h.aborts == [True]
 
 
 async def test_a_finished_pipeline_cancels_the_backstop():
@@ -188,7 +226,7 @@ async def test_a_failing_apology_falls_back_to_an_unspoken_abort():
     async def broken(text):
         raise RuntimeError("queue closed")
 
-    h.health._say_and_end = broken
+    h.health._interrupt_and_say = broken
     h.stt.is_usable = False
     await h.error(h.stt)
     assert h.aborts == [False]
@@ -237,16 +275,57 @@ async def test_arming_after_failure_does_nothing():
     h.health.finished()
 
 
-async def test_the_observer_disarms_when_the_bot_starts_speaking():
-    from pipecat.frames.frames import BotStartedSpeakingFrame, TextFrame
+def pushed(frame, direction=FrameDirection.DOWNSTREAM):
+    return SimpleNamespace(frame=frame, direction=direction)
 
+
+async def test_the_observer_disarms_when_the_bot_starts_speaking():
     h = Harness(response_deadline_secs=0.03)
     observer = resilience.BotSpeechObserver(h.health)
     h.health.arm()
-    await observer.on_push_frame(SimpleNamespace(frame=TextFrame(text="hi")))
+    await observer.on_push_frame(pushed(TextFrame(text="hi")))
     assert h.health._watch_task is not None  # text alone is not audible speech
-    await observer.on_push_frame(SimpleNamespace(frame=BotStartedSpeakingFrame()))
+    await observer.on_push_frame(pushed(BotStartedSpeakingFrame()))
     assert h.health._watch_task is None
+
+
+async def test_the_fillers_audio_seen_at_every_hop_still_counts_once():
+    """The output transport announces a start in both directions and observers see
+    each copy at every hop. Counted each time, the filler's own audio stopped the
+    deadline, and a hung LLM was then never caught."""
+    spoken = []
+
+    async def say(text):
+        spoken.append(text)
+
+    h = Harness(response_deadline_secs=0.3, say=say, filler_after_secs=0.05)
+    observer = resilience.BotSpeechObserver(h.health)
+    h.health.arm()
+    await asyncio.sleep(0.1)  # the filler is queued
+    down, up = BotStartedSpeakingFrame(), BotStartedSpeakingFrame()
+    for _ in range(3):  # output -> recorder -> assistant aggregator -> sink
+        await observer.on_push_frame(pushed(down))
+    for _ in range(4):  # output -> TTS -> LLM -> user aggregator -> STT
+        await observer.on_push_frame(pushed(up, FrameDirection.UPSTREAM))
+    assert spoken and h.health._watch_task is not None  # still waiting for the reply
+    await asyncio.sleep(0.9)
+    assert h.health.failed and h.health.failed.startswith("response:")
+    h.health.finished()
+
+
+async def test_the_observer_reports_the_end_of_the_apology_once():
+    h = Harness()
+    observer = resilience.BotSpeechObserver(h.health)
+    h.stt.is_usable = False
+    await h.error(h.stt)
+    await observer.on_push_frame(pushed(BotStartedSpeakingFrame()))
+    stop = BotStoppedSpeakingFrame()
+    await observer.on_push_frame(pushed(BotStoppedSpeakingFrame(), FrameDirection.UPSTREAM))
+    assert h.aborts == []  # only the downstream copy counts
+    for _ in range(3):
+        await observer.on_push_frame(pushed(stop))
+    assert h.aborts == [True]
+    h.health.finished()
 
 
 # --- what is written down ------------------------------------------------------

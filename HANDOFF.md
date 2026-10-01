@@ -127,7 +127,7 @@ apps/voice/personas.py   safe persona lookup by name (names arrive from the netw
 scripts/call.py          dial out via Plivo: --number, --agent, --max-duration, --dry-run
 apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
-apps/voice/tests/        269 tests
+apps/voice/tests/        275 tests
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
@@ -196,6 +196,17 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 - **Filler line:** a reply slower than `FILLER_AFTER_SECS` (3) gets `FILLER_MESSAGE` once; its
   audio does not disarm the response deadline. Unit tests, mutation-checked; never heard on
   a real call.
+- **A hung LLM request (fixed 2026-10-02).** Reproduced live first, through the phone server
+  with the Groq client pointed at an endpoint that never answers: the caller heard nothing
+  for 45s and the call never ended, because the filler, the apology and the EndFrame all
+  queued behind the request, and Pipecat would not act on a cancel until that EndFrame got
+  through. Also found: observers see each "bot started speaking" at every hop and in both
+  directions, so a filler that really played would have stopped the deadline. Now the filler
+  is pushed from the LLM's place, the apology goes in behind an interruption that cancels the
+  request, the call is cancelled once the apology has been heard, and each start/stop counts
+  once. Same live run after the fix: filler heard at 5s and 15s, apology at 22-26s, line
+  closed at 28s. `tests/test_hung_llm.py` drives the real `build_worker` wiring with a hung
+  LLM; four mutations, all caught.
 - **Warm-up:** server start loads the VAD/turn models (about 50ms per call anyway) and makes one
   free Groq request; verified live. Does not pool provider connections across calls.
 - **Call recording (2026-10-02):** every call to `recordings/<id>.wav`, stereo (caller left,
@@ -236,14 +247,13 @@ Never claim any of these works until a real call shows it.
   whether Plivo then plays `<Speak>` and dials the number is unseen. A transfer also ends our
   websocket; the disconnect handler then cancels the pipeline (not exercised for this case).
 - The interruption filter has never been felt on a real call.
-- **The filler line looks broken when the LLM stalls.** Seen live 2026-10-02: Groq gave no first
-  token for 11s; `filler_spoken` was logged at 3s but the client heard nothing until after its
-  own next turn. From Pipecat's source: the filler is queued at the start of the pipeline as a
-  `TTSSpeakFrame` (a data frame), and the LLM handles a request inline, so the frame waits behind
-  the stalled request. The apology from `say_and_end` goes the same way, so a hung LLM may also
-  hold back the apology and the end of the call (not tested live). Likely fix: push them
-  downstream from the LLM, as `call.hang_up` already pushes from it; then test against an LLM
-  endpoint that never answers.
+- **`end_call` can still deadlock behind a hung LLM.** It ends the call with an EndFrame, and
+  Pipecat then asks the LLM for a goodbye. If that one request hangs, the EndFrame waits behind
+  it and every later cancel (the apology path, the caller hanging up, the max-duration guard's
+  cancel step) waits too. The guard's Plivo hang-up still ends the call for the caller, but the
+  call's task never finishes. Not fixed; the fix for the filler/apology does not cover it.
+- The LLM request itself still has no deadline of its own (the OpenAI client's default is
+  600s, with quiet retries); the response deadline is what catches a hang.
 - Call recordings have not been listened to by a person (checked by levels and timings) and
   have not run on a real Plivo call.
 - Hindi/Hinglish quality, Smallest AI, and everything in the real-call path are unchanged from
@@ -314,8 +324,8 @@ warning, `scripts/talk.py`. Remaining:
    Pipecat lists `meher`, `devansh`, `kartik`, `maithili` as Hindi-capable). Sarvam is out.
 3. Plivo V3 webhook signature validation (replaces the shared-secret token as the main
    guard; do it against a real request).
-4. Fix the filler and apology being held behind a stalled LLM (section 5), with a live test
-   against an LLM that never answers.
+4. Close the `end_call` deadlock (section 5), and give the LLM request its own deadline with
+   the client's hidden retries off, so the gpt-oss fallback acts at once on a stall.
 5. Concurrency, and deploying to `ap-south-1` before real traffic (see CLAUDE.md).
 6. Full regression across English/Hindi, inbound/outbound, once telephony works.
 7. Still owed to the "done" standard: a proper latency benchmark for the phone path (only
@@ -355,6 +365,16 @@ warning, `scripts/talk.py`. Remaining:
   `CallHealth` re-checks 0.5s later for that reason.
 - A `ServiceSwitcher` pushes its own error once every service behind it is dead;
   that frame's processor is the switcher, not a service.
+- Frames queued on the worker enter at the start of the pipeline and wait behind the LLM's
+  current request. Push from the LLM (`llm.push_frame`) anything that must get past a busy
+  LLM; send an `InterruptionFrame` first when the request itself should be dropped.
+- Pipecat waits for an EndFrame to cross the whole pipeline, with no time limit, before it
+  acts on a cancel (`PipelineWorker._wait_for_pipeline_end`). Never end a call from failure
+  handling with an EndFrame.
+- Observers see a frame at every hop, and the output transport sends each "bot started/
+  stopped speaking" in both directions: count downstream copies, once per frame id.
+- The hung-LLM harness: a local TCP server that accepts and never answers, and a wrapper
+  that sets `base_url` on `PortableGroqLLMService` before `server.main()`.
 - Never store or log a provider error verbatim: it can embed request headers.
   Use `resilience.safe_reason`.
 - The live failure harness: run the real server with one service given a bad key

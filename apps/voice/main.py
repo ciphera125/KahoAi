@@ -29,9 +29,9 @@ from loguru import logger
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
-    EndFrame,
     EndTaskFrame,
     Frame,
+    InterruptionFrame,
     LLMRunFrame,
     ManuallySwitchServiceFrame,
     MetricsFrame,
@@ -760,8 +760,13 @@ def build_worker(
     params.enable_usage_metrics = True
 
     # What happens when a provider dies mid-call. See resilience.py for the rules.
-    async def say_and_end(text: str) -> None:
-        await worker.queue_frames([TTSSpeakFrame(text), EndFrame()])
+    # Frames queued on the worker enter at the start of the pipeline and wait behind
+    # whatever the LLM is doing; a hung LLM request held back the filler, the apology
+    # and the end of the call that way (seen live, 2026-10-02). So the apology goes in
+    # behind an interruption, which overtakes everything and cancels the request, and
+    # the frames that must not cancel the reply are pushed out from the LLM's place.
+    async def interrupt_and_say(text: str) -> None:
+        await worker.queue_frames([InterruptionFrame(), TTSSpeakFrame(text)])
 
     async def abort(spoken: bool) -> None:
         if on_abort is not None:
@@ -770,15 +775,15 @@ def build_worker(
             await worker.cancel(reason="provider failure")
 
     async def say(text: str) -> None:
-        await worker.queue_frame(TTSSpeakFrame(text))
+        await llm.push_frame(TTSSpeakFrame(text))
 
     async def switch_to(service) -> None:
-        await worker.queue_frame(ManuallySwitchServiceFrame(service=service))
+        await llm.push_frame(ManuallySwitchServiceFrame(service=service))
 
     health = CallHealth(
         {"stt": [stt], "llm": [llm], "tts": tts_services},
         record=transcript.event,
-        say_and_end=say_and_end,
+        interrupt_and_say=interrupt_and_say,
         abort=abort,
         switch_to=switch_to if switcher else None,
         say=say,

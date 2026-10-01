@@ -16,6 +16,12 @@ turn every way a call can go quiet into something defined:
    talking within RESPONSE_DEADLINE_SECS, and missing it twice in a row ends the
    call.
 
+An apology interrupts whatever is under way, which also cancels a hung request,
+and the call is cancelled once the caller has heard it. It is not ended with an
+EndFrame: Pipecat waits, with no time limit, for an EndFrame to cross the whole
+pipeline before it will act on a cancel, so an EndFrame stuck behind a hung
+request blocked every way of ending the call (seen live, 2026-10-02).
+
 Everything is recorded in the call transcript as a `call_failed` event with the
 role and reason, never with call content.
 """
@@ -27,8 +33,9 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 
 from loguru import logger
-from pipecat.frames.frames import BotStartedSpeakingFrame
+from pipecat.frames.frames import BotStartedSpeakingFrame, BotStoppedSpeakingFrame
 from pipecat.observers.base_observer import BaseObserver, FramePushed
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.utils.errors import ErrorCategory
 
 DEFAULT_FILLER = "One moment."
@@ -41,7 +48,7 @@ ERROR_THRESHOLD = 3
 ERROR_WINDOW_SECS = 20.0
 RESPONSE_DEADLINE_SECS = 10.0
 MAX_MISSED_RESPONSES = 2
-# How long to let a spoken apology play before cutting the call regardless.
+# How long, from queueing it, to let the apology play before cutting the call regardless.
 APOLOGY_BACKSTOP_SECS = 10.0
 
 
@@ -67,7 +74,8 @@ class CallHealth:
 
     roles:        role name -> the services that can do it, primary first
     record:       write a marker to the transcript, record(event, **fields)
-    say_and_end:  speak text, then end the call gracefully
+    interrupt_and_say: stop whatever the bot is doing (a hung request included) and
+                  speak text; this ends the call once the caller has heard it
     abort:        stop the call now; spoken says whether the caller heard an apology
     switch_to:    force a role over to another of its services
     say:          speak text without ending the call (the "one moment" filler); optional
@@ -80,7 +88,7 @@ class CallHealth:
         roles: dict[str, list],
         *,
         record: Callable[..., None],
-        say_and_end: Callable[[str], Awaitable[None]],
+        interrupt_and_say: Callable[[str], Awaitable[None]],
         abort: Callable[[bool], Awaitable[None]],
         switch_to: Callable[[object], Awaitable[None]] | None = None,
         say: Callable[[str], Awaitable[None]] | None = None,
@@ -99,7 +107,7 @@ class CallHealth:
         self._roles = roles
         self._wrappers = wrappers or {}
         self._record = record
-        self._say_and_end = say_and_end
+        self._interrupt_and_say = interrupt_and_say
         self._abort = abort
         self._switch_to = switch_to
         self._say = say
@@ -109,6 +117,9 @@ class CallHealth:
         # that audio is not mistaken for the reply and does not disarm the deadline.
         self._filler_pending = False
         self._apology = apology
+        # None, then "queued", "playing" (its audio started) and "heard" (it stopped).
+        self._apology_state: str | None = None
+        self._ended = False
         self._threshold = error_threshold
         self._window = error_window_secs
         self._deadline = response_deadline_secs
@@ -210,6 +221,18 @@ class CallHealth:
         self.disarm(reset_misses=False)
         self._watch_task = asyncio.create_task(self._watch())
 
+    def bot_started(self) -> None:
+        """The bot's audio started. BotSpeechObserver calls this once per utterance."""
+        if self._apology_state == "queued":
+            self._apology_state = "playing"
+        self.disarm()
+
+    async def bot_stopped(self) -> None:
+        """The bot's audio stopped. If that was the apology, the call is over."""
+        if self._apology_state == "playing" and not self._closed:
+            self._apology_state = "heard"
+            await self._end(spoken=True)
+
     def disarm(self, reset_misses: bool = True) -> None:
         """The bot has started speaking, so the pipeline is alive."""
         if self._filler_pending:
@@ -272,24 +295,37 @@ class CallHealth:
 
         # TTS being the broken part means an apology cannot be spoken by us.
         if role != "tts" and self._usable("tts"):
+            self._apology_state = "queued"
             try:
-                await self._say_and_end(self._apology)
+                await self._interrupt_and_say(self._apology)
             except Exception as e:
                 logger.error(f"Could not queue the apology: {e!r}")
-                await self._abort(False)
+                await self._end(spoken=False)
                 return
-            # If the apology never plays (TTS hangs too), do not wait forever.
-            self._backstop_task = asyncio.create_task(self._backstop_then_abort())
+            # bot_stopped() ends the call once the apology has played. If it never
+            # starts, or never finishes (TTS hangs too), do not wait forever.
+            self._backstop_task = asyncio.create_task(self._backstop_then_end())
         else:
-            await self._abort(False)
+            await self._end(spoken=False)
 
-    async def _backstop_then_abort(self) -> None:
+    async def _backstop_then_end(self) -> None:
         try:
             await asyncio.sleep(self._backstop)
         except asyncio.CancelledError:
             return
+        self._backstop_task = None
+        heard = self._apology_state == "playing"  # cut off part-way still counts
         logger.error("The apology did not finish in time; ending the call")
-        await self._abort(False)
+        await self._end(spoken=heard)
+
+    async def _end(self, spoken: bool) -> None:
+        if self._ended or self._closed:
+            return
+        self._ended = True
+        if self._backstop_task:
+            self._backstop_task.cancel()
+            self._backstop_task = None
+        await self._abort(spoken)
 
     def finished(self) -> None:
         """The pipeline has ended: stop every timer this call started."""
@@ -304,16 +340,30 @@ class CallHealth:
 
 
 class BotSpeechObserver(BaseObserver):
-    """Tell CallHealth the moment the bot's audio actually starts.
+    """Tell CallHealth when the bot's audio actually starts and stops, once each.
 
     Watching the audible signal, not the LLM's text, is what lets the response
-    deadline catch a TTS that swallows the text and says nothing.
+    deadline catch a TTS that swallows the text and says nothing. The output
+    transport announces every start and stop twice, once in each direction, and
+    observers see each copy at every hop. Counted every time, the filler's own
+    audio looked like the reply and stopped the deadline, so only the downstream
+    copy counts, once.
     """
 
     def __init__(self, health: CallHealth):
         super().__init__()
         self._health = health
+        self._last_seen: dict[type, int] = {}
 
     async def on_push_frame(self, data: FramePushed) -> None:
-        if isinstance(data.frame, BotStartedSpeakingFrame):
-            self._health.disarm()
+        frame = data.frame
+        kind = type(frame)
+        if kind not in (BotStartedSpeakingFrame, BotStoppedSpeakingFrame):
+            return
+        if data.direction != FrameDirection.DOWNSTREAM or self._last_seen.get(kind) == frame.id:
+            return
+        self._last_seen[kind] = frame.id
+        if kind is BotStartedSpeakingFrame:
+            self._health.bot_started()
+        else:
+            await self._health.bot_stopped()

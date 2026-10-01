@@ -114,6 +114,11 @@ deadline); `summary.py` and `tools.py` show the pattern for calls off the path
 errors contained instead of raised). A new external call needs the same three
 things and a test that injects its failure. Stored or logged error text goes
 through `safe_reason`, since provider errors can echo headers and keys.
+Frames queued on the worker wait behind whatever the LLM is doing, so speech
+that must be heard while the LLM may be stuck is pushed from the LLM's place in
+the pipeline, and failure handling ends a call by cancelling it, never with an
+EndFrame (one stuck behind a hung request blocks every later cancel). See
+`main.py` and `resilience.py`; `tests/test_hung_llm.py` holds the line.
 
 **Every call has a hard maximum duration.** `MAX_CALL_DURATION_SECS` (default 600)
 is enforced by `duration_limit.py` from a timer that runs beside the pipeline, so
