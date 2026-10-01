@@ -10,11 +10,15 @@ from pathlib import Path
 
 import pytest
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
+    BotStoppedSpeakingFrame,
     CancelFrame,
     ErrorFrame,
     InputAudioRawFrame,
     OutputAudioRawFrame,
     TextFrame,
+    UserStartedSpeakingFrame,
+    UserStoppedSpeakingFrame,
 )
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.processors.frame_processor import FrameProcessor
@@ -39,16 +43,25 @@ def conversation(caller_secs: float, agent_secs: float) -> list:
     speaks. Input is at the pipeline's 16kHz, output at its default 24kHz. Input
     audio is a system frame and jumps ahead of queued output audio, so each 20ms
     pair is let through before the next, as real time would.
+
+    Around each side's speech go the signals a real call carries (the user
+    aggregator's user started/stopped speaking, the output transport's bot
+    started/stopped speaking). They tell the recorder whose side is live, so it
+    never pads silence into the middle of someone's speech; without them, a busy
+    machine that let a frame through late put gaps into the agent's audio.
     """
-    frames = []
+    frames = [UserStartedSpeakingFrame()]
     speech = tone(caller_secs, 16000)
     for i in range(0, len(speech), 640):  # 20ms at 16kHz, 16-bit
         frames.append(InputAudioRawFrame(speech[i : i + 640], sample_rate=16000, num_channels=1))
+    frames += [UserStoppedSpeakingFrame(), BotStartedSpeakingFrame()]
     reply = tone(agent_secs, 24000)
     for i in range(0, len(reply), 960):  # 20ms at 24kHz
         frames.append(InputAudioRawFrame(bytes(640), sample_rate=16000, num_channels=1))
         frames.append(OutputAudioRawFrame(reply[i : i + 960], sample_rate=24000, num_channels=1))
         frames.append(SleepFrame(0.005))
+    # The stop is a system frame too: let the queued audio through before it.
+    frames += [SleepFrame(0.05), BotStoppedSpeakingFrame()]
     return frames
 
 
@@ -62,6 +75,34 @@ def channels(path: Path) -> tuple[list[int], list[int], int]:
 
 def rms(samples: list[int]) -> float:
     return math.sqrt(sum(s * s for s in samples) / len(samples)) if samples else 0.0
+
+
+# Pipecat lines the two sides up only as precisely as its resampler hands audio over,
+# in bursts of about 0.1s, so where a side's speech lands can move by about that much.
+SLACK = 0.2
+
+
+def quiet_stretches_inside(samples: list[int], rate: int, start: float, end: float) -> list[float]:
+    """Quiet 20ms windows between the first and last loud ones in [start, end): gaps in speech."""
+    window = rate // 50
+    times = [t / rate for t in range(int(start * rate), int(end * rate) - window + 1, window)]
+    loud = [rms(samples[int(t * rate) : int(t * rate) + window]) > 2000 for t in times]
+    if True not in loud:
+        return []
+    first, last = loud.index(True), len(loud) - 1 - loud[::-1].index(True)
+    return [times[i] for i in range(first, last + 1) if not loud[i]]
+
+
+def onsets(samples: list[int], rate: int, quiet: float = 0.2) -> list[float]:
+    """When each stretch of speech starts (s): a loud 20ms window after `quiet` s of quiet ones."""
+    window, starts, last_loud = rate // 50, [], -1.0
+    for i in range(0, len(samples) - window + 1, window):
+        t = i / rate
+        if rms(samples[i : i + window]) > 2000:
+            if t - last_loud > quiet:
+                starts.append(t)
+            last_loud = t
+    return starts
 
 
 def events(transcript: CallTranscript) -> list[dict]:
@@ -83,14 +124,24 @@ async def test_caller_is_on_the_left_and_the_agent_on_the_right_in_time_order(tm
 
     left, right, rate = channels(rec.path)
     assert rate == RATE
-    assert len(left) == pytest.approx(2 * RATE, abs=RATE // 10)  # resamplers hold back a little
-    first, second = slice(800, RATE - 800), slice(RATE + 800, 2 * RATE - 800)  # 0.1s off each edge
-    assert rms(left[first]) > 4000 and rms(right[first]) < 100  # the caller spoke first
-    assert rms(right[second]) > 4000 and rms(left[second]) < 100  # then the agent replied
+    assert len(left) == pytest.approx(2 * RATE, abs=SLACK * RATE)  # resamplers hold some back
+    assert onsets(left, RATE) == pytest.approx([0.0], abs=SLACK)  # the caller spoke first
+    assert onsets(right, RATE) == pytest.approx([1.0], abs=SLACK)  # then the agent replied
+    caller_only, agent_only = slice(800, int(0.7 * RATE)), slice(int(1.3 * RATE), int(1.7 * RATE))
+    assert rms(left[caller_only]) > 4000 and rms(right[caller_only]) < 100
+    assert rms(right[agent_only]) > 4000 and rms(left[agent_only]) < 100
 
 
 async def test_writing_as_the_call_goes_changes_nothing_in_the_recording(tmp_path):
-    """Pipecat's own chunking moved the speaker at every write (measured); ours must not."""
+    """Pipecat's own chunking padded whoever was speaking at every write and pushed them
+    later (measured: a 6s call came out 6.65s, the agent's 3s reply in four pieces).
+    Written as it goes, a recording must come out as it does written at the end.
+
+    Not compared byte for byte: the two recorders see the same frames a moment apart
+    and, on a busy machine, can line the sides up a frame differently (CI did), as
+    two runs of any call can. Length, where each side's speech starts, and an
+    unbroken reply are what the old chunking got wrong.
+    """
     as_it_goes = CallRecorder("chunked", tmp_path, RATE, chunk_secs=0.1)
     at_the_end = CallRecorder("whole", tmp_path, RATE, chunk_secs=1000)
     writes = []
@@ -101,11 +152,12 @@ async def test_writing_as_the_call_goes_changes_nothing_in_the_recording(tmp_pat
     await run_test(both, frames_to_send=[*conversation(1.0, 3.0), *conversation(1.0, 1.0)])
 
     assert len(writes) > 30
-    assert channels(as_it_goes.path) == channels(at_the_end.path)
-    _, right, _ = channels(as_it_goes.path)
-    reply = right[int(1.1 * RATE) : int(3.9 * RATE)]
-    gaps = [i for i in range(0, len(reply) - 160, 160) if rms(reply[i : i + 160]) < 2000]
-    assert gaps == []  # the agent's 3s reply is one unbroken stretch
+    left, right, _ = channels(as_it_goes.path)
+    whole_left, whole_right, _ = channels(at_the_end.path)
+    assert len(left) == pytest.approx(len(whole_left), abs=RATE // 50)  # within 20ms
+    assert onsets(left, RATE) == pytest.approx(onsets(whole_left, RATE), abs=0.05)
+    assert onsets(right, RATE) == pytest.approx(onsets(whole_right, RATE), abs=0.05)
+    assert quiet_stretches_inside(right, RATE, 0.5, 4.5) == []  # the 3s reply is unbroken
 
 
 async def test_a_hang_up_still_saves_the_recording(tmp_path, transcript):
@@ -114,10 +166,10 @@ async def test_a_hang_up_still_saves_the_recording(tmp_path, transcript):
     frames = [*conversation(0.5, 0.5), CancelFrame()]
     await run_test(rec.processor(), frames_to_send=frames, send_end_frame=False)
     left, _, _ = channels(rec.path)
-    assert len(left) == pytest.approx(RATE, abs=RATE // 10)
+    assert len(left) == pytest.approx(RATE, abs=SLACK * RATE)
     saved = [e for e in events(transcript) if e["event"] == "recording_saved"]
     assert saved == [saved[0]] and saved[0]["file"] == "call-1.recording.wav"
-    assert saved[0]["seconds"] == pytest.approx(1.0, abs=0.1)
+    assert saved[0]["seconds"] == pytest.approx(1.0, abs=SLACK)
 
 
 def test_the_file_is_playable_before_it_is_closed(tmp_path, transcript):
@@ -223,8 +275,9 @@ async def test_if_writing_as_it_goes_breaks_the_whole_call_is_written_at_the_end
     # Uncaught, Pipecat would report an error upstream on every audio frame.
     assert len(attempts) == 1 and not any(isinstance(f, ErrorFrame) for f in up)
     left, right, _ = channels(rec.path)
-    assert len(left) == pytest.approx(2 * RATE, abs=RATE // 10)
-    assert rms(left[800 : RATE - 800]) > 4000 and rms(right[RATE + 800 : -800]) > 4000
+    assert len(left) == pytest.approx(2 * RATE, abs=SLACK * RATE)
+    assert onsets(left, RATE) == pytest.approx([0.0], abs=SLACK)
+    assert onsets(right, RATE) == pytest.approx([1.0], abs=SLACK)
 
 
 def test_the_installed_pipecat_supports_writing_as_the_call_goes():

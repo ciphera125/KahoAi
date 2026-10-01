@@ -9,3 +9,5 @@ select = ["E", "F", "I", "B"]
 testpaths = ["tests"]
 pythonpath = ["."]
 asyncio_mode = "auto"
+# A test stuck this long dumps every thread's stack, so a hang in CI shows where.
+faulthandler_timeout = 120

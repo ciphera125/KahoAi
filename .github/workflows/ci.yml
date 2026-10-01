@@ -5,6 +5,8 @@ on: [push]
 jobs:
   test:
     runs-on: ubuntu-latest
+    # A hung test would otherwise hold the runner for GitHub's default 6 hours.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
