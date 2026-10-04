@@ -14,8 +14,11 @@ verify a specific claim against the repo before relying on it, especially the
 
 Last updated: 2026-10-05. Pushed through `cb7771b`. **CI is green**: run #31 on `cb7771b`
 passed in 1m24s, confirmed by screenshot of the Actions page. The gate from the previous
-session is closed. No real phone call, inbound or outbound, has happened yet: that is the
-next milestone, waiting on the owner for Plivo credentials, a number, and a tunnel.
+session is closed. Two more commits are local only, not pushed: `dc9f891` (end_call deadlock)
+and `02b03d2` (LLM request timeout) — closing the two known gaps from section 5/6 item 4 that
+did not need the owner's Plivo credentials. No real phone call, inbound or outbound, has
+happened yet: that is the next milestone, waiting on the owner for Plivo credentials, a
+number, and a tunnel.
 
 ---
 
@@ -96,7 +99,10 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
-| `cb7771b` | HANDOFF.md update (CI green on `cb7771b`, run #31) |
+| `02b03d2` | The Groq LLM request gets its own timeout (`LLM_REQUEST_TIMEOUT_SECS`, default 6s) and `max_retries=0`, so a stall is seen and falls back at once instead of waiting on the OpenAI client's 600s default |
+| `dc9f891` | A successful `end_call` skips the follow-up LLM reply (`ends_call=True`, `run_llm=False`): closes the deadlock where that second request could hang behind the hang-up |
+| `03c01b7` | HANDOFF.md update (CI green on `cb7771b`, run #31) |
+| `cb7771b` | HANDOFF.md update after recording, retention, the notice and the hung-LLM fix |
 | `c11d7c2` | Recording tests hold under CI load (speaking signals, compare structure not bytes); pytest `faulthandler_timeout`; CI job `timeout-minutes: 15` |
 | `1d6c4d7` | Recording notice: "This call may be recorded." before the greeting; caller muted until it has played |
 | `e37a64e` | `RECORDING_RETENTION_DAYS` (60): expired recordings deleted at start and hourly; files renamed `<id>.recording.wav` |
@@ -123,7 +129,8 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Pushed through `cb7771b`. CI: green through #26 (`daa7b20`). #27 (`1a04ecb`), #28 (`0c74c53`)
+Pushed through `cb7771b`; `03c01b7`, `dc9f891` and `02b03d2` are local commits, not pushed
+(2026-10-05). CI: green through #26 (`daa7b20`). #27 (`1a04ecb`), #28 (`0c74c53`)
 and #30 (`1d6c4d7`) failed on `test_writing_as_the_call_goes_changes_nothing_in_the_recording`
 alone (#30: 1 failed, 298 passed). #29 (`e37a64e`) hung inside `tests/test_recording.py`;
 Claude cancelled it after 22 minutes. `c11d7c2` fixed the flaky test and added a
@@ -258,6 +265,28 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
   directly in the folder, never through a symlink; a file that cannot be deleted is logged and
   skipped; an invalid value stops startup. 15 tests; seven mutations, all caught. Not yet run
   against a real 60-day-old file (tests age files with `os.utime`).
+- **The `end_call` deadlock, closed (2026-10-05).** The cause: a successful `end_call` result is
+  truthy, so Pipecat's own context aggregator queued a second LLM completion to let the model
+  reply after the tool result (`_handle_function_call_result` in
+  `llm_response_universal.py`) — a second request on the same hung-prone LLM, with no one left
+  to hear it, that would block the graceful `EndFrame` behind it if it ever hung. Tools can now
+  be marked `ends_call=True` (only `end_call` is); on success the wrapper passes
+  `FunctionCallResultProperties(run_llm=False)`, skipping that request entirely. A failed
+  `end_call` (no `hang_up` hook) still gets the normal follow-up, since the call goes on.
+  3 new unit tests on the tool wrapper, mutation-checked (reverting the suppression fails the
+  success-path test). Not re-verified live end to end (no real Plivo call yet); the mechanism
+  is read directly from Pipecat's source, not re-derived from a guess.
+- **The LLM request's own deadline (2026-10-05).** The OpenAI client's defaults are a 600s
+  timeout and up to 2 silent retries on a timeout or connection error (the 11s time-to-first-
+  token seen live on 2026-10-02 with nothing logged was this). `PortableGroqLLMService.
+  create_client()` now builds its client with `timeout=LLM_REQUEST_TIMEOUT_SECS` (default 6s,
+  under the 10s response deadline) and `max_retries=0`, so a stall raises once instead of after
+  quiet retries and `get_chat_completions` can fall back to gpt-oss-20b at once.
+  Verified against a real hung socket (accepts, never answers): a standalone script confirmed
+  the client raises in 0.53s against a 0.5s configured timeout (not the 600s default); 4 tests
+  cover the client's own config and the hung-socket path, mutation-checked (restoring the old
+  timeout/retries makes the hung-connection test hang instead of pass). Not yet seen against a
+  real Groq stall; the only live 11s stall was before this fix.
 
 ## 5. UNVERIFIED (assume nothing)
 
@@ -297,13 +326,6 @@ Never claim any of these works until a real call shows it.
   whether Plivo then plays `<Speak>` and dials the number is unseen. A transfer also ends our
   websocket; the disconnect handler then cancels the pipeline (not exercised for this case).
 - The interruption filter has never been felt on a real call.
-- **`end_call` can still deadlock behind a hung LLM.** It ends the call with an EndFrame, and
-  Pipecat then asks the LLM for a goodbye. If that one request hangs, the EndFrame waits behind
-  it and every later cancel (the apology path, the caller hanging up, the max-duration guard's
-  cancel step) waits too. The guard's Plivo hang-up still ends the call for the caller, but the
-  call's task never finishes. Not fixed; the fix for the filler/apology does not cover it.
-- The LLM request itself still has no deadline of its own (the OpenAI client's default is
-  600s, with quiet retries); the response deadline is what catches a hang.
 - Call recordings have not been listened to by a person (checked by levels and timings) and
   have not run on a real Plivo call. Neither has the recording notice been heard on one.
 - **Words at the edge of a split turn can be lost.** When STT splits one sentence into two
@@ -363,7 +385,9 @@ provider-failure handling, HANDOFF.md, CI fixed, hard max call duration, `script
 `transfer_to_human`, `call_webhook`, the slow-reply filler, server warm-up and region
 warning, `scripts/talk.py`. **Done 2026-10-02, pushed; CI confirmed green 2026-10-05
 (run #31 on `cb7771b`):** call recording, 60-day retention, the recording notice, the
-hung-LLM fix, the recording-test flakiness fix. Remaining:
+hung-LLM fix, the recording-test flakiness fix. **Done 2026-10-05, committed but not
+pushed (`dc9f891`, `02b03d2`):** the `end_call` deadlock closed, the LLM request's own
+timeout. Remaining:
 
 1. **First real Plivo calls, inbound then outbound.** The owner owes: a Plivo number
    (Indian numbers may need KYC; a US number works for a test), `PLIVO_FROM_NUMBER`, and
@@ -380,17 +404,15 @@ hung-LLM fix, the recording-test flakiness fix. Remaining:
    Pipecat lists `meher`, `devansh`, `kartik`, `maithili` as Hindi-capable). Sarvam is out.
 3. Plivo V3 webhook signature validation (replaces the shared-secret token as the main
    guard; do it against a real request).
-4. Close the `end_call` deadlock (section 5), and give the LLM request its own deadline with
-   the client's hidden retries off, so the gpt-oss fallback acts at once on a stall.
-5. Concurrency, and deploying to `ap-south-1` before real traffic (see CLAUDE.md).
-6. Full regression across English/Hindi, inbound/outbound, once telephony works.
-7. Still owed to the "done" standard: a proper latency benchmark for the phone path (only
+4. Concurrency, and deploying to `ap-south-1` before real traffic (see CLAUDE.md).
+5. Full regression across English/Hindi, inbound/outbound, once telephony works.
+6. Still owed to the "done" standard: a proper latency benchmark for the phone path (only
    smoke timings and the small backup-TTS comparison exist), and a PII test suite that
    covers every store of call content (transcript, summary, leads, failure markers) as
    one suite instead of individually.
-8. Optional hardening: a backup STT provider; voicemail detection for outbound calls; a
+7. Optional hardening: a backup STT provider; voicemail detection for outbound calls; a
    live test of a provider that hangs rather than errors.
-9. The owner's "CLAUDE.md §4" and "what done looks like" checklist are still not in the
+8. The owner's "CLAUDE.md §4" and "what done looks like" checklist are still not in the
    repo (see section 0). Ask for them and add them.
 
 ## 7. Gotchas that cost time
@@ -588,3 +610,25 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   (faulthandler dump + 15-minute job ceiling).
 - Next: the first real Plivo calls (inbound then outbound), still waiting on the owner for
   credentials, a Plivo number, and a tunnel; see section 6, item 1.
+- Committed the handoff update itself (`03c01b7`, local only).
+- Asked to review the open work and fix what didn't need the owner. Items 1-2 (Plivo, Smallest)
+  are blocked on credentials; picked the two reproducible defects in section 5 that were not:
+  the `end_call` deadlock and the LLM request's missing deadline.
+- Read Pipecat's source directly rather than guess: `_handle_function_call_result` in
+  `llm_response_universal.py` runs the LLM again after any tool result unless
+  `FunctionCallResultProperties(run_llm=False)` is set, confirming the deadlock's exact
+  mechanism (a second, hangable request, not literally "Pipecat asks for a goodbye" as
+  the old wording implied). `dc9f891`: tools can now be marked `ends_call=True`; `end_call`
+  is. 3 new unit tests, mutation-checked.
+- `02b03d2`: `PortableGroqLLMService.create_client()` sets its own request timeout
+  (`LLM_REQUEST_TIMEOUT_SECS`, default 6s) and `max_retries=0`. Proved the client-level
+  timeout actually fires (rather than trusting the OpenAI SDK's docs) with a real hung TCP
+  server: a standalone script first (raised in 0.53s against a 0.5s timeout), then 4 pytest
+  tests. One early version of the test hung in cleanup — not the fix — because Python 3.13's
+  `Server.wait_closed()` waits for open connections too, which a server that never closes its
+  one connection blocks forever; fixed by aborting every accepted connection before closing.
+  Mutation-checked both fixes (reverting either makes its new test fail/hang instead of pass).
+- Full suite (306 tests) and ruff clean; committed as two commits, neither pushed (the owner's
+  go-ahead to push was for the CI-gate commits specifically, not standing permission).
+- Next: ask the owner whether to push `dc9f891` and `02b03d2`; then still the first real Plivo
+  calls once credentials arrive (section 6, item 1).
