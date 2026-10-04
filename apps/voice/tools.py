@@ -24,6 +24,12 @@ without having to remember them:
   can explain to the caller, never a crash inside the LLM service;
 - both the arguments and the result are written to the call transcript, which
   masks Aadhaar and PAN, so tool traffic obeys the same storage rule as speech.
+
+A tool that ends the call (`ends_call=True`, only `end_call` today) skips the
+follow-up LLM reply Pipecat would otherwise request after a successful result:
+that reply is a second request on the same hung-prone LLM, with no one left to
+hear it, so the persona says the goodbye before the call and the tool itself
+asks for nothing further.
 """
 
 import asyncio
@@ -42,6 +48,7 @@ import aiohttp
 from loguru import logger
 from masking import mask_sensitive
 from pipecat.adapters.schemas.function_schema import FunctionSchema
+from pipecat.frames.frames import FunctionCallResultProperties
 from pipecat.services.llm_service import FunctionCallParams
 
 DEFAULT_TIMEOUT_SECS = 8.0
@@ -73,18 +80,32 @@ class Tool:
     properties: dict
     required: list[str]
     handler: ToolHandler
+    # True for a tool that leaves no one to talk to next (end_call). Its result
+    # is not handed back to the model for a follow-up reply: that reply is a
+    # second LLM request, and one that hangs blocks the hang-up behind it
+    # (seen live, 2026-10-02 persists into end_call's own path). The persona
+    # says the goodbye before calling the tool, so no reply is lost by skipping it.
+    ends_call: bool = False
 
 
 REGISTRY: dict[str, Tool] = {}
 
 
-def tool(name: str, description: str, properties: dict | None = None, required=None):
+def tool(
+    name: str,
+    description: str,
+    properties: dict | None = None,
+    required=None,
+    ends_call: bool = False,
+):
     """Register an async function as a tool the model may call."""
 
     def decorate(fn: ToolHandler) -> ToolHandler:
         if name in REGISTRY:
             raise ValueError(f"tool {name!r} is already registered")
-        REGISTRY[name] = Tool(name, description, properties or {}, list(required or []), fn)
+        REGISTRY[name] = Tool(
+            name, description, properties or {}, list(required or []), fn, ends_call=ends_call
+        )
         return fn
 
     return decorate
@@ -108,7 +129,15 @@ def _wrap(t: Tool, call: CallContext, timeout: float):
             logger.error(f"Tool {t.name} failed: {e!r}")
             result = {"error": "the tool failed; tell the caller you could not do that"}
         _log(call, t.name, args, result, time.monotonic() - started)
-        await params.result_callback(result)
+        if t.ends_call and "error" not in result:
+            # No one is left to reply to: skip the follow-up completion Pipecat
+            # would otherwise request, rather than let a hang in that request
+            # block the hang-up behind it.
+            await params.result_callback(
+                result, properties=FunctionCallResultProperties(run_llm=False)
+            )
+        else:
+            await params.result_callback(result)
 
     return run
 
@@ -143,6 +172,7 @@ def build_tool_schemas(
     "end_call",
     "Hang up. Use only once the caller's needs are met or they say goodbye. "
     "Say a brief goodbye in the same turn.",
+    ends_call=True,
 )
 async def end_call(args: dict, call: CallContext) -> dict:
     # Queued after the goodbye has been spoken, not cut across it.

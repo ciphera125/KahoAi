@@ -28,6 +28,16 @@ def params(**arguments):
     return SimpleNamespace(arguments=arguments, result_callback=result_callback), got
 
 
+def params_with_properties(**arguments):
+    """Like params(), but also captures the `properties` kwarg (e.g. run_llm)."""
+    calls = []
+
+    async def result_callback(result, **kw):
+        calls.append((result, kw.get("properties")))
+
+    return SimpleNamespace(arguments=arguments, result_callback=result_callback), calls
+
+
 def rows(transcript):
     return [json.loads(x) for x in transcript.path.read_text(encoding="utf-8").splitlines()]
 
@@ -129,6 +139,50 @@ async def test_end_call_without_a_hangup_hook_says_so(tmp_path):
     p, got = params()
     await run(schemas, "end_call", p)
     assert "error" in got[0]
+
+
+async def test_end_call_hanging_up_skips_the_follow_up_llm_reply(tmp_path):
+    """A successful end_call leaves no one to hear a reply, and a reply is a
+    second LLM request: one that hangs would block the hang-up behind it
+    (seen live, 2026-10-02). run_llm=False tells Pipecat not to ask."""
+    call, _ = make_call(tmp_path)
+
+    async def hang_up():
+        pass
+
+    call.hang_up = hang_up
+    schemas = tools.build_tool_schemas(call, ["end_call"])
+    p, calls = params_with_properties()
+    await run(schemas, "end_call", p)
+    (result, properties), = calls
+    assert result == {"status": "ending"}
+    assert properties.run_llm is False
+
+
+async def test_end_call_failing_does_not_skip_the_follow_up_reply(tmp_path):
+    """The call goes on when it cannot be ended, so the model still needs the
+    chance to tell the caller and try something else."""
+    call, _ = make_call(tmp_path)  # no hang_up hook: end_call errors
+    schemas = tools.build_tool_schemas(call, ["end_call"])
+    p, calls = params_with_properties()
+    await run(schemas, "end_call", p)
+    (result, properties), = calls
+    assert "error" in result
+    assert properties is None
+
+
+async def test_an_ordinary_tool_never_sets_run_llm(registry, tmp_path):
+    @tools.tool("add", "Add.", {"a": {"type": "integer"}}, ["a"])
+    async def add(args, call):
+        return {"sum": args["a"] + 1}
+
+    call, _ = make_call(tmp_path)
+    schemas = tools.build_tool_schemas(call, ["add"])
+    p, calls = params_with_properties(a=1)
+    await run(schemas, "add", p)
+    (result, properties), = calls
+    assert result == {"sum": 2}
+    assert properties is None
 
 
 # --- capture_lead -----------------------------------------------------------
