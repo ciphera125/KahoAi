@@ -12,11 +12,10 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-02. Pushed through `1d6c4d7` (recording notice). **CI is not green**:
-runs #27, #28 and #30 failed on one flaky recording test, and #29 hung and was cancelled.
-The fix is `c11d7c2`, committed locally and **not pushed**, so it has not run on GitHub.
-This file's own update is the commit after `c11d7c2`. No real phone call, inbound or
-outbound, has happened yet: that is the next milestone after CI.
+Last updated: 2026-10-05. Pushed through `cb7771b`. **CI is green**: run #31 on `cb7771b`
+passed in 1m24s, confirmed by screenshot of the Actions page. The gate from the previous
+session is closed. No real phone call, inbound or outbound, has happened yet: that is the
+next milestone, waiting on the owner for Plivo credentials, a number, and a tunnel.
 
 ---
 
@@ -97,7 +96,8 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
-| `c11d7c2` | Recording tests hold under CI load (speaking signals, compare structure not bytes); pytest `faulthandler_timeout`; CI job `timeout-minutes: 15`. **Local only, not pushed** |
+| `cb7771b` | HANDOFF.md update (CI green on `cb7771b`, run #31) |
+| `c11d7c2` | Recording tests hold under CI load (speaking signals, compare structure not bytes); pytest `faulthandler_timeout`; CI job `timeout-minutes: 15` |
 | `1d6c4d7` | Recording notice: "This call may be recorded." before the greeting; caller muted until it has played |
 | `e37a64e` | `RECORDING_RETENTION_DAYS` (60): expired recordings deleted at start and hourly; files renamed `<id>.recording.wav` |
 | `0c74c53` | A hung LLM no longer silences the call: filler pushed from the LLM, apology behind an interruption, call cancelled once the apology is heard, speech signals counted once |
@@ -123,13 +123,16 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Pushed through `1d6c4d7`; `c11d7c2` and this file's update are local commits, not pushed
-(2026-10-02). CI: green through #26 (`daa7b20`). #27 (`1a04ecb`), #28 (`0c74c53`) and #30
-(`1d6c4d7`) failed on `test_writing_as_the_call_goes_changes_nothing_in_the_recording` alone
-(#30: 1 failed, 298 passed). #29 (`e37a64e`) hung inside `tests/test_recording.py`; Claude
-cancelled it after 22 minutes. Earlier: green on #18 to #21 and #23 to #25; #15 to #17 and
-earlier-red runs were the pyaudio failure. Check `git log origin/main..` at the start of a
-session.
+Pushed through `cb7771b`. CI: green through #26 (`daa7b20`). #27 (`1a04ecb`), #28 (`0c74c53`)
+and #30 (`1d6c4d7`) failed on `test_writing_as_the_call_goes_changes_nothing_in_the_recording`
+alone (#30: 1 failed, 298 passed). #29 (`e37a64e`) hung inside `tests/test_recording.py`;
+Claude cancelled it after 22 minutes. `c11d7c2` fixed the flaky test and added a
+`faulthandler_timeout`/15-minute job ceiling for the hang; before pushing, re-verified the
+full CI steps (ruff + 299 tests) and looped `tests/test_recording.py` 5x at 2 CPUs and 5x at
+0.7 CPUs in the CI-like container (10/10 passed, no hang). Pushed as `c11d7c2` + `cb7771b`;
+**CI #31 is green** (1m24s), confirmed by screenshot of the Actions page. Earlier: green on
+#18 to #21 and #23 to #25; #15 to #17 and earlier-red runs were the pyaudio failure. Check
+`git log origin/main..` at the start of a session.
 
 ## 3. What exists (file map)
 
@@ -260,11 +263,12 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 
 Never claim any of these works until a real call shows it.
 
-**CI (the open gate)**
-- **CI is not green on anything after `daa7b20`** (section 2). `c11d7c2` should fix the one
-  failing test; it has not run on GitHub. The #29 hang is unexplained: it did not reproduce in
-  18 container runs at 2 and 0.7 CPUs. With `c11d7c2`, a repeat dumps every thread's stack
-  after 120s on one test and the job stops at 15 minutes.
+**CI**
+- **CI gate closed 2026-10-05: #31 is green on `cb7771b`.** `c11d7c2` fixed the flaky
+  recording test. The #29 hang is still unexplained: it never reproduced locally (23 container
+  runs total at 2 and 0.7 CPUs across two sessions) and hasn't recurred on GitHub either. With
+  `c11d7c2`, a repeat would dump every thread's stack after 120s on one test and the job would
+  stop at 15 minutes, so a future hang is now bounded and diagnosable instead of silent.
 - Recordings line the two sides up only to about 0.1s: Pipecat's resampler hands audio over
   in bursts and the sides are matched at those. The last ~0.1s of each side stays in the
   resampler and is never written.
@@ -357,13 +361,10 @@ transcripts, summary (+ 429 retry and failure marker), tool framework, `capture_
 provider-failure handling, HANDOFF.md, CI fixed, hard max call duration, `scripts/call.py`,
 `sales` persona; then LLM fallback to gpt-oss-20b, the interruption filter,
 `transfer_to_human`, `call_webhook`, the slow-reply filler, server warm-up and region
-warning, `scripts/talk.py`. **Done 2026-10-02, pushed but CI red:** call recording,
-60-day retention, the recording notice, the hung-LLM fix. Remaining:
+warning, `scripts/talk.py`. **Done 2026-10-02, pushed; CI confirmed green 2026-10-05
+(run #31 on `cb7771b`):** call recording, 60-day retention, the recording notice, the
+hung-LLM fix, the recording-test flakiness fix. Remaining:
 
-0. **Gate: CI green.** Push `c11d7c2` and this file's commit (the owner asked to confirm CI
-   green on all of the 2026-10-02 work), then read the run on GitHub. If the recording test
-   still fails or something hangs, read the faulthandler dump in the log. Optionally loop
-   `tests/test_recording.py` in the CI-like container first (section 2); that was interrupted.
 1. **First real Plivo calls, inbound then outbound.** The owner owes: a Plivo number
    (Indian numbers may need KYC; a US number works for a test), `PLIVO_FROM_NUMBER`, and
    a tunnel.
@@ -569,3 +570,21 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
 - Interrupted while looping the new test in the container; the owner asked to update this file
   and save. Nothing pushed after `1d6c4d7`. Next: push and confirm CI green, then the first
   Plivo calls once the credentials arrive.
+
+**2026-10-05.**
+- Reviewed this file against git: clean, local commits `c11d7c2` and `cb7771b` not yet
+  pushed, matching what the file said. Ran the full local suite (299 passed) and ruff
+  (clean) directly, and separately rebuilt the CI-like container from `HEAD` (Docker Desktop
+  was not running; started it) and ran the exact CI steps (PortAudio install, `pip install`,
+  ruff, pytest) there too: all green.
+- Looped `tests/test_recording.py` in the container, 5 runs at `--cpus=2` and 5 at
+  `--cpus=0.7` (10 total, the owner chose a smaller count over the original 15+15 plan):
+  10/10 passed, no hang, continuing the previous session's interrupted attempt at this.
+- Pushed `c11d7c2` and `cb7771b` to `origin/main` (owner said go ahead). Watched
+  `github.com/ciphera125/KahoAi/actions` through the owner's Chrome: **CI #31 on `cb7771b`
+  finished green in 1m24s.** The CI gate from the previous session is closed.
+- Updated this file's state sections (2, 5, 6) and this log entry. The #29 hang from
+  2026-10-02 never recurred, locally or on GitHub, and remains unexplained but now bounded
+  (faulthandler dump + 15-minute job ceiling).
+- Next: the first real Plivo calls (inbound then outbound), still waiting on the owner for
+  credentials, a Plivo number, and a tunnel; see section 6, item 1.
