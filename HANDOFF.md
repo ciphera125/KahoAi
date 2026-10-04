@@ -12,13 +12,12 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-05. Pushed through `cb7771b`. **CI is green**: run #31 on `cb7771b`
-passed in 1m24s, confirmed by screenshot of the Actions page. The gate from the previous
-session is closed. Two more commits are local only, not pushed: `dc9f891` (end_call deadlock)
-and `02b03d2` (LLM request timeout) — closing the two known gaps from section 5/6 item 4 that
-did not need the owner's Plivo credentials. No real phone call, inbound or outbound, has
-happened yet: that is the next milestone, waiting on the owner for Plivo credentials, a
-number, and a tunnel.
+Last updated: 2026-10-05. **Pushed through `bfc5b0c`, level with origin** (nothing local,
+nothing ahead). **CI is green**: run #32 on `bfc5b0c` passed in 1m24s, confirmed by
+screenshot of the Actions page, same as run #31 before it. No real phone call, inbound or
+outbound, has happened yet: that is the next milestone, waiting on the owner for Plivo
+credentials, a Plivo number, and a tunnel — the setup steps and exactly which values to send
+back were given to the owner this session (see the log below); nothing has arrived yet.
 
 ---
 
@@ -99,6 +98,7 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| `bfc5b0c` | HANDOFF.md update (end_call deadlock and LLM request timeout closed) |
 | `02b03d2` | The Groq LLM request gets its own timeout (`LLM_REQUEST_TIMEOUT_SECS`, default 6s) and `max_retries=0`, so a stall is seen and falls back at once instead of waiting on the OpenAI client's 600s default |
 | `dc9f891` | A successful `end_call` skips the follow-up LLM reply (`ends_call=True`, `run_llm=False`): closes the deadlock where that second request could hang behind the hang-up |
 | `03c01b7` | HANDOFF.md update (CI green on `cb7771b`, run #31) |
@@ -129,17 +129,19 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Pushed through `cb7771b`; `03c01b7`, `dc9f891` and `02b03d2` are local commits, not pushed
-(2026-10-05). CI: green through #26 (`daa7b20`). #27 (`1a04ecb`), #28 (`0c74c53`)
+Pushed through `bfc5b0c`, level with origin (2026-10-05). CI: green through #26 (`daa7b20`).
+#27 (`1a04ecb`), #28 (`0c74c53`)
 and #30 (`1d6c4d7`) failed on `test_writing_as_the_call_goes_changes_nothing_in_the_recording`
 alone (#30: 1 failed, 298 passed). #29 (`e37a64e`) hung inside `tests/test_recording.py`;
 Claude cancelled it after 22 minutes. `c11d7c2` fixed the flaky test and added a
 `faulthandler_timeout`/15-minute job ceiling for the hang; before pushing, re-verified the
 full CI steps (ruff + 299 tests) and looped `tests/test_recording.py` 5x at 2 CPUs and 5x at
 0.7 CPUs in the CI-like container (10/10 passed, no hang). Pushed as `c11d7c2` + `cb7771b`;
-**CI #31 is green** (1m24s), confirmed by screenshot of the Actions page. Earlier: green on
-#18 to #21 and #23 to #25; #15 to #17 and earlier-red runs were the pyaudio failure. Check
-`git log origin/main..` at the start of a session.
+**CI #31 is green** (1m24s), confirmed by screenshot of the Actions page. Then `03c01b7`,
+`dc9f891` and `02b03d2` (the `end_call` deadlock and LLM request timeout, see below) and
+`bfc5b0c` were pushed together; **CI #32 is green too** (1m24s on `bfc5b0c`), also confirmed
+by screenshot. Earlier: green on #18 to #21 and #23 to #25; #15 to #17 and earlier-red runs
+were the pyaudio failure. Check `git log origin/main..` at the start of a session.
 
 ## 3. What exists (file map)
 
@@ -385,9 +387,9 @@ provider-failure handling, HANDOFF.md, CI fixed, hard max call duration, `script
 `transfer_to_human`, `call_webhook`, the slow-reply filler, server warm-up and region
 warning, `scripts/talk.py`. **Done 2026-10-02, pushed; CI confirmed green 2026-10-05
 (run #31 on `cb7771b`):** call recording, 60-day retention, the recording notice, the
-hung-LLM fix, the recording-test flakiness fix. **Done 2026-10-05, committed but not
-pushed (`dc9f891`, `02b03d2`):** the `end_call` deadlock closed, the LLM request's own
-timeout. Remaining:
+hung-LLM fix, the recording-test flakiness fix. **Done 2026-10-05, pushed; CI confirmed
+green the same day (run #32 on `bfc5b0c`):** the `end_call` deadlock closed (`dc9f891`),
+the LLM request's own timeout (`02b03d2`). Remaining:
 
 1. **First real Plivo calls, inbound then outbound.** The owner owes: a Plivo number
    (Indian numbers may need KYC; a US number works for a test), `PLIVO_FROM_NUMBER`, and
@@ -632,3 +634,23 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   go-ahead to push was for the CI-gate commits specifically, not standing permission).
 - Next: ask the owner whether to push `dc9f891` and `02b03d2`; then still the first real Plivo
   calls once credentials arrive (section 6, item 1).
+
+**2026-10-05, continued.**
+- Owner said to push. Pushed `03c01b7`, `dc9f891`, `02b03d2` and this file's update
+  (`bfc5b0c`) to `origin/main`. Watched the Actions page through the owner's Chrome: **CI #32
+  on `bfc5b0c` is green, 1m24s**, same as #31. `origin/main` and local are level; nothing
+  outstanding.
+- Owner pasted the original 15-item build plan and asked whether it was all done. Answered
+  item by item from this file, without re-deriving or re-testing anything already confirmed
+  here: most engineering-only items are done and real-tested (masking, resilience, duration
+  limits, tools, recording, post-call summary); the Bedrock-to-Groq LLM swap was named as the
+  one deviation running through several items; the three real-call-dependent items (telephony,
+  outbound dialling, Hindi pronunciation, the 20+20 shakeout) are the ones still open, same as
+  section 6.
+- Gave the owner the concrete Plivo setup steps (buy a number, create the XML application with
+  an Answer URL pointing at `PUBLIC_HOST`, get the Auth ID/Token, run `ngrok http 8000`) and the
+  exact env values to send back (`PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`, `PLIVO_FROM_NUMBER`,
+  `WEBHOOK_SECRET`, the ngrok host, plus `TRANSFER_NUMBER` and optionally `TOOL_WEBHOOK_URL`).
+  Nothing has arrived yet.
+- Next: still waiting on the owner for the above; once they arrive, start section 6 item 1
+  (the first real Plivo call, inbound then outbound).
