@@ -26,6 +26,7 @@ import openai
 from dotenv import load_dotenv
 from interruptions import build_start_strategies
 from loguru import logger
+from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
@@ -61,6 +62,7 @@ from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.turns.user_mute import MuteUntilFirstBotCompleteUserMuteStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
+from pipecat.utils.http import connection_limits
 from pipecat.utils.text.base_text_filter import BaseTextFilter
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 from pipecat.utils.types import NOT_GIVEN
@@ -329,18 +331,50 @@ class PortableGroqLLMService(GroqLLMService):
     DEFAULT_FALLBACK_MODEL = "openai/gpt-oss-20b"
     DEFAULT_FALLBACK_TIMEOUT_SECS = 3.0
 
+    # The OpenAI client's own defaults are a 600s timeout and up to 2 silent
+    # retries on a timeout or connection error (seen live as an 11s time-to-first-
+    # token with no error logged, 2026-10-02): a hang would run past every other
+    # deadline in this file before the client itself gave up. This is the ceiling
+    # on one HTTP attempt; max_retries=0 below means that ceiling is hit once,
+    # not after quiet retries, so get_chat_completions sees the failure and can
+    # fall back to gpt-oss at once instead of waiting on a client we do not control.
+    DEFAULT_REQUEST_TIMEOUT_SECS = 6.0
+
     def __init__(
         self,
         *args,
         fallback_model: str | None = None,
         fallback_timeout_secs: float = DEFAULT_FALLBACK_TIMEOUT_SECS,
+        request_timeout_secs: float = DEFAULT_REQUEST_TIMEOUT_SECS,
         on_fallback=None,
         **kwargs,
     ):
+        # Read by create_client(), which the base __init__ calls below.
+        self._request_timeout_secs = request_timeout_secs
         super().__init__(*args, **kwargs)
         self._fallback_model = fallback_model
         self._fallback_timeout_secs = fallback_timeout_secs
         self._on_fallback = on_fallback
+
+    def create_client(self, api_key=None, base_url=None, organization=None, project=None, **kwargs):
+        # Same construction as the base class (pipecat.services.openai.base_llm),
+        # plus our own request timeout and no hidden retries. The base class's
+        # create_client() does not forward extra kwargs to AsyncOpenAI, so the
+        # timeout/max_retries have to be set here rather than passed through.
+        return AsyncOpenAI(
+            api_key=api_key,
+            base_url=base_url,
+            organization=organization,
+            project=project,
+            http_client=DefaultAsyncHttpxClient(
+                limits=connection_limits(
+                    max_keepalive_connections=100, max_connections=1000, keepalive_expiry=None
+                )
+            ),
+            default_headers=kwargs.get("default_headers"),
+            timeout=self._request_timeout_secs,
+            max_retries=0,
+        )
 
     @staticmethod
     def _worth_falling_back(exc: Exception) -> bool:
@@ -418,6 +452,7 @@ def build_llm(persona_path: Path | None = None, on_fallback=None) -> GroqLLMServ
     reasoning_effort = env("GROQ_REASONING_EFFORT")
     fallback = env("LLM_FALLBACK_MODEL_ID") or PortableGroqLLMService.DEFAULT_FALLBACK_MODEL
     fallback_secs = env("LLM_FALLBACK_TIMEOUT_SECS")
+    request_secs = env("LLM_REQUEST_TIMEOUT_SECS")
     return PortableGroqLLMService(
         api_key=env("GROQ_API_KEY"),
         fallback_model=None if fallback.lower() in ("off", "none") else fallback,
@@ -425,6 +460,11 @@ def build_llm(persona_path: Path | None = None, on_fallback=None) -> GroqLLMServ
             float(fallback_secs)
             if fallback_secs
             else PortableGroqLLMService.DEFAULT_FALLBACK_TIMEOUT_SECS
+        ),
+        request_timeout_secs=(
+            float(request_secs)
+            if request_secs
+            else PortableGroqLLMService.DEFAULT_REQUEST_TIMEOUT_SECS
         ),
         on_fallback=on_fallback,
         settings=GroqLLMService.Settings(
