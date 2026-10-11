@@ -9,6 +9,11 @@ def client(monkeypatch):
     monkeypatch.setenv("WEBHOOK_SECRET", "s3cret")
     monkeypatch.setenv("PUBLIC_HOST", "kaho.example.com")
     monkeypatch.delenv("MAX_CALL_DURATION_SECS", raising=False)
+    monkeypatch.delenv("WS_RATE_LIMIT_PER_MINUTE", raising=False)
+    monkeypatch.delenv("WS_MAX_CONCURRENT_CALLS", raising=False)
+    # Each test gets its own limiter: the real one is process-wide, so state
+    # from one test must never leak into the next.
+    monkeypatch.setattr(server, "_ws_limiter", None)
     return TestClient(server.app)
 
 
@@ -99,3 +104,94 @@ async def test_fail_open_serializer_leaves_the_call_alone(monkeypatch):
     await s._hang_up_call()
     assert hung == [True]
     await asyncio.sleep(0)
+
+
+def _stub_run_call(monkeypatch, on_accept=None):
+    """Replace the real call handling with one that just accepts and closes,
+    so these tests exercise the rate limiter in stream() without needing a
+    real pipeline (build_worker needs real provider keys)."""
+
+    async def fake(websocket, token, caller, persona_path, limit):
+        await websocket.accept()
+        if on_accept:
+            on_accept()
+        await websocket.close()
+
+    monkeypatch.setattr(server, "_run_call", fake)
+
+
+def test_a_normal_connection_passes_the_rate_limiter_and_is_handled(client, monkeypatch):
+    accepted = []
+    _stub_run_call(monkeypatch, on_accept=lambda: accepted.append(1))
+    with client.websocket_connect("/ws?token=s3cret"):
+        pass
+    assert accepted == [1]
+
+
+def test_a_connection_over_the_per_ip_limit_is_rejected(client, monkeypatch):
+    monkeypatch.setenv("WS_RATE_LIMIT_PER_MINUTE", "2")
+    monkeypatch.setenv("WS_MAX_CONCURRENT_CALLS", "100")
+    _stub_run_call(monkeypatch)
+
+    with client.websocket_connect("/ws?token=s3cret"):
+        pass
+    with client.websocket_connect("/ws?token=s3cret"):
+        pass
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect("/ws?token=s3cret"):
+            pass
+    assert exc.value.code == 1013
+
+
+def test_a_rejection_is_logged_with_the_ip_and_the_limit(client, monkeypatch):
+    monkeypatch.setenv("WS_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("WS_MAX_CONCURRENT_CALLS", "100")
+    _stub_run_call(monkeypatch)
+    warnings = []
+    monkeypatch.setattr(server.logger, "warning", lambda msg: warnings.append(msg))
+
+    with client.websocket_connect("/ws?token=s3cret"):
+        pass
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws?token=s3cret"):
+            pass
+
+    assert len(warnings) == 1
+    assert "testclient" in warnings[0]
+    assert "per-IP" in warnings[0]
+
+
+def test_a_connection_over_the_global_concurrent_cap_is_rejected(client, monkeypatch):
+    """The global cap is meant to fire even from a fresh IP, independent of the
+    per-IP window, so it is filled directly here rather than by holding a second
+    real websocket open: TestClient's websocket support does not handle two
+    genuinely concurrent connections from one test process cleanly, and the
+    limiter itself (which IP takes which slot) is already covered in
+    test_rate_limit.py — this test is only about stream()'s own wiring to it."""
+    monkeypatch.setenv("WS_RATE_LIMIT_PER_MINUTE", "100")
+    monkeypatch.setenv("WS_MAX_CONCURRENT_CALLS", "1")
+    _stub_run_call(monkeypatch)
+
+    # Occupy the one global slot as some other, already-connected caller would.
+    assert server.ws_limiter().try_accept("9.9.9.9") is None
+
+    with pytest.raises(WebSocketDisconnect) as exc:
+        with client.websocket_connect("/ws?token=s3cret"):
+            pass
+    assert exc.value.code == 1013
+
+
+def test_rejected_attempts_do_not_hold_the_global_slot_open(client, monkeypatch):
+    """A connection rejected by the per-IP limit must never have taken a
+    concurrent slot, or it would starve later, legitimate connections."""
+    monkeypatch.setenv("WS_RATE_LIMIT_PER_MINUTE", "1")
+    monkeypatch.setenv("WS_MAX_CONCURRENT_CALLS", "1")
+    accepted = []
+    _stub_run_call(monkeypatch, on_accept=lambda: accepted.append(1))
+
+    with client.websocket_connect("/ws?token=s3cret"):
+        pass
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/ws?token=s3cret"):
+            pass
+    assert accepted == [1]

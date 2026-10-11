@@ -37,6 +37,7 @@ from pipecat.pipeline.worker import PipelineParams
 from pipecat.serializers.plivo import PlivoFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
 from pipecat.workers.runner import WorkerRunner
+from rate_limit import ConnectionLimiter, ws_max_concurrent_calls, ws_rate_limit_per_minute
 from recording import delete_expired_recordings, recording_retention_days
 from resilience import DEFAULT_APOLOGY, safe_reason
 
@@ -57,6 +58,25 @@ PIPELINE_INPUT_RATE = 16000
 # A running server deletes recordings past RECORDING_RETENTION_DAYS at start and
 # then this often, so nothing outlives the window by more than an hour.
 RETENTION_SWEEP_SECS = 3600.0
+
+# Built lazily (not at import) so WS_RATE_LIMIT_PER_MINUTE/WS_MAX_CONCURRENT_CALLS
+# are read after .env is loaded, and so a test can reset it to a fresh instance
+# with its own thresholds and a fake clock. One instance for the process: the
+# whole point is a shared count across every connection, not a per-request one.
+_ws_limiter: ConnectionLimiter | None = None
+
+
+def ws_limiter() -> ConnectionLimiter:
+    global _ws_limiter
+    if _ws_limiter is None:
+        _ws_limiter = ConnectionLimiter(ws_rate_limit_per_minute(), ws_max_concurrent_calls())
+    return _ws_limiter
+
+
+def client_ip(websocket: WebSocket) -> str:
+    """The connecting address, or a fixed placeholder if the transport has none
+    (seen in tests). Never raises: a missing address must not break the limiter."""
+    return websocket.client.host if websocket.client else "unknown"
 
 
 async def enforce_recording_retention(days: float) -> None:
@@ -283,6 +303,14 @@ async def stream(
     if not authorized(token):
         await websocket.close(code=1008)
         return
+    ip = client_ip(websocket)
+    if reason := ws_limiter().try_accept(ip):
+        # loguru's own line already carries a timestamp; name the IP and the
+        # limit explicitly so a real spike and a probing attacker both show up
+        # on a plain grep of this log, not just as an unexplained close code.
+        logger.warning(f"Rejecting /ws from {ip}: {reason}")
+        await websocket.close(code=1013)
+        return
     # The query string is not trusted just because the token matched: an unknown
     # agent must reject this one call, never take the server down (load_system_prompt
     # exits the process on a missing file).
@@ -300,6 +328,19 @@ async def stream(
         logger.error(f"Rejecting the stream: {e}")
         await websocket.close(code=1011)
         return
+    try:
+        await _run_call(websocket, token, caller, persona_path, limit)
+    finally:
+        ws_limiter().release()
+
+
+async def _run_call(
+    websocket: WebSocket,
+    token: str | None,
+    caller: str | None,
+    persona_path: str | None,
+    limit: float,
+) -> None:
     await websocket.accept()
 
     start = await read_start(websocket)
