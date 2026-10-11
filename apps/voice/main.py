@@ -324,11 +324,14 @@ class PortableGroqLLMService(GroqLLMService):
 
     PORTABLE_ROLES = {"developer": "user"}
 
-    # Retry the same turn on this model when the primary refuses it. Both models
-    # are Groq's, on the same account and key, so this covers a failure specific
-    # to the primary (its per-model rate limit, an outage of that model) and NOT
-    # a Groq-wide outage: that is a known, accepted gap, left to resilience.py.
-    DEFAULT_FALLBACK_MODEL = "openai/gpt-oss-20b"
+    # Retry the same turn on this model when the primary refuses it. "off" by
+    # default: GROQ_MODEL_ID is pinned to openai/gpt-oss-20b only (owner's
+    # decision, 2026-10-12), so there is currently no second approved model to
+    # fall back to. Set LLM_FALLBACK_MODEL_ID to turn this back on if a second
+    # model is ever approved; both would be Groq's, on the same account and
+    # key, so it would cover a failure specific to the primary (its per-model
+    # rate limit, an outage of that model) and NOT a Groq-wide outage.
+    DEFAULT_FALLBACK_MODEL = "off"
     DEFAULT_FALLBACK_TIMEOUT_SECS = 3.0
 
     # The OpenAI client's own defaults are a 600s timeout and up to 2 silent

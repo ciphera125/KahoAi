@@ -23,7 +23,7 @@ def hung_call(monkeypatch, tmp_path):
     for name, value in {
         "DEEPGRAM_API_KEY": "k",
         "GROQ_API_KEY": "k",
-        "GROQ_MODEL_ID": "qwen/qwen3.8-27b",
+        "GROQ_MODEL_ID": "openai/gpt-oss-20b",
         "CALL_LOG_DIR": str(tmp_path / "calls"),
         "LATENCY_LOG_PATH": str(tmp_path / "turns.jsonl"),
         "RECORDING_ENABLED": "false",

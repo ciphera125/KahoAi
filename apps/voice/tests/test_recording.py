@@ -301,7 +301,7 @@ class FakeTransport:
 def worker_env(monkeypatch, tmp_path):
     for name in ("DEEPGRAM_API_KEY", "GROQ_API_KEY"):
         monkeypatch.setenv(name, "k")
-    monkeypatch.setenv("GROQ_MODEL_ID", "qwen/qwen3.8-27b")
+    monkeypatch.setenv("GROQ_MODEL_ID", "openai/gpt-oss-20b")
     monkeypatch.setenv("TTS_PROVIDER", "deepgram")
     monkeypatch.setenv("DEEPGRAM_VOICE_ID", "aura-2-thalia-en")
     monkeypatch.delenv("TTS_FALLBACK_PROVIDER", raising=False)

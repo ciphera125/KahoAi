@@ -13,7 +13,7 @@ def build(monkeypatch, messages):
     monkeypatch.setattr(
         main.GroqLLMService,
         "build_chat_completion_params",
-        lambda self, p: {"model": "qwen/qwen3.8-27b", "messages": messages},
+        lambda self, p: {"model": "openai/gpt-oss-20b", "messages": messages},
     )
     return svc.build_chat_completion_params(_Params())
 

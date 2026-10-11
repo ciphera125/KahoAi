@@ -40,13 +40,18 @@ recordings/              call audio, NOT masked, deleted after 60 days by defaul
 
 `mic -> Deepgram STT -> context aggregator -> Groq LLM -> TTS -> speaker`
 
-The LLM is `qwen/qwen3.8-27b` (`GROQ_MODEL_ID`). On a 429, a 5xx or a connection
-error from it, the same turn is retried once on `openai/gpt-oss-20b`
-(`LLM_FALLBACK_MODEL_ID`, `off` disables) under its own deadline
-(`LLM_FALLBACK_TIMEOUT_SECS`, default 3s), logged as `LLM fallback` and as an
-`llm_fallback` line in the call transcript. Only after that fails does
-`resilience.py` apologise. **This covers a qwen-specific failure only, not a full
-Groq outage**: both models share one service, account and key. Known, accepted gap.
+The LLM is `openai/gpt-oss-20b` (`GROQ_MODEL_ID`), pinned to this one model
+(owner's decision, 2026-10-12): do not switch it to `qwen/qwen3.8-27b` or any
+other Groq model without asking first. `LLM_FALLBACK_MODEL_ID` defaults to
+`off`, since there is currently no second approved model to fall back to; the
+mechanism itself still exists (retry the same turn on a different model under
+its own deadline, `LLM_FALLBACK_TIMEOUT_SECS`, logged as `LLM fallback` and as
+an `llm_fallback` line in the call transcript) and can be turned back on by
+setting that env var if a second model is ever approved. Only after a fallback
+attempt fails, or with none configured, does `resilience.py` apologise. Even
+with a fallback on, **this only ever covers a failure specific to one model,
+not a full Groq outage**: any two Groq models share one service, account and
+key. Known, accepted gap.
 
 Barge-in is Pipecat's (a started caller turn broadcasts an interruption that cancels
 the LLM and TTS); `interruptions.py` decides what starts one. While the agent speaks,

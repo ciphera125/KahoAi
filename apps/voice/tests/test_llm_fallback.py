@@ -1,9 +1,13 @@
 """A 429 on the primary model must be retried on the fallback model, not go to silence.
 
-This covers a failure specific to the primary model (Groq rate-limits per model,
-and a 429 on qwen/qwen3.8-27b was seen live during the benchmark run). Both
-models are Groq's on the same account and key, so it does NOT cover a Groq-wide
-outage: a known, accepted gap for now.
+This covers a failure specific to the primary model (Groq rate-limits per
+model; a 429 on the primary was seen live during the 2026-09-29 benchmark
+run, back when the fallback was wired to a real second model). Both models
+would be Groq's, on the same account and key, so this does NOT cover a
+Groq-wide outage: a known, accepted gap. The mechanism is tested here with
+two placeholder model names, independent of which models are actually
+approved for use — see GROQ_MODEL_ID / LLM_FALLBACK_MODEL_ID in .env.example
+for the current, pinned configuration (fallback is "off" by default).
 """
 
 import asyncio
@@ -13,8 +17,8 @@ import main
 import openai
 import pytest
 
-PRIMARY = "qwen/qwen3.8-27b"
-BACKUP = "openai/gpt-oss-20b"
+PRIMARY = "test-primary-model"
+BACKUP = "test-fallback-model"
 
 
 def _status_error(cls, code):
@@ -69,7 +73,7 @@ def make(monkeypatch, completions, **kw):
     return svc
 
 
-async def test_429_on_qwen_is_retried_on_gpt_oss_20b(monkeypatch):
+async def test_429_on_primary_is_retried_on_fallback(monkeypatch):
     comp = FakeCompletions(primary_error=_status_error(openai.RateLimitError, 429))
     seen = []
     svc = make(monkeypatch, comp, on_fallback=lambda *a: seen.append(a))
