@@ -12,12 +12,13 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-05. **Pushed through `bfc5b0c`, level with origin** (nothing local,
-nothing ahead). **CI is green**: run #32 on `bfc5b0c` passed in 1m24s, confirmed by
-screenshot of the Actions page, same as run #31 before it. No real phone call, inbound or
-outbound, has happened yet: that is the next milestone, waiting on the owner for Plivo
-credentials, a Plivo number, and a tunnel — the setup steps and exactly which values to send
-back were given to the owner this session (see the log below); nothing has arrived yet.
+Last updated: 2026-10-12. **Pushed through `eeef867`** (push happened this session; CI on it
+has not been checked yet — see section 2). No real phone call, inbound or outbound, has
+happened yet: still the next milestone, waiting on the owner for Plivo credentials, a Plivo
+number, and a tunnel; nothing has arrived yet. This session's work did not touch telephony —
+it was a model-pinning change, a live-found tool bug, a Groq-usage audit, and a safety-net
+rate limit on `/ws`, all triggered by the owner testing the local pipeline directly (see the
+log below).
 
 ---
 
@@ -74,6 +75,15 @@ Do not redo these.
   (owner, 2026-10-02); the code stays, unused.
 - `PortableGroqLLMService` (developer to user role rewrite) fixes the qwen crash on
   interruption; committed and pushed (`4c89535`).
+- **2026-10-11, owner's own local mic/speaker test calls.** First run looked badly broken
+  (self-interrupting, mangled transcript); root cause was acoustic echo from open
+  speakers into the mic on one machine (confirmed from the transcript: "user" turns were
+  literally the agent's own last sentence), not a pipeline bug — fixed by using
+  headphones, no code changed. Second run with headphones was clean: real conversation,
+  correct barge-in, no echo. Latency that run: STT avg 0.58s, LLM avg 0.40s, TTS avg
+  0.53s (`scripts/latency_summary.py`). In that same run the model called `end_call` on
+  "Are they recording you to think what I'm saying?" — a live-found bug, fixed this
+  session (see section 9).
 
 ## 2. Repository state
 
@@ -98,6 +108,11 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| `eeef867` | `/ws` rate limiting: per-IP per-minute cap and a global concurrent cap (`rate_limit.py`), ahead of any pipeline work |
+| `05f42d5` | Every Groq API call appended to `logs/groq_usage.log` (`groq_usage.py`): timestamp, caller, model |
+| `c0172d4` | `end_call`'s tool description tightened so a question about recording/privacy no longer ends the call |
+| `f36d5ae` | LLM pinned to `openai/gpt-oss-20b` only; `LLM_FALLBACK_MODEL_ID` defaults to `off` (no second approved model) |
+| `531ae05` | HANDOFF.md update (confirm push and CI #32 green, build-plan review and Plivo setup steps given) |
 | `bfc5b0c` | HANDOFF.md update (end_call deadlock and LLM request timeout closed) |
 | `02b03d2` | The Groq LLM request gets its own timeout (`LLM_REQUEST_TIMEOUT_SECS`, default 6s) and `max_retries=0`, so a stall is seen and falls back at once instead of waiting on the OpenAI client's 600s default |
 | `dc9f891` | A successful `end_call` skips the follow-up LLM reply (`ends_call=True`, `run_llm=False`): closes the deadlock where that second request could hang behind the hang-up |
@@ -129,7 +144,11 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Pushed through `bfc5b0c`, level with origin (2026-10-05). CI: green through #26 (`daa7b20`).
+Pushed through `eeef867`, level with origin (2026-10-12). **CI #34 is green** (1m12s),
+confirmed by screenshot of the Actions page; one run covers the whole push (`f36d5ae`
+through `eeef867`), since GitHub Actions fires once per push, not once per commit.
+
+Earlier: CI: green through #26 (`daa7b20`).
 #27 (`1a04ecb`), #28 (`0c74c53`)
 and #30 (`1d6c4d7`) failed on `test_writing_as_the_call_goes_changes_nothing_in_the_recording`
 alone (#30: 1 failed, 298 passed). #29 (`e37a64e`) hung inside `tests/test_recording.py`;
@@ -159,10 +178,13 @@ apps/voice/duration_limit.py hard max call duration, enforced by a timer beside 
 apps/voice/personas.py   safe persona lookup by name (names arrive from the network)
 scripts/call.py          dial out via Plivo: --number, --agent, --max-duration, --dry-run
 apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-call; safe_reason
+apps/voice/groq_usage.py append-only log of every Groq API call (logs/groq_usage.log): timestamp, caller, model
+apps/voice/rate_limit.py ConnectionLimiter: /ws's per-IP-per-minute and global-concurrent caps, ahead of any pipeline work
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
-apps/voice/tests/        299 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
+apps/voice/tests/        329 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
+logs/groq_usage.log      every Groq API call: timestamp, caller, model (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
 leads/<date>.jsonl       captured leads          (gitignored; holds names/numbers)
 recordings/<id>.recording.wav  call audio, caller left, agent right (gitignored; unmasked; 60 days)
@@ -173,6 +195,14 @@ Pipeline: `transport -> Deepgram STT -> [FollowCallerLanguage] -> user aggregato
 Groq LLM -> TTS (optionally a failover pair) -> transport -> assistant aggregator`. `TTS_PROVIDER` is one of
 deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
 (default `end_call,capture_lead`).
+
+`GROQ_MODEL_ID` is pinned to `openai/gpt-oss-20b` only (owner's decision, 2026-10-12); do
+not change it to `qwen/qwen3.8-27b` or any other Groq model without asking first.
+`LLM_FALLBACK_MODEL_ID` defaults to `off` as a result (no second approved model to fall
+back to). `/ws` is rate-limited right after the `WEBHOOK_SECRET` check, before any pipeline
+work: `WS_RATE_LIMIT_PER_MINUTE` (default 5, per IP) and `WS_MAX_CONCURRENT_CALLS` (default
+10, across every IP) — a safety net, not the real guard (Plivo signature validation is
+still open, section 6).
 
 ## 4. Verified by Claude (simulated or offline, NOT real phone calls)
 
@@ -289,10 +319,50 @@ deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
   cover the client's own config and the hung-socket path, mutation-checked (restoring the old
   timeout/retries makes the hung-connection test hang instead of pass). Not yet seen against a
   real Groq stall; the only live 11s stall was before this fix.
+- **`end_call` no longer fires on a question (2026-10-12).** Live-found: the owner's own test
+  call asked "are you recording this?" and the model hung up. The tool's description (shared
+  across every persona, not persona-specific) was tightened: an explicit ending signal only,
+  the exact failure phrase named as a negative example, and "ask, don't guess" for anything
+  ambiguous. Not yet re-verified live (needs the owner to say the same phrase again); the
+  owner's next local test call is the way to confirm it.
+- **Groq usage logging (2026-10-12).** Audited the whole codebase for anything that could call
+  Groq without the owner starting it: no cron/interval/scheduled job does, and every existing
+  retry (summary.py's 4-attempt backoff, the LLM fallback) was already bounded, so neither
+  needed a cap added. Added `groq_usage.py`: every real Groq call appends one line to
+  `logs/groq_usage.log` (timestamp, caller, model). Wired into all five call sites found (the
+  live per-turn LLM call and its fallback, the post-call summary, the startup warm-up, and the
+  two manual diagnostic scripts). Verified live: ran `check_providers.py` for real and got the
+  expected single log line. 4 unit tests, mutation-checked.
+- **`/ws` rate limiting (2026-10-12).** Two independent, in-memory, no-I/O limits ahead of any
+  pipeline work: `WS_RATE_LIMIT_PER_MINUTE` (default 5, per IP, a rejected attempt doesn't
+  count against the quota) and `WS_MAX_CONCURRENT_CALLS` (default 10, across every IP). A
+  rejection closes with code 1013 and logs the IP and which limit fired. `stream()` was split
+  into itself (auth + rate limit gate) and a new `_run_call()` (the actual pipeline work) so
+  tests could exercise the gate against the real FastAPI route without needing a real pipeline
+  (`build_worker` needs live provider keys). 14 unit tests on the limiter itself + 6 integration
+  tests against the real `/ws` route (normal connection passes through; per-IP rejection and its
+  close code; the rejection log's content; global-cap rejection; a rejected attempt never holds
+  a concurrent slot). Mutation-checked: disabling the limiting logic fails 10 of these tests.
+  Flagged to the owner: the 5/minute default is a guess, and a weak signal for real traffic
+  specifically, since Plivo's media connections come from a shared IP pool, not the caller's
+  own address — the global cap is the one that actually bounds concurrent Groq usage. This is
+  a safety net; it is not the Plivo webhook signature validation still open in section 6, and
+  does not touch the existing `WEBHOOK_SECRET` check.
 
 ## 5. UNVERIFIED (assume nothing)
 
 Never claim any of these works until a real call shows it.
+
+**Rate limiting and Groq logging**
+- `/ws` rate limiting has only been driven through FastAPI's `TestClient`, never a real
+  websocket client over the network or a real Plivo connection. The close code (1013) and
+  the rejection log have not been seen outside a test. TestClient also could not hold two
+  genuinely concurrent `/ws` connections open from one process (see section 7), so the
+  global-cap test fills the slot directly through `ws_limiter()` rather than a second real
+  connection — the limiter's own accounting is unit-tested instead (`test_rate_limit.py`).
+- Groq usage logging has been seen live for exactly one call site (`check_providers.py`); the
+  other four (the live per-turn LLM call and its fallback, the post-call summary, the startup
+  warm-up) are wired the same way but not yet each individually confirmed against a real call.
 
 **CI**
 - **CI gate closed 2026-10-05: #31 is green on `cb7771b`.** `c11d7c2` fixed the flaky
@@ -365,7 +435,8 @@ Claude the auth id/token, number and tunnel and item 1 starts).** Also needed fo
 tools: `TRANSFER_NUMBER` (a human's number) and, for webhooks, `TOOL_WEBHOOK_URL`.
 
 **Gaps against the owner's original 15-item build plan (audit 2026-09-29), not built:**
-- Bedrock/Claude Haiku 4.5 is not the LLM (Groq qwen is); `BEDROCK` is stubbed.
+- Bedrock/Claude Haiku 4.5 is not the LLM (Groq `openai/gpt-oss-20b` is, pinned); `BEDROCK`
+  is stubbed.
 - Prompt caching (not applicable to the current Groq path; unmeasured).
 - Per-agent language setting in a config file, and 5 sample conversations per language with a
   pronunciation check: needs a person's ear. Sarvam is ruled out; the Hindi voice is to be
@@ -389,7 +460,11 @@ warning, `scripts/talk.py`. **Done 2026-10-02, pushed; CI confirmed green 2026-1
 (run #31 on `cb7771b`):** call recording, 60-day retention, the recording notice, the
 hung-LLM fix, the recording-test flakiness fix. **Done 2026-10-05, pushed; CI confirmed
 green the same day (run #32 on `bfc5b0c`):** the `end_call` deadlock closed (`dc9f891`),
-the LLM request's own timeout (`02b03d2`). Remaining:
+the LLM request's own timeout (`02b03d2`). **Done 2026-10-12, pushed; CI confirmed green
+the same day (run #34 on `eeef867`):** LLM pinned to `openai/gpt-oss-20b` only
+(`f36d5ae`), `end_call` no longer fires on a question (`c0172d4`), every Groq call logged
+to `logs/groq_usage.log` (`05f42d5`), and `/ws` rate limiting as a safety net ahead of the
+signature validation below (`eeef867`). Remaining:
 
 1. **First real Plivo calls, inbound then outbound.** The owner owes: a Plivo number
    (Indian numbers may need KYC; a US number works for a test), `PLIVO_FROM_NUMBER`, and
@@ -405,7 +480,8 @@ the LLM request's own timeout (`02b03d2`). Remaining:
 2. Smallest AI for Hindi: first live run and a voice choice (needs `SMALLEST_API_KEY`;
    Pipecat lists `meher`, `devansh`, `kartik`, `maithili` as Hindi-capable). Sarvam is out.
 3. Plivo V3 webhook signature validation (replaces the shared-secret token as the main
-   guard; do it against a real request).
+   guard; do it against a real request). `/ws` now also has a per-IP and a global-concurrent
+   rate limit (2026-10-12) as a safety net ahead of this, not a replacement for it.
 4. Concurrency, and deploying to `ap-south-1` before real traffic (see CLAUDE.md).
 5. Full regression across English/Hindi, inbound/outbound, once telephony works.
 6. Still owed to the "done" standard: a proper latency benchmark for the phone path (only
@@ -479,6 +555,18 @@ the LLM request's own timeout (`02b03d2`). Remaining:
   busy machine interleaves them differently. Send the user/bot started/stopped speaking frames
   around each side's speech, as a real call does, or the recorder pads silence inside speech.
   Its resampler emits in ~0.1s bursts and resets after 0.2s idle (`clear_after_secs`).
+- FastAPI's `TestClient` cannot cleanly hold two genuinely concurrent `/ws` connections open
+  from one test process (tried it for the rate limiter's global-cap test; it hung). Fill the
+  limiter's state directly through its own object instead of a second real connection when a
+  test needs "already at capacity" as a starting condition.
+- Local mic/speaker echo looks exactly like a pipeline bug: open speakers feeding back into
+  the mic gets transcribed as the caller repeating the agent's own words, which then
+  self-interrupts the agent (barge-in reacts to real words). Seen live 2026-10-11, fixed with
+  headphones, no code involved. Check the transcript for a "user" turn that is literally the
+  agent's last sentence before suspecting the pipeline.
+- A single `git push` triggers GitHub Actions once for the whole push, not once per commit
+  (`on: [push]`): pushing four commits together shows one CI run on the Actions page, named
+  after the top commit, not four.
 
 ## 8. Commands
 
@@ -654,3 +742,45 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   Nothing has arrived yet.
 - Next: still waiting on the owner for the above; once they arrive, start section 6 item 1
   (the first real Plivo call, inbound then outbound).
+
+**2026-10-12.**
+- Reviewed this file against git (clean, level with origin at `531ae05`, the `bfc5b0c` gap
+  from 2026-10-05 already closed). No code had changed since; still waiting on Plivo.
+- Owner ran the pipeline locally themselves (`apps/voice/main.py`) and reported it "talking
+  badly" with pauses. Read `logs/turns.jsonl` and the call transcript: latency was normal
+  (STT/LLM/TTS all sub-second); the transcript showed "user" turns that were literally the
+  agent's own last sentence — acoustic echo from open speakers into the mic, not a pipeline
+  bug. Fixed with headphones, no code touched. Confirmed clean on the next run.
+- That clean run's transcript showed the model calling `end_call` on "Are they recording you
+  to think what I'm saying?" — a live-found bug. `c0172d4` tightened `end_call`'s tool
+  description: explicit ending signal only, the exact phrase named as a negative example,
+  "ask, don't guess" for anything ambiguous.
+- Owner said to pin the LLM to `openai/gpt-oss-20b` only, not Grok (clarified: meant Groq's
+  own `gpt-oss-20b`, not xAI's Grok, which was never in this repo). `f36d5ae`: `GROQ_MODEL_ID`
+  default changed, `qwen/qwen3.8-27b` removed from every live config and test fixture (two
+  historical docstring mentions of why the role-rewrite exists were left alone, since they
+  explain a real fix, not a config). `LLM_FALLBACK_MODEL_ID` now defaults to `off`, since
+  there is no second approved model; the fallback mechanism itself is untouched.
+- Checked whether the account's new Groq Developer plan needed any retry/backoff code
+  changes: no, since neither `summary.py` nor the LLM fallback hardcodes a numeric rate
+  limit — both only react to whatever `Retry-After`/status the provider actually sends.
+- Owner worried about unexpected background Groq usage. Audited the whole codebase for
+  cron/interval/scheduled jobs (none touch Groq) and every retry loop (already bounded, no
+  cap needed). `05f42d5`: `groq_usage.py`, an append-only `logs/groq_usage.log` line per real
+  Groq call, wired into all five call sites found. Verified live via `check_providers.py`.
+- Owner asked for rate limiting on `/ws` as a safety net ahead of the still-open Plivo
+  signature validation. `eeef867`: `rate_limit.py` (`ConnectionLimiter`), a per-IP-per-minute
+  cap and a global concurrent cap, checked right after the `WEBHOOK_SECRET` check and before
+  any pipeline work; `stream()` split into itself (the gate) and `_run_call()` (the pipeline)
+  so this could be tested against the real FastAPI route without needing live provider keys.
+  Flagged to the owner that the per-IP default is a weak signal for real traffic specifically,
+  since Plivo's media connections share an IP pool; the global cap is the one that matters.
+- 329 tests pass, ruff clean, all four groups mutation-checked (model-pin: existing suite
+  still exercises the fallback-disabled path; groq logging and rate limiting: breaking each
+  on purpose failed the relevant new tests).
+- Committed as four separate commits by concern (`f36d5ae`, `c0172d4`, `05f42d5`, `eeef867`),
+  each self-contained (new modules land in the same commit as their first import). Pushed;
+  **CI #34 is green, 1m12s**, confirmed by screenshot — one run covers the whole push, not
+  one per commit (see section 7). `origin/main` and local are level.
+- Next: still waiting on the owner for Plivo credentials, a number, and a tunnel (section 6,
+  item 1). Everything built this session is independent of that and does not block it.
