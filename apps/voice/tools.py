@@ -170,8 +170,13 @@ def build_tool_schemas(
 
 @tool(
     "end_call",
-    "Hang up. Use only once the caller's needs are met or they say goodbye. "
-    "Say a brief goodbye in the same turn.",
+    "Hang up. Use only when the caller clearly signals they are done: they say "
+    "goodbye, 'that's all', 'hang up', or otherwise state the call is over. "
+    "Never use it for a question, including one about the call itself, "
+    "recording, or privacy ('are you recording this?', 'is this legal?', 'who "
+    "am I talking to?') -- answer the question and keep talking. If it is "
+    "unclear whether they want to end the call, ask them; do not guess by "
+    "ending it. Say a brief goodbye in the same turn you use it.",
     ends_call=True,
 )
 async def end_call(args: dict, call: CallContext) -> dict:
