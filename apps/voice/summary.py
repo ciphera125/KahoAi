@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import httpx
+from groq_usage import log_groq_call
 from loguru import logger
 from masking import mask_sensitive
 
@@ -105,6 +106,7 @@ def retry_after_secs(response: httpx.Response) -> float | None:
 
 
 async def _post(client: httpx.AsyncClient, api_key: str, model: str, transcript: str) -> str:
+    log_groq_call("summary._post", model)
     resp = await client.post(
         GROQ_URL,
         headers={"Authorization": f"Bearer {api_key}"},

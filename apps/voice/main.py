@@ -24,6 +24,7 @@ from pathlib import Path
 import certifi
 import openai
 from dotenv import load_dotenv
+from groq_usage import log_groq_call
 from interruptions import build_start_strategies
 from loguru import logger
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
@@ -388,6 +389,7 @@ class PortableGroqLLMService(GroqLLMService):
         return isinstance(exc, openai.APIStatusError) and exc.status_code >= 500
 
     async def get_chat_completions(self, context):
+        log_groq_call("PortableGroqLLMService.get_chat_completions", self._settings.model)
         try:
             return await super().get_chat_completions(context)
         except Exception as e:
@@ -419,6 +421,7 @@ class PortableGroqLLMService(GroqLLMService):
             )
         )
         params["model"] = self._fallback_model
+        log_groq_call("PortableGroqLLMService._fallback_completions", self._fallback_model)
         return await asyncio.wait_for(
             self._client.chat.completions.create(**params),
             timeout=self._fallback_timeout_secs,

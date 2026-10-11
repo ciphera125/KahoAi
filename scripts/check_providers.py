@@ -19,6 +19,9 @@ import httpx
 from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "apps" / "voice"))
+from groq_usage import log_groq_call  # noqa: E402 - needs sys.path set above
+
 TIMEOUT = 30
 
 
@@ -180,6 +183,7 @@ def check_groq() -> tuple[bool, str]:
     if missing:
         return False, f"missing: {', '.join(missing)}"
     try:
+        log_groq_call("check_providers.check_groq", model_id)
         resp = httpx.post(
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {api_key}"},

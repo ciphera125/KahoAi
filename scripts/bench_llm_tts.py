@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "voice"))
+from groq_usage import log_groq_call  # noqa: E402 - needs sys.path set above
 
 # Five short conversations of the kind a clinic line actually gets.
 CONVERSATIONS = [
@@ -43,6 +44,7 @@ def llm_turn(key: str, model: str, effort: str | None, messages: list[dict]) -> 
     body = {"model": model, "messages": messages, "stream": True, "max_tokens": 150}
     if effort:
         body["reasoning_effort"] = effort
+    log_groq_call("bench_llm_tts.llm_turn", model)
     start = time.perf_counter()
     first, chunks = None, []
     with httpx.stream(

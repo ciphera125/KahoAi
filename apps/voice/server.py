@@ -30,6 +30,7 @@ import uvicorn
 from dotenv import load_dotenv
 from duration_limit import configured_ceiling, enforce_max_duration, resolve_max_duration
 from fastapi import FastAPI, Query, Request, Response, WebSocket
+from groq_usage import log_groq_call
 from loguru import logger
 from main import build_worker, ensure_ca_bundle, env, recordings_dir, require_env
 from pipecat.pipeline.worker import PipelineParams
@@ -411,6 +412,7 @@ async def warm_up() -> None:
     build_turn_strategies().stop  # noqa: B018 - constructs the turn-analysis model
     key = env("GROQ_API_KEY")
     if key:
+        log_groq_call("server.warm_up", "GET /openai/v1/models (no chat model)")
         try:
             timeout = aiohttp.ClientTimeout(total=WARMUP_TIMEOUT_SECS)
             async with aiohttp.ClientSession(timeout=timeout) as session:
