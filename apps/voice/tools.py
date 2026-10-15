@@ -174,9 +174,15 @@ def build_tool_schemas(
     "goodbye, 'that's all', 'hang up', or otherwise state the call is over. "
     "Never use it for a question, including one about the call itself, "
     "recording, or privacy ('are you recording this?', 'is this legal?', 'who "
-    "am I talking to?') -- answer the question and keep talking. If it is "
-    "unclear whether they want to end the call, ask them; do not guess by "
-    "ending it. Say a brief goodbye in the same turn you use it.",
+    "am I talking to?') -- answer the question and keep talking. Never use it "
+    "just because the conversation stalled, a reply was delayed, or the caller "
+    "repeated themselves ('I wanted to tell you something.') -- that is "
+    "impatience, not a goodbye; let them speak. If it is unclear whether they "
+    "want to end the call, ask them; do not guess by ending it. The text you "
+    "speak in this same turn must itself be that goodbye -- never call this "
+    "tool alongside text that invites the caller to continue or answers a "
+    "question ('sure, go ahead', 'what did you want to tell me?'): if your own "
+    "words are not a goodbye, do not call this tool.",
     ends_call=True,
 )
 async def end_call(args: dict, call: CallContext) -> dict:

@@ -171,6 +171,20 @@ async def test_end_call_failing_does_not_skip_the_follow_up_reply(tmp_path):
     assert properties is None
 
 
+def test_end_call_description_forbids_stall_and_contradicting_text():
+    """Live-found 2026-10-15: after a Groq rate-limit stall and the caller
+    repeating themselves ("I wanted to tell you something."), the model called
+    end_call while its own spoken text said "Sure, go ahead." -- hanging up at
+    the exact moment it claimed to be listening. The description must rule out
+    both triggers: a stall/repeat alone, and calling the tool alongside text
+    that is not itself a goodbye. A future edit that loosens this wording
+    should fail this test, not get caught live again."""
+    description = tools.REGISTRY["end_call"].description
+    assert "repeated themselves" in description
+    assert "not a goodbye" in description
+    assert "own words are not a goodbye" in description
+
+
 async def test_an_ordinary_tool_never_sets_run_llm(registry, tmp_path):
     @tools.tool("add", "Add.", {"a": {"type": "integer"}}, ["a"])
     async def add(args, call):
