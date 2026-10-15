@@ -89,10 +89,14 @@ def test_a_path_like_agent_is_just_an_unknown_name(monkeypatch):
     assert net.posts == []
 
 
-def test_missing_configuration_is_listed_and_nothing_is_sent(monkeypatch, capsys):
+def test_missing_configuration_is_listed_and_nothing_is_sent(monkeypatch, capsys, tmp_path):
     net = Net(monkeypatch)
     monkeypatch.delenv("PLIVO_FROM_NUMBER")
     monkeypatch.delenv("PUBLIC_HOST")
+    # main() re-reads the real .env (load_dotenv, override=False); once it holds real
+    # Plivo values, that would quietly refill the two keys just deleted above. Point it
+    # at an empty directory instead, so this test doesn't depend on local .env contents.
+    monkeypatch.setattr(call, "ROOT", tmp_path)
     assert cli() == 2
     err = capsys.readouterr().err
     assert "PLIVO_FROM_NUMBER" in err and "PUBLIC_HOST" in err and net.posts == []
