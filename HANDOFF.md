@@ -12,13 +12,18 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-12. **Pushed through `eeef867`** (push happened this session; CI on it
-has not been checked yet — see section 2). No real phone call, inbound or outbound, has
-happened yet: still the next milestone, waiting on the owner for Plivo credentials, a Plivo
-number, and a tunnel; nothing has arrived yet. This session's work did not touch telephony —
-it was a model-pinning change, a live-found tool bug, a Groq-usage audit, and a safety-net
-rate limit on `/ws`, all triggered by the owner testing the local pipeline directly (see the
-log below).
+Last updated: 2026-10-16. **Real phone calls now work.** The milestone that had been open
+since 2026-09-28 is closed: the owner supplied Plivo credentials, a number
+(`+918065520552`, KYC done) and an ngrok tunnel, and on 2026-10-15/16 the agent took one
+real inbound call and placed three real outbound ones, including to a third party (the
+owner's co-founder). Telephony, recording, transcripts, summaries, barge-in, the duration
+limit and the qwen fallback have all now been seen on real calls rather than simulated ones.
+**Smallest AI is live and Hindi works**, closing the other long-standing gap.
+
+Two things found on those calls now lead the open work: the Groq account is on the **free**
+tier (8,000 TPM), not the Developer plan, which is the root cause of the 429s and audible
+fillers on every long call; and `capture_lead` saved a junk lead (`name: "?"`). Neither is
+fixed. See section 6.
 
 ---
 
@@ -84,6 +89,21 @@ Do not redo these.
   0.53s (`scripts/latency_summary.py`). In that same run the model called `end_call` on
   "Are they recording you to think what I'm saying?" — a live-found bug, fixed this
   session (see section 9).
+- **2026-10-15/16, the first real phone calls.** Plivo credentials, the number
+  `+918065520552` (KYC done) and an ngrok tunnel all arrived and work. Four real calls:
+  one inbound (`9d9b8f89`, 9s — notice and greeting heard, then the caller hung up) and
+  outbound `7bdd07c8` (92s), `93d0957f` (163s) and `f4743723` (to the owner's co-founder,
+  the owner called it "great"). The `start` event parsing written from memory in
+  `server.read_start` handled a real event correctly, and the real Plivo hang-up works
+  (`Successfully terminated Plivo call`). Recording, masked transcript, summary, barge-in,
+  the filler and the qwen fallback were all exercised live.
+- **Smallest AI is live and speaks Hindi.** The owner heard the `meher` voice and chose
+  it. Fastest TTS measured here: TTFB 0.158-0.202s, TTFA 0.278-0.315s. Devanagari and
+  code-switched Hinglish both verified against the live API.
+- **The agent is Aayushi, calling from Kaho AI** (owner's decision, 2026-10-16), heard on
+  a real call: "Hello, I'm Aayushi, calling from Kaho AI."
+- **The LLM fallback to `qwen/qwen3.8-27b` is back on** (owner's decision, 2026-10-15) and
+  proven live: six `llm_fallback` events on `93d0957f`, each a 429 retried on qwen.
 
 ## 2. Repository state
 
@@ -108,6 +128,14 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| (this session) | CLEANROOM rows + this handoff update |
+| `bed7be2` | `LLM_FALLBACK_MODEL_ID` back to `qwen/qwen3.8-27b` (owner's decision); docs only, the mechanism was untouched |
+| `fa1c7fa` | Persona identity: the agent is Aayushi, calling from Kaho AI; "not a business" reframed as sourcing |
+| `291b5dc` | `check_providers.py` calls `ensure_ca_bundle()`, so the Smallest check stops failing falsely on macOS |
+| `04f4c6f` | Turn-phase timings (`turn_detection`, `reply_after_turn`, `caller_wait`) — the wait Pipecat's metrics cannot see |
+| `fe4d08e` | The missing-config test no longer reads the real `.env` (it only passed while those lines were blank) |
+| `1c8ccee` | `end_call` no longer fires on a stall, a repeat, or alongside text inviting the caller to continue |
+| `4e28b58` | HANDOFF.md update (model pin, end_call fix, Groq logging, `/ws` rate limiting) |
 | `eeef867` | `/ws` rate limiting: per-IP per-minute cap and a global concurrent cap (`rate_limit.py`), ahead of any pipeline work |
 | `05f42d5` | Every Groq API call appended to `logs/groq_usage.log` (`groq_usage.py`): timestamp, caller, model |
 | `c0172d4` | `end_call`'s tool description tightened so a question about recording/privacy no longer ends the call |
@@ -181,7 +209,7 @@ apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-cal
 apps/voice/groq_usage.py append-only log of every Groq API call (logs/groq_usage.log): timestamp, caller, model
 apps/voice/rate_limit.py ConnectionLimiter: /ws's per-IP-per-minute and global-concurrent caps, ahead of any pipeline work
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
-apps/voice/tests/        329 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
+apps/voice/tests/        336 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/groq_usage.log      every Groq API call: timestamp, caller, model (gitignored)
@@ -374,20 +402,21 @@ Never claim any of these works until a real call shows it.
   in bursts and the sides are matched at those. The last ~0.1s of each side stays in the
   resampler and is never written.
 
-**The whole real-call path**
-- **No real Plivo call has happened, inbound or outbound.** Everything has been driven by
-  a simulated Plivo client over `/ws`. The `start` event parsing in `server.read_start`
-  was written from memory of Plivo's protocol; it logs the raw event at DEBUG ("Plivo
-  start event"), which is the first thing to read after a real call.
-- A real hang-up via `api.plivo.com` with real credentials has not been seen (it failed
-  with fake credentials, as expected, and the SSL problem behind an earlier failure is
-  fixed in `ensure_ca_bundle`).
-
-**Outbound (`scripts/call.py`)**
-- Never dialled a real number or fetched a real tunnel URL. Untested against real
-  Plivo: the Make Call request; the `time_limit` and `ring_timeout` parameter names
-  (from memory of the API); Plivo's POST to `/answer`; how the callee's first greeting
-  sounds (the agent speaks first on answer).
+**The real-call path (mostly closed 2026-10-15/16 — see section 1)**
+- Real inbound and outbound calls both work, so the items that used to sit here are gone.
+  What is still unproven on a real call: **concurrency** (two calls at once has never
+  been tried; the owner asked for a parallel test and it was deferred until the Groq tier
+  is fixed, since both calls would otherwise sit in 429s), `transfer_to_human` against
+  real Plivo, and `call_webhook`.
+- **Hindi end to end has not happened on a real call.** The *voice* is proven (Smallest
+  speaks Devanagari and Hinglish) and the model mirrors the caller's language in an
+  isolated test — it answered "नमस्ते, आप कौन हैं?" with "नमस्ते, मैं आयुषी हूँ, काहो एआई से कॉल
+  कर रही हूँ।", with correct feminine grammar. But every real call so far has been in
+  English, and nothing *enforces* the reply language: `FollowCallerLanguage` retunes the
+  TTS only, and the code comment says "the LLM follows the caller on its own". Hinglish is
+  where models drift back to English mid-reply.
+- `ring_timeout` and `time_limit` were accepted by real Make Call requests, but their
+  effect has not been observed (no call was left to ring out or hit the Plivo backstop).
 - Voicemail / answering-machine detection is not implemented: a call that reaches
   voicemail will be talked to.
 - The `sales` persona is a generic template that states no business facts; edit it with
@@ -466,31 +495,61 @@ the same day (run #34 on `eeef867`):** LLM pinned to `openai/gpt-oss-20b` only
 to `logs/groq_usage.log` (`05f42d5`), and `/ws` rate limiting as a safety net ahead of the
 signature validation below (`eeef867`). Remaining:
 
-1. **First real Plivo calls, inbound then outbound.** The owner owes: a Plivo number
-   (Indian numbers may need KYC; a US number works for a test), `PLIVO_FROM_NUMBER`, and
-   a tunnel.
-   - Inbound: `ngrok http 8000`; in `.env` set `PUBLIC_HOST` (hostname only),
-     `WEBHOOK_SECRET`, `PLIVO_AUTH_ID`, `PLIVO_AUTH_TOKEN`; run
-     `apps/voice/venv/bin/python apps/voice/server.py`; set the Plivo XML application's
-     Answer URL to `https://<host>/answer?token=<secret>` (POST) and attach it to the
-     number; call it. The owner sends the server output; read the `Plivo start event`
-     line and the hang-up.
-   - Outbound: with the server up, `python scripts/call.py --number +91... --agent sales
-     --dry-run`, then without `--dry-run`. Edit `prompts/sales.md` first.
-2. Smallest AI for Hindi: first live run and a voice choice (needs `SMALLEST_API_KEY`;
-   Pipecat lists `meher`, `devansh`, `kartik`, `maithili` as Hindi-capable). Sarvam is out.
-3. Plivo V3 webhook signature validation (replaces the shared-secret token as the main
+1. **Upgrade the Groq plan — this blocks almost everything else.** The account is on the
+   free tier: the live headers say `x-ratelimit-limit-tokens: 8000`, where Developer is
+   250K TPM. One 163s call sent 25,265 prompt tokens over 15 completions (~9,300/min), so
+   exceeding the cap is structural, not bad luck. It is the cause of every 429, every
+   audible "One moment" filler, and all six qwen fallbacks on `93d0957f`. It costs almost
+   nothing to fix — Groq was about **$0.002 of a ~$0.04 call** — and nothing else moves
+   the caller's experience as much. **Verify from the headers, not the billing page**: the
+   2026-10-12 note recording the owner saying the plan was upgraded was wrong.
+2. **`capture_lead` saves junk.** On `93d0957f` it wrote `{"name": "?", "reason": "?"}`
+   to `leads/`, called with placeholder arguments while the model was mid-stall and being
+   interrupted. Same family as the two `end_call` bugs: a tool fired without real intent.
+   The persona already says to read the details back and only save after a yes, so the
+   fix probably belongs in code (refuse obviously empty values at the wrapper) rather
+   than in another sentence of prompt. Not started.
+3. **Where call data is stored.** Everything is local files on the owner's Mac today —
+   `logs/calls/` (52K, masked), `recordings/` (17M, unmasked), `leads/`, all gitignored.
+   The owner wants Supabase. Agreed shape, not yet built: transcripts/summaries/leads
+   into Postgres **through `CallTranscript` so masking cannot be bypassed**; recordings
+   into object storage, but two decisions are the owner's first — the Mumbai region (DPDP
+   data residency, same reasoning as hosting in `ap-south-1`) and whether unmasked audio
+   goes to the cloud at all. Uncompressed stereo WAV is ~1.8MB/min (5.0MB for a 163s
+   call), so encode to Opus before uploading anything: a 1GB free tier is about two days
+   at 100 calls/day. **Upload after `call_end`, never on the call path** — a cloud write
+   that hangs mid-call is the hung-LLM incident again.
+4. **STT fragmentation, which is also the biggest remaining latency cost.** Deepgram
+   splits one sentence into several turns ("Okay. So" / "what do you do?"), which costs
+   three ways: extra LLM completions (token burn, hence the 429s), partial sentences
+   reaching the model, and spurious tool calls. `endpointing` and `utterance_end_ms` are
+   both supported by `DeepgramSTTService.Settings` and **neither is set today**; those
+   plus `VAD_STOP_SECS` and the smart-turn classifier are the knobs. Turn detection is
+   the dominant share of the caller's wait (avg 1.377s, worst 3.05s on the last call).
+   Tune against `caller_wait` and the INCOMPLETE/COMPLETE ratio, not vibes.
+   Noise suppression is a *separate* and smaller question: Pipecat ships `rnnoise_filter`
+   (free), `koala_filter`, `krisp_viva_filter` and `aic_filter`, and none is wired
+   (`audio_in_filter` is unused). Expect little from it on a phone call, since Plivo
+   delivers 8kHz mu-law and no filter restores what the codec discarded; it is worth more
+   on the local mic path.
+5. **Barge-in lag is 486ms, not the <300ms the owner asked for** (`231, 235, 279, 799,
+   887 ms` on `93d0957f`). The owner chose to keep the words-only filter
+   (`INTERRUPT_FILTER=true`) rather than revert to raw VAD, accepting that coughs and
+   backchannel must not interrupt. So the floor is STT latency; tune `INTERRUPT_MIN_WORDS`
+   and look for buffer-flush lag above that floor rather than expecting <300ms.
+6. Plivo V3 webhook signature validation (replaces the shared-secret token as the main
    guard; do it against a real request). `/ws` now also has a per-IP and a global-concurrent
    rate limit (2026-10-12) as a safety net ahead of this, not a replacement for it.
-4. Concurrency, and deploying to `ap-south-1` before real traffic (see CLAUDE.md).
-5. Full regression across English/Hindi, inbound/outbound, once telephony works.
-6. Still owed to the "done" standard: a proper latency benchmark for the phone path (only
+7. Concurrency (the owner's parallel-call test is still owed), and deploying to `ap-south-1` before real traffic (see CLAUDE.md).
+8. Full regression across English/Hindi, inbound/outbound. Telephony now works, so this
+   is no longer blocked — what it needs is the Groq tier (item 1) so results mean something.
+9. Still owed to the "done" standard: a proper latency benchmark for the phone path (only
    smoke timings and the small backup-TTS comparison exist), and a PII test suite that
    covers every store of call content (transcript, summary, leads, failure markers) as
    one suite instead of individually.
-7. Optional hardening: a backup STT provider; voicemail detection for outbound calls; a
+10. Optional hardening: a backup STT provider; voicemail detection for outbound calls; a
    live test of a provider that hangs rather than errors.
-8. The owner's "CLAUDE.md §4" and "what done looks like" checklist are still not in the
+11. The owner's "CLAUDE.md §4" and "what done looks like" checklist are still not in the
    repo (see section 0). Ask for them and add them.
 
 ## 7. Gotchas that cost time
@@ -567,6 +626,33 @@ signature validation below (`eeef867`). Remaining:
 - A single `git push` triggers GitHub Actions once for the whole push, not once per commit
   (`on: [push]`): pushing four commits together shows one CI run on the Actions page, named
   after the top commit, not four.
+- **Dedupe frames on Pipecat's `frame.id`, never `id(frame)`.** The memory address is reused
+  by CPython once a frame is collected, so a later frame can inherit a "already seen" id and
+  be silently dropped. It passes in isolation and fails only under the full suite, where GC
+  actually runs. `resilience.py` does it correctly; the `MetricsFrame` dedupe in
+  `TurnTimingLogger` still uses `id(frame)` with an unbounded set (pre-existing, left alone).
+- Pipecat's own metrics only start when a *service* is handed work, so they cannot see the
+  VAD + smart-turn wait in front of it. Read `caller_wait` from `latency_summary.py` to judge
+  a call; the stage sums understated the real wait by 2-5s on the first phone calls.
+- `check_providers.py` must call `ensure_ca_bundle()`. Its Smallest check is the only one over
+  a raw websocket, so it is the only one without certifi behind it, and it reports a dead
+  provider on the python.org macOS build when the key is fine.
+- Smallest's websocket returns audio **base64**-encoded, not hex.
+- ElevenLabs free plan: Voice *Library* voices are rejected over the API (402), but the
+  **premade** voice Sarah (`EXAVITQu4vr4xnSDxMaL`) works and speaks Hindi. The earlier note
+  that every voice was blocked was wrong. A text-to-speech-scoped key cannot list voices or
+  read quota (`missing_permissions`).
+- **Do not trust a stated Groq plan.** Read `x-ratelimit-limit-tokens` off a live request:
+  8000 means free tier, 250000 means Developer.
+- Plivo's CDR (`GET /v1/Account/{id}/Call/`) gives the actual billed cost per call, which
+  beats arguing with published rate cards (their India pages disagree with each other).
+- A persona instruction that pins an exact phrase can swallow everything around it: telling
+  the model to say "I am calling from Kaho AI" made it answer *every* identity question with
+  only that line, name included. Give the facts and one example, not a script.
+- Placing a call from the agent can be blocked by Claude Code's auto-mode classifier as a
+  real-world transaction, and a one-off approval does not always carry. The owner running
+  `! apps/voice/venv/bin/python scripts/call.py ...` in the session works; a scoped `Bash`
+  permission rule for the dialler is the durable fix, and is the owner's call to add.
 
 ## 8. Commands
 
@@ -784,3 +870,48 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   one per commit (see section 7). `origin/main` and local are level.
 - Next: still waiting on the owner for Plivo credentials, a number, and a tunnel (section 6,
   item 1). Everything built this session is independent of that and does not block it.
+
+**2026-10-15 / 2026-10-16. The first real phone calls.**
+- Reviewed this file against git (clean, level with origin at `4e28b58`). Then the owner
+  supplied Plivo: auth id/token, the number `+918065520552` (KYC done), and `ngrok`. Added a
+  Telephony section to `.env`, generated `WEBHOOK_SECRET`, read the ngrok host from its local
+  API, and confirmed the tunnel reached the server (a bare `/answer` correctly 403s).
+- **First real call ever** (`7bdd07c8`, outbound, 92s). It worked, then ended wrongly: the
+  model called `end_call` while its own reply said "Sure, go ahead". Root cause was not the
+  duration limit or a crash — a Groq 429 stalled the turn, the caller repeated themselves,
+  and the model treated that as a goodbye. Fixed in `1c8ccee`; a test now locks the wording.
+  That work exposed a pre-existing test bug too (`fe4d08e`): the missing-config test was
+  reading the real `.env` and had only passed while those lines were blank.
+- Owner asked for the qwen fallback back on; `bed7be2`. Proven live the same day (6 events).
+- Owner set `TTS_PROVIDER=smallest` with no key, which would have killed the next call at
+  `build_tts` (`sys.exit(1)`); caught before dialling. The key took three attempts to land on
+  disk. Then `check_providers.py` reported Smallest dead — a false failure, because it never
+  called `ensure_ca_bundle()` (`291b5dc`). **Smallest then ran live for the first time**, and
+  Hindi was verified with real Devanagari and Hinglish, not just romanised text.
+- Built the turn-phase instrumentation the owner asked for before any tuning (`04f4c6f`), and
+  it immediately changed the story: the 4-7s waits were **not** batching (streaming was
+  already on, per-sentence), **not** ngrok or network distance (~0.1s unaccounted), but turn
+  detection — every outlier an `INCOMPLETE` where the caller paused mid-sentence. Caller wait
+  p50 was 1.34s on the second call, with 10 of 14 turns inside 1.1-1.7s.
+- Measured the real cost from Plivo's CDR: **$0.01425** for a 163s call, ~$0.04 all in, of
+  which Groq is ~5%. Then found the thing that matters most: the account is on Groq's **free**
+  tier (8,000 TPM), not the Developer plan this file recorded on 2026-10-12. Token burn is
+  ~9,300/min, so the 429s are structural. Item 1 in section 6.
+- Owner heard the `meher` voice and chose it, and renamed the agent: **Aayushi, calling from
+  Kaho AI** (`fa1c7fa`). Testing the persona against the live model first caught a regression
+  (the pinned phrase swallowed the name) before it reached a call. Added `Aayushi` and
+  `Kaho AI` to `DEEPGRAM_KEYTERMS`.
+- Called the owner's co-founder (`f4743723`); the owner called it "great" and the new identity
+  landed verbatim. Claude's own dial was blocked by the auto-mode classifier as a real-world
+  transaction, twice, including after a one-off approval; the owner ran the dialler himself.
+- Also found and **not** fixed: `capture_lead` saved `{"name": "?", "reason": "?"}` on
+  `93d0957f` (section 6 item 2). Barge-in lag measured at 486ms average, not the <300ms the
+  owner asked for; the owner chose to keep the words-only filter, which sets that floor.
+- Owner asked about voice isolation for cleaner STT. Answered that fragmentation, not noise,
+  is the real problem and that `endpointing`/`utterance_end_ms` are unset — section 6 item 4.
+  Nothing tuned yet: it needs real calls to validate, and the Groq tier first.
+- Owner asked for Supabase for recordings and transcripts. Scoped, not built: section 6 item 3.
+- 336 tests pass, ruff clean. Six commits by concern, then this update. Pushed at the owner's
+  request; CI not yet confirmed green on it — **check the Actions page** (section 2).
+- Next: Groq tier (item 1), then the deferred parallel-call test, then `capture_lead`, then
+  the fragmentation/endpointing tuning with real calls.
