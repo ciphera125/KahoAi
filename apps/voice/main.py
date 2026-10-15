@@ -31,6 +31,7 @@ from openai import AsyncOpenAI, DefaultAsyncHttpxClient
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
+    BotStartedSpeakingFrame,
     EndTaskFrame,
     Frame,
     InterruptionFrame,
@@ -40,6 +41,8 @@ from pipecat.frames.frames import (
     TranscriptionFrame,
     TTSSpeakFrame,
     TTSUpdateSettingsFrame,
+    UserStoppedSpeakingFrame,
+    VADUserStoppedSpeakingFrame,
 )
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.pipeline.pipeline import Pipeline
@@ -228,6 +231,19 @@ class TurnTimingLogger(BaseObserver):
     disk so runs can be compared after the fact instead of by squinting at a
     scrolling terminal. TTFA is the number that matters — time to first audio,
     i.e. what the caller actually waits through.
+
+    Pipecat's own metrics start when a *service* is handed work, so they cannot
+    see the wait before that: the VAD's stop_secs and then the smart-turn
+    classifier deciding the caller is actually finished. On the first real phone
+    calls (2026-10-15) the stage metrics summed to 1-2s while the caller waited
+    4-7s, so the gap is timed here too, from frames rather than services:
+
+      turn_detection   VAD says the caller stopped -> the turn is ruled over
+      reply_after_turn the turn is over            -> the agent's audio starts
+      caller_wait      VAD says the caller stopped -> the agent's audio starts
+
+    `caller_wait` is the one to judge a call by: it is the silence the caller
+    sits through, and it is the sum of the other two.
     """
 
     def __init__(self, path: Path):
@@ -236,14 +252,39 @@ class TurnTimingLogger(BaseObserver):
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._run = datetime.now(UTC).strftime("%Y%m%dT%H%M%S")
         self._seen: set[int] = set()
+        self._vad_stopped_at: float | None = None
+        self._turn_ended_at: float | None = None
+        self._last_turn_frame: dict[type, int] = {}
 
     def _write(self, record: dict) -> None:
         record |= {"run": self._run, "at": time.time()}
         with self._path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record) + "\n")
 
+    def _write_turn_phase(self, metric: str, started_at: float, now: float) -> None:
+        self._write(
+            {"metric": metric, "processor": None, "model": None, "seconds": now - started_at}
+        )
+
     async def on_push_frame(self, data: FramePushed) -> None:
         frame = data.frame
+        if isinstance(
+            frame, VADUserStoppedSpeakingFrame | UserStoppedSpeakingFrame | BotStartedSpeakingFrame
+        ):
+            # Observers see a frame at every hop and the output transport sends
+            # the speaking ones both ways, so only the downstream copy counts,
+            # once per frame. Pipecat's `frame.id` is a counter it hands out;
+            # `id(frame)` would be a memory address, which CPython reuses once
+            # the frame is collected, and a reused one would silently drop the
+            # next turn's measurement. Same approach as resilience.py.
+            kind = type(frame)
+            if data.direction != FrameDirection.DOWNSTREAM:
+                return
+            if self._last_turn_frame.get(kind) == frame.id:
+                return
+            self._last_turn_frame[kind] = frame.id
+            self._on_turn_frame(frame)
+            return
         if not isinstance(frame, MetricsFrame):
             return
         # Every processor that passes a frame along pushes it again; count once.
@@ -270,6 +311,24 @@ class TurnTimingLogger(BaseObserver):
             else:
                 continue
             self._write(record)
+
+    def _on_turn_frame(self, frame: Frame) -> None:
+        now = time.time()
+        if isinstance(frame, VADUserStoppedSpeakingFrame):
+            # A fresh caller turn: anything held from the last one is stale.
+            self._vad_stopped_at, self._turn_ended_at = now, None
+        elif isinstance(frame, UserStoppedSpeakingFrame):
+            if self._vad_stopped_at is not None:
+                self._write_turn_phase("turn_detection", self._vad_stopped_at, now)
+            self._turn_ended_at = now
+        elif isinstance(frame, BotStartedSpeakingFrame):
+            # The greeting and the recording notice have no caller turn in front
+            # of them, so there is nothing to measure against.
+            if self._turn_ended_at is not None:
+                self._write_turn_phase("reply_after_turn", self._turn_ended_at, now)
+            if self._vad_stopped_at is not None:
+                self._write_turn_phase("caller_wait", self._vad_stopped_at, now)
+            self._vad_stopped_at = self._turn_ended_at = None
 
 
 def load_system_prompt(persona_path: Path | None = None) -> str:

@@ -28,11 +28,23 @@ DEFAULT_LOG = ROOT / "logs" / "turns.jsonl"
 # the metric/processor each is recorded under.
 STAGE_ORDER = ["STT", "LLM", "TTS", "TTS first audio"]
 
+# Measured from frames, not services, so they cover the wait Pipecat's own
+# metrics cannot see (the VAD's stop_secs, then the smart-turn classifier).
+# "caller wait" is the silence the caller actually sits through and is the sum
+# of the two above it.
+TURN_PHASES = {
+    "turn_detection": "turn detection",
+    "reply_after_turn": "reply after turn",
+    "caller_wait": "CALLER WAIT (total)",
+}
+
 
 def classify(record: dict) -> str | None:
     """Map a raw metric record onto a pipeline stage, or None to ignore it."""
     processor = (record.get("processor") or "").lower()
     metric = record.get("metric", "")
+    if metric in TURN_PHASES:
+        return TURN_PHASES[metric]
     if metric == "ttfa":
         return "TTS first audio"
     if metric != "ttfb":
@@ -93,18 +105,26 @@ def main() -> int:
         sys.exit("The log has no stage timings in it yet.")
 
     print(f"{len(runs)} run(s), {sum(len(v) for v in by_stage.values())} measurements")
-    print(f"{'stage':<18}{'n':>4}{'avg':>9}{'p50':>9}{'worst':>9}")
-    print("-" * 49)
-    for stage in STAGE_ORDER:
+    print(f"{'stage':<21}{'n':>4}{'avg':>9}{'p50':>9}{'worst':>9}")
+    print("-" * 52)
+
+    def row(stage: str) -> None:
         values = by_stage.get(stage)
         if not values:
-            continue
+            return
         print(
-            f"{stage:<18}{len(values):>4}"
+            f"{stage:<21}{len(values):>4}"
             f"{statistics.mean(values):>8.3f}s"
             f"{statistics.median(values):>8.3f}s"
             f"{max(values):>8.3f}s"
         )
+
+    for stage in STAGE_ORDER:
+        row(stage)
+    if any(by_stage.get(name) for name in TURN_PHASES.values()):
+        print("-" * 52)
+        for name in TURN_PHASES.values():
+            row(name)
 
     # What the caller actually waits through once they stop speaking: the model
     # has to think, then the voice has to start. STT overlaps with their speech,
@@ -116,6 +136,14 @@ def main() -> int:
             f"avg {statistics.mean(llm) + statistics.mean(first_audio):.3f}s, "
             f"worst {max(llm) + max(first_audio):.3f}s"
         )
+    caller_wait = by_stage.get(TURN_PHASES["caller_wait"])
+    if caller_wait:
+        print(
+            f"measured caller wait:            avg {statistics.mean(caller_wait):.3f}s, "
+            f"worst {max(caller_wait):.3f}s"
+        )
+        print("Judge a call by the measured wait: the stage sums leave out turn detection.")
+    else:
         print("VAD stop_secs is added on top of this; see VAD_STOP_SECS in .env.")
     return 0
 
