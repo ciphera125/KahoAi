@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "voice"))
 from groq_usage import log_groq_call  # noqa: E402 - needs sys.path set above
+from main import ensure_ca_bundle  # noqa: E402 - same
 
 TIMEOUT = 30
 
@@ -314,6 +315,12 @@ def pick(kind: str, var: str, default: str, table: dict) -> tuple[str, object] |
 
 def main() -> int:
     load_dotenv(ROOT / ".env")
+    # The same CA setup the server does at startup. Without it the checks that
+    # go over a raw websocket (Smallest) fail with CERTIFICATE_VERIFY_FAILED on
+    # the python.org macOS build, which has no system CA bundle — reporting a
+    # dead provider when the key, voice and model are all fine (seen 2026-10-15).
+    # httpx-based checks never hit this: they carry certifi themselves.
+    ensure_ca_bundle()
     llm_check = pick("LLM", "LLM_PROVIDER", "groq", LLM_CHECKS)
     tts_check = pick("TTS", "TTS_PROVIDER", "deepgram", TTS_CHECKS)
     if llm_check is None or tts_check is None:
