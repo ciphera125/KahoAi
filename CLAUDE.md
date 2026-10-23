@@ -1,7 +1,7 @@
 # Kaho AI — working notes
 
-A voice AI calling agent for the Indian market. Stage 1 is terminal-only: no web
-app, no telephony. You run it, you talk into your mic, it talks back.
+A voice AI calling agent for the Indian market. No web app yet. It runs on your
+mic and speakers, or takes and places real phone calls through Plivo.
 
 Built clean-room. Every non-obvious decision is logged in `CLEANROOM.md` with
 the source or the measurement behind it — add a row when you make another one.
@@ -13,6 +13,30 @@ and check it against `git log` and `git status` before doing anything.** When
 asked to end a session or "update the handoff", rewrite its state sections and
 append to its session log. It also records the owner's working agreements, what
 is confirmed by real tests versus only simulated, and what is open.
+
+## How we build (owner's rules, 2026-10-24)
+
+**Test first, always.** Every change starts with a failing unit test that states
+the behaviour, then the code that makes it pass, then a refactor with the tests
+still green. A bug fix starts with a test that reproduces the bug. No production
+code without a test that failed first; show the red run before the green one.
+
+**Then break it, as a pen tester.** After building something, and always before a
+push, attack what was just built as a real security tester would: hostile input
+over `/answer`, `/ws` and `/transfer`, forged or replayed webhooks, a leaked or
+missing `WEBHOOK_SECRET`, prompt injection spoken by the caller (talking the model
+into a tool call, a wrong fact, or leaking its prompt), PII reaching disk or logs
+unmasked, secrets in tracked files or error text, path traversal through names
+that arrive from the network, resource exhaustion (long calls, many connections,
+token burn), and anything that fails open. Run the attacks for real where it is
+safe to (locally, against the test server); say which were run and which were
+only reasoned about.
+
+**Report, do not fix.** List what broke in plain, simple bullet points: what the
+attack was, what happened, how bad it is. Then a separate list of the scope for
+improvement. Do not change code to fix findings; the owner decides what gets
+fixed and asks for it. The goal is to learn, and to keep the system secure and
+scalable.
 
 ## Layout
 
@@ -40,12 +64,13 @@ recordings/              call audio, NOT masked, deleted after 60 days by defaul
 
 `mic -> Deepgram STT -> context aggregator -> Groq LLM -> TTS -> speaker`
 
-The LLM is `openai/gpt-oss-20b` (`GROQ_MODEL_ID`), pinned to this one model as
-the primary (owner's decision, 2026-10-12): do not switch the primary to any
-other Groq model without asking first. `LLM_FALLBACK_MODEL_ID` is
-`qwen/qwen3.8-27b` (owner's decision, 2026-10-15, reversing the 2026-10-12
-default of `off`): on a 429/5xx/connection error from the primary, the turn
-retries once on qwen under its own deadline, `LLM_FALLBACK_TIMEOUT_SECS`,
+The LLM is `openai/gpt-oss-20b` (`GROQ_MODEL_ID`, `GROQ_REASONING_EFFORT=medium`),
+pinned as the primary: do not switch it without asking first. gpt-oss-120b was
+tried on one real call (2026-10-24) and switched back the same day for speed; the
+owner will say when to use it. **GPT-OSS models only; no qwen** (owner,
+2026-10-24). `LLM_FALLBACK_MODEL_ID` is `off`; if it is ever set, it is the other
+gpt-oss size: on a 429/5xx/connection error from the primary, the turn
+retries once on it under its own deadline, `LLM_FALLBACK_TIMEOUT_SECS`,
 logged as `LLM fallback` and as an `llm_fallback` line in the call transcript.
 Only after that attempt fails, or with the fallback off, does `resilience.py`
 apologise. Even with a fallback on, **this only ever covers a failure specific
@@ -60,14 +85,32 @@ only words interrupt: the VAD alone (a cough) never does, and backchannel ("okay
 `INTERRUPT_FILTER=false` restores Pipecat's default. Cost: an interruption waits for
 STT words (a few hundred ms) instead of the first VAD frame.
 
+The Groq account is on the Developer plan (250K tokens/minute, read from the live
+`x-ratelimit-limit-tokens` header on 2026-10-24). Check plan changes from those
+headers, never from the billing page.
+
 Silero VAD decides when the caller's turn has ended. Providers are swappable by
 env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
-(deepgram, elevenlabs, sarvam or smallest).
+(deepgram, elevenlabs, sarvam, smallest or cartesia), `TTS_FALLBACK_PROVIDER`
+(a backup voice if the first one dies mid-call).
+
+The voice is **Cartesia Sonic, voice Neha** (owner's decision, 2026-10-24, after a
+real call): `TTS_PROVIDER=cartesia`, `CARTESIA_*` vars. `CARTESIA_LANGUAGE=en` on
+purpose: in Hindi mode every Cartesia voice mangles "Kaho AI" (heard back as
+"Cahu", "Kahoo"), in English mode every voice says it cleanly, and the greeting is
+spoken before the caller has said anything, so it must start in English. Hindi
+replies still switch to Hindi mode (`FollowCallerLanguage`), where the name is not
+fixed; inline IPA phonemes did not fix it either. About 80ms to first audio,
+half Smallest's. Its free plan allows **only 2 connections at once**, so a third
+parallel call gets no voice from it; it needs a paid plan before real traffic.
+Smallest (`meher`) still works and is the natural backup. Sarvam is ruled out (owner,
+2026-10-02); Deepgram Aura is English-only.
 
 ## Commands
 
 ```bash
 python scripts/check_providers.py    # one real call per provider, fails loudly
+TTS_PROVIDER=cartesia python scripts/check_providers.py   # check another voice
 python apps/voice/main.py            # run the agent on your mic and speakers
 python apps/voice/server.py          # run it as a phone server for Plivo (see .env.example)
 python scripts/call.py --number +91XXXXXXXXXX --agent sales   # dial out; the server must be up
@@ -146,10 +189,9 @@ in local development and very visible on a call from Pune.
 Note `AWS_REGION` in `.env` is for Bedrock, a separate thing from where the
 voice service itself is hosted.
 
-Also still open before real traffic: telephony is wired for Plivo inbound but has
-not taken a real call yet (and no outbound), concurrency, and a real answer on Hindi TTS —
-Deepgram Aura is English-only, so Hindi output needs ElevenLabs, Sarvam or
-Smallest; the owner ruled Sarvam out (2026-10-02), so Hindi is to be Smallest,
-which has not yet run against the live API. Every recorded call opens with
+Also still open before real traffic: Plivo has taken real calls in and out
+(first on 2026-10-15), but never two at once, so concurrency is unproven; and no
+call has yet been held in Hindi end to end, though the Hindi voices themselves
+work against the live APIs. Every recorded call opens with
 "This call may be recorded." (`RECORDING_NOTICE`), which the caller cannot talk
 over; the deeper DPDP / Aadhaar Data Vault question is with the owner's CA.

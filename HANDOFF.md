@@ -12,18 +12,26 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-16. **Real phone calls now work.** The milestone that had been open
-since 2026-09-28 is closed: the owner supplied Plivo credentials, a number
-(`+918065520552`, KYC done) and an ngrok tunnel, and on 2026-10-15/16 the agent took one
-real inbound call and placed three real outbound ones, including to a third party (the
-owner's co-founder). Telephony, recording, transcripts, summaries, barge-in, the duration
-limit and the qwen fallback have all now been seen on real calls rather than simulated ones.
-**Smallest AI is live and Hindi works**, closing the other long-standing gap.
+Last updated: 2026-10-24 (final). **LLM is `openai/gpt-oss-20b`, effort medium, fallback off,
+GPT-OSS only, no qwen.** gpt-oss-120b ran one real call (`0d5723b4`, 215s) and the owner switched
+back to 20b for speed; the owner will say when to use 120b. Pushed this session (section 2).
+Before that, the LLM had briefly been `openai/gpt-oss-120b` (effort low), fallback
+`openai/gpt-oss-20b` (owner's decision). The Cartesia name problem was
+traced to Hindi mode, not the voice: `CARTESIA_LANGUAGE` is now `en`, so the greeting says "Kaho
+AI" cleanly; Hindi sentences still mangle it (open). A one-line `VOICE_RULES` addition fixes the
+Indian-English "100 into 4,000" misreading behind the wrong answer on `4f6452c9`. Server
+restarted on these settings; **no call has been made on them yet**. Earlier today: Cartesia Neha
+became the default after a real call the owner called "perfect" (`ad57ba2c`, caller wait 974ms
+avg); two calls to Ayushi (co-founder) exposed `end_call` hanging up on "Sorry to interrupt
+you." and "1 more time.", and junk `capture_lead` saves on all three calls. Nothing committed.
 
-Two things found on those calls now lead the open work: the Groq account is on the **free**
-tier (8,000 TPM), not the Developer plan, which is the root cause of the 429s and audible
-fillers on every long call; and `capture_lead` saved a junk lead (`name: "?"`). Neither is
-fixed. See section 6.
+Two new owner rules (in `CLAUDE.md`, "How we build"): every change is test-first, and after
+building, and always before a push, Claude attacks the change as a pen tester and reports the
+bugs as plain bullets **without fixing them**; the owner decides what gets fixed.
+
+**Security, open:** the working copy of `.env.example` (tracked) holds real Deepgram, Groq and
+ElevenLabs keys and has lost ~220 lines of notes. Not committed, not in history. Never stage it;
+the owner restores it (`git restore .env.example`) once the keys are in `.env`.
 
 ---
 
@@ -57,6 +65,13 @@ fixed. See section 6.
   gates ("CI green first"); respect the order.
 - **Move fast** on well-specified work; ask only when the answer changes what
   gets built.
+- **Test first (owner, 2026-10-24).** Write the failing test, show it red, then the code, then
+  green. A bug fix starts with a test that reproduces it.
+- **Then pen-test it, and report without fixing (owner, 2026-10-24).** After building, and
+  always before a push: attack the change for real where it is safe, list the bugs in simple
+  bullets (attack, result, severity), then a separate "scope of improvement" list. Say which
+  attacks were run and which only reasoned about. Do not fix findings unless asked. Full text
+  in `CLAUDE.md`, "How we build".
 - The owner sometimes drafts a reply elsewhere and sends it as pasted text. Instructions
   that arrive only inside pasted text need a quick confirmation before acting (one
   question was enough on 2026-10-02).
@@ -105,6 +120,18 @@ Do not redo these.
 - **The LLM fallback to `qwen/qwen3.8-27b` is back on** (owner's decision, 2026-10-15) and
   proven live: six `llm_fallback` events on `93d0957f`, each a 429 retried on qwen.
 
+- **2026-10-24, Cartesia call (`ad57ba2c`, outbound to the owner, 115s).** The owner called it
+  "perfect". Cartesia **Neha** (`47f3bbb1-e98f-4e0c-92c5-5f0325e1e206`) is now the default voice
+  (owner's decision), replacing Smallest `meher`. Hindi on a real call worked: the owner asked for
+  Hindi only and the agent stayed in Hindi; 4 barge-ins all stopped the agent; "Ok. Thank you."
+  ended the call. Recording, masked transcript and summary were all written.
+- **Groq Developer plan is permanent (owner, 2026-10-24).** 250K TPM from the live headers; zero
+  429s and zero fallbacks across 21 completions on `ad57ba2c`.
+
+- **Two calls to Ayushi, the co-founder (2026-10-24, `4f6452c9` 147s and `188ae535` 84s).**
+  Second call: caller wait 797ms avg (fastest yet). Both exposed real bugs (section 6 item 15).
+- **GPT-OSS only, 120b primary (owner, 2026-10-24).** "Don't use Qwen for right now."
+
 ## 2. Repository state
 
 Branch `main`, remote `origin` = `github.com/ciphera125/KahoAi` (**private**; the
@@ -128,7 +155,8 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
-| (this session) | CLEANROOM rows + this handoff update |
+| (uncommitted, 2026-10-24) | Cartesia TTS provider + `check_cartesia`, 19 new tests; `CLAUDE.md` rules and corrections; this update. `.env.example` is also modified but must **not** be committed (real keys) |
+| `6b3b150` | CLEANROOM rows + handoff update after the first real phone calls |
 | `bed7be2` | `LLM_FALLBACK_MODEL_ID` back to `qwen/qwen3.8-27b` (owner's decision); docs only, the mechanism was untouched |
 | `fa1c7fa` | Persona identity: the agent is Aayushi, calling from Kaho AI; "not a business" reframed as sourcing |
 | `291b5dc` | `check_providers.py` calls `ensure_ca_bundle()`, so the Smallest check stops failing falsely on macOS |
@@ -172,7 +200,9 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-Pushed through `eeef867`, level with origin (2026-10-12). **CI #34 is green** (1m12s),
+As of 2026-10-24, `main` is level with `origin/main` at `6b3b150`; everything listed as
+uncommitted above is only in the working tree. Earlier: pushed through `eeef867`, level with
+origin (2026-10-12). **CI #34 is green** (1m12s),
 confirmed by screenshot of the Actions page; one run covers the whole push (`f36d5ae`
 through `eeef867`), since GitHub Actions fires once per push, not once per commit.
 
@@ -209,7 +239,7 @@ apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-cal
 apps/voice/groq_usage.py append-only log of every Groq API call (logs/groq_usage.log): timestamp, caller, model
 apps/voice/rate_limit.py ConnectionLimiter: /ws's per-IP-per-minute and global-concurrent caps, ahead of any pipeline work
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
-apps/voice/tests/        336 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
+apps/voice/tests/        355 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/groq_usage.log      every Groq API call: timestamp, caller, model (gitignored)
@@ -221,13 +251,17 @@ CLEANROOM.md             decision log with sources; add a row for every non-obvi
 
 Pipeline: `transport -> Deepgram STT -> [FollowCallerLanguage] -> user aggregator ->
 Groq LLM -> TTS (optionally a failover pair) -> transport -> assistant aggregator`. `TTS_PROVIDER` is one of
-deepgram, elevenlabs, sarvam, smallest. Tools are enabled by `TOOLS_ENABLED`
+deepgram, elevenlabs, sarvam, smallest, cartesia. This deployment's `.env` uses `cartesia`
+(Neha, `CARTESIA_LANGUAGE=hi`, model default `sonic-3.6`), with **no `TTS_FALLBACK_PROVIDER`**.
+The code's own default when unset is still `deepgram`. Tools are enabled by `TOOLS_ENABLED`
 (default `end_call,capture_lead`).
 
 `GROQ_MODEL_ID` is pinned to `openai/gpt-oss-20b` only (owner's decision, 2026-10-12); do
 not change it to `qwen/qwen3.8-27b` or any other Groq model without asking first.
-`LLM_FALLBACK_MODEL_ID` defaults to `off` as a result (no second approved model to fall
-back to). `/ws` is rate-limited right after the `WEBHOOK_SECRET` check, before any pipeline
+**Superseded 2026-10-24 (end of session):** `GROQ_MODEL_ID=openai/gpt-oss-20b`,
+`GROQ_REASONING_EFFORT=medium`, `LLM_FALLBACK_MODEL_ID=off`; GPT-OSS only, no qwen (owner).
+`CARTESIA_LANGUAGE=en`. The Groq account is on the Developer plan: 250K TPM from the live headers
+on 2026-10-24. `/ws` is rate-limited right after the `WEBHOOK_SECRET` check, before any pipeline
 work: `WS_RATE_LIMIT_PER_MINUTE` (default 5, per IP) and `WS_MAX_CONCURRENT_CALLS` (default
 10, across every IP) — a safety net, not the real guard (Plivo signature validation is
 still open, section 6).
@@ -377,6 +411,56 @@ still open, section 6).
   a safety net; it is not the Plivo webhook signature validation still open in section 6, and
   does not touch the existing `WEBHOOK_SECRET` check.
 
+- **Groq Developer plan (2026-10-24).** One 5-token request; live headers
+  `x-ratelimit-limit-tokens: 250000`, `x-ratelimit-limit-requests: 500000` (was 8,000 / 1,000).
+  No call has been made on the new plan yet, so "no more 429s or fillers" is expected, not seen.
+- **Cartesia TTS (2026-10-24).** `TTS_PROVIDER=cartesia` builds Pipecat's `CartesiaTTSService`
+  from `CARTESIA_API_KEY`, `CARTESIA_VOICE_ID` (required), `CARTESIA_MODEL_ID` (default
+  `sonic-3.6`), `CARTESIA_LANGUAGE` (e.g. `hi`), `CARTESIA_SPEED` (0.6-1.5, else startup stops).
+  It follows the caller's language like the other multilingual voices
+  (`MULTILINGUAL_TTS_PROVIDERS`, decided in `voice_follows_caller_language()`), and can be a
+  `TTS_FALLBACK_PROVIDER`. Built test-first: 12 tests in `test_cartesia_tts.py` and 7 in
+  `test_check_cartesia.py`, each shown red before the code; four mutations caught (the first
+  version of the language-follow test missed one and was rewritten). Live: `TTS_PROVIDER=cartesia
+  python scripts/check_providers.py` passes. Benchmark (scratch script over each raw websocket,
+  owner's Mac, 6 requests each, Hindi and Hinglish, time from send to first audio): Cartesia
+  median 0.082s, Smallest median 0.178s. Small and from India-to-wherever, not from the pipeline.
+  Live probes: 8kHz output works; wrong key gives HTTP 401 with no key in the text; unknown
+  voice and empty text return `type: error` replies; a 5,000-character request is synthesised
+  in full; **the 3rd to 6th concurrent connection get "You have reached your concurrency limit
+  of 2"**. The owner chose **Neha** (`47f3bbb1-e98f-4e0c-92c5-5f0325e1e206`); other Hindi
+  voices tried: Meera `a81fccdc-5595-4dfc-ae76-4de6a515b8a2`, Siya
+  `4459a9a5-69d6-4680-b970-e13dc51845b6`, Diya `d2d3584d-1b44-428e-aab1-30255d28d978`.
+- **Latency on the real Cartesia call `ad57ba2c` (`latency_summary.py --run 20261023T212110`).**
+  Caller wait 608-1,546ms, avg 974, p50 917 (12 turns); turn detection avg 356ms; reply after
+  turn avg 572ms; Deepgram STT 588-658ms (avg 632, n=4); Groq TTFB 132-202ms (avg 153, n=5);
+  Cartesia TTFB 73-86ms (avg 79, n=9), first audio 194-230ms (avg 210, n=4). Only some turns were
+  logged per stage (interruptions cut the rest), so the per-stage n is small. Measured inside the
+  server: the ngrok/Plivo/phone-network leg is not included.
+- **Cost estimate for a call like `ad57ba2c` (2026-10-24), per minute:** Plivo $0.0048 (real CDR
+  rate, bills whole minutes); Deepgram $0.0071-0.0105 (nova-3 multilingual streaming plus
+  keyterms; third-party sources disagree on the base rate); Cartesia ~$0.017 on Startup ($49 /
+  1.25M credits, ~1 credit/char, ~440 chars/min on this call); Groq ~$0.0016 (**estimated**,
+  scaled from the 15 Oct token count; tokens are not logged per call). Total ~$0.028-0.034/min.
+  Prices from third-party pages, not checked on the providers' own pricing pages.
+
+- **Model and pronunciation experiments (2026-10-24), all live API, none on a call yet.** See the
+  three CLEANROOM rows of that date: 120b-low vs 20b vs medium effort; the "into" rule (2/12 and
+  4/12 multiplied correctly without it, 10/12 and 9/12 with it, 12/12 division phrasings still
+  divided); Cartesia English mode clean for all voices, Hindi mode mangles "Kaho AI" for all, and
+  inline IPA does not help. English-mode greeting samples of Neha, Arushi, Ishani, Swati, Kiara
+  and Palak saved for the owner in the session scratchpad (`voices_en/`, temporary). 356 tests.
+
+- **The one real call on gpt-oss-120b (`0d5723b4`, 215s, to Ayushi, 2026-10-24).** No 429s,
+  no errors, no junk `capture_lead`, `end_call` only on "No. That's it.", no complaint about
+  "Kaho AI" (greeting in English mode). Caller wait p50 992ms but avg 1,525ms / worst 3,713ms:
+  four turns hit the ~3s turn-detection ceiling when the caller paused mid-sentence. Groq TTFB
+  238ms avg (vs 153-179 on 20b). Cartesia TTFB 252ms vs 79-102ms earlier the same day; a direct
+  probe straight after gave ~400ms in **both** English and Hindi mode, so the language setting is
+  not the cause; Cartesia itself was slower, reason unknown. 120b's replies were long compound
+  sentences and were cut off 11 times. The caller steered the default persona into a detailed
+  sex-education explanation; it answered, since the default persona answers general questions.
+
 ## 5. UNVERIFIED (assume nothing)
 
 Never claim any of these works until a real call shows it.
@@ -450,6 +534,15 @@ Never claim any of these works until a real call shows it.
 - The summary retry's 429 path is proven with an injected clock, not yet seen against a
   real 429 after the change (the 401 path was seen live).
 
+**Cartesia (new 2026-10-24)**
+- One real phone call only (`ad57ba2c`), never on the local mic, never two calls at once.
+  Interruption and Hindi were seen working on that call; the language retune itself
+  (`FollowCallerLanguage`) was not checked in the logs.
+- What the caller hears when Cartesia returns an error mid-call (for example the concurrency
+  limit) is reasoned, not run: Pipecat's service pushes an error but its socket stays open, so
+  `CallHealth` may not see it as dead and fail over. See the pen-test findings in section 6.
+- Number and Aadhaar-style digit reading in Hindi not checked by ear.
+
 **Other**
 - Smallest AI TTS has never run against the live API (no key when written);
   `check_smallest` in `check_providers.py` is likewise untested live.
@@ -495,15 +588,16 @@ the same day (run #34 on `eeef867`):** LLM pinned to `openai/gpt-oss-20b` only
 to `logs/groq_usage.log` (`05f42d5`), and `/ws` rate limiting as a safety net ahead of the
 signature validation below (`eeef867`). Remaining:
 
-1. **Upgrade the Groq plan — this blocks almost everything else.** The account is on the
-   free tier: the live headers say `x-ratelimit-limit-tokens: 8000`, where Developer is
+1. ~~**Upgrade the Groq plan.**~~ **Done 2026-10-24**: Developer plan, 250K TPM, confirmed
+   from the live headers. Next is a real call on it to see the 429s and fillers gone. The note
+   from before: the account was on the free tier: the live headers say `x-ratelimit-limit-tokens: 8000`, where Developer is
    250K TPM. One 163s call sent 25,265 prompt tokens over 15 completions (~9,300/min), so
    exceeding the cap is structural, not bad luck. It is the cause of every 429, every
    audible "One moment" filler, and all six qwen fallbacks on `93d0957f`. It costs almost
    nothing to fix — Groq was about **$0.002 of a ~$0.04 call** — and nothing else moves
    the caller's experience as much. **Verify from the headers, not the billing page**: the
    2026-10-12 note recording the owner saying the plan was upgraded was wrong.
-2. **`capture_lead` saves junk.** On `93d0957f` it wrote `{"name": "?", "reason": "?"}`
+2. **`capture_lead` saves junk (seen again, worse, on `ad57ba2c`: item 14).** On `93d0957f` it wrote `{"name": "?", "reason": "?"}`
    to `leads/`, called with placeholder arguments while the model was mid-stall and being
    interrupted. Same family as the two `end_call` bugs: a tool fired without real intent.
    The persona already says to read the details back and only save after a yes, so the
@@ -551,6 +645,47 @@ signature validation below (`eeef867`). Remaining:
    live test of a provider that hangs rather than errors.
 11. The owner's "CLAUDE.md §4" and "what done looks like" checklist are still not in the
    repo (see section 0). Ask for them and add them.
+12. **Cartesia is the default (decided 2026-10-24); what it still needs.** A paid plan before
+   real traffic: the free plan allows 2 concurrent connections and ~10-20K characters a month
+   (~25-45 minutes of calls like `ad57ba2c`). Consider `TTS_FALLBACK_PROVIDER=smallest` (its key
+   is set), but see item 13: a Cartesia error may not trigger failover. Log Groq token counts per
+   call so cost stops being an estimate.
+13. **Pen-test findings on the Cartesia change, reported not fixed (2026-10-24).** Owner decides:
+   - Concurrency limit of 2 on the free plan (run live): a 3rd parallel call gets no Cartesia audio.
+   - An error reply mid-call may not trigger failover (reasoned): the socket stays open, so the
+     caller could hear silence until `RESPONSE_DEADLINE_SECS` (10s) ends it.
+   - `check_cartesia` reads the error from an `error` field, but Cartesia's real replies carry it
+     in `message` (run live); the check still fails correctly but prints the whole reply, and the
+     unit test's fake uses the wrong shape.
+   - Caller-facing text, including read-back details, goes to another US provider (reasoned);
+     part of the DPDP question already with the owner's CA.
+   - The Cartesia key was pasted into the chat (it is in the session transcript). Rotate it if
+     that matters.
+   - Pre-existing, found this session: `.env.example` holds real keys in the working tree.
+15. **Bugs on the calls to Ayushi (`4f6452c9`, `188ae535`), reported not fixed (2026-10-24).**
+   - `end_call` hung up on a caller who wanted to keep talking, twice: on "Sorry to interrupt
+     you." (with junk args `{"": ""}`) and on "1 more time." Highest priority.
+   - `capture_lead` saved junk on both calls (`name: "?"`, and the agent's own name 4s in).
+   - The agent looped "Please share your name and what you'd like us to note" three times and
+     promised to "fix" the name, which it cannot do.
+   - "Kaho AI" mispronounced; cause found and partly fixed (see the header and CLEANROOM).
+   - Still open after the fix: the name inside Hindi sentences.
+16. **From the 120b call `0d5723b4`, reported not fixed (2026-10-24).** Replies too long (cut off
+   11 times): cap length in code, not only in `VOICE_RULES`. ~3s waits when the caller pauses
+   mid-sentence (4 of 14 turns): the turn-detection ceiling, part of item 4. The default persona
+   has no topic boundary. Cartesia latency swung from ~80ms to ~400ms within hours; re-measure.
+14. **Bugs seen on the real Cartesia call `ad57ba2c`, reported not fixed (2026-10-24).**
+   - `capture_lead` fired 3s in, before the caller spoke, saving `name: "Aayushi"` (the agent's
+     own name), `reason: "Introduction"`; later saved `name: "?"` again. Both in
+     `leads/2026-10-23.jsonl`. Item 2, now worse.
+   - STT heard "Kaho AI" as "Cairo AI" in a Hindi sentence; the agent said it had no information
+     on it. `DEEPGRAM_KEYTERMS` did not help there; the persona also says nothing about Kaho AI.
+   - A Hindi question got an English reply (nothing enforces the reply language).
+   - One reply said the same sentence twice ("मेरा नाम आयुशी है…").
+   - The filler "One moment." played while the caller was still talking: the 3s timer kept
+     running from a turn the caller then continued (log 02:52:11-14). It is also English-only.
+   - STT split one Hindi sentence into 3 turns (item 4).
+   - "Aচ্ছা" came back partly in Bengali script, so the summary lists Bengali as a language.
 
 ## 7. Gotchas that cost time
 
@@ -915,3 +1050,61 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   request; CI not yet confirmed green on it — **check the Actions page** (section 2).
 - Next: Groq tier (item 1), then the deferred parallel-call test, then `capture_lead`, then
   the fragmentation/endpointing tuning with real calls.
+
+**2026-10-24.**
+- Reviewed this file against `git log`/`git status`: level with origin at `6b3b150`. Found the
+  working copy of `.env.example` holding real Deepgram, Groq and ElevenLabs keys (not committed,
+  not in history) and told the owner; left the file untouched.
+- Owner set two new rules, added to `CLAUDE.md` ("How we build"): test-first always; pen-test
+  every change and report bugs plainly without fixing them.
+- Owner moved Groq to the Developer plan; confirmed from the live headers (250K TPM). Item 1 closed.
+- Owner asked for free Hindi-capable STT/TTS options; shortlisted (Cartesia, Azure, Google Chirp
+  for TTS; Sarvam STT, Gnani, Speechmatics for STT). Owner supplied a Cartesia key.
+- Built Cartesia as a `TTS_PROVIDER` and a `check_providers.py` check, test-first (19 tests, red
+  then green, mutation-checked). Live check passes; benchmark 0.082s vs Smallest 0.178s to first
+  audio. Pen-tested it live: found the 2-connection limit and the error-field mismatch, among
+  others (section 6 item 13). Not fixed, per the new rule.
+- Corrected stale lines in `CLAUDE.md` (no telephony, Smallest never live) and here (fallback
+  `off`). 355 tests pass, ruff clean. Nothing committed.
+- Next: owner picks a voice from the samples; a real call on the Groq Developer plan; then the
+  parallel-call test (now limited by Cartesia's 2 if it is the voice), then `capture_lead`.
+
+**2026-10-24 (continued).**
+- Owner asked Claude to dial them on Cartesia Neha. The auto-mode classifier blocked Claude's
+  first `ngrok` start; a follow-up command then **blanked `PUBLIC_HOST` in `.env`** (Claude's
+  mistake: it wrote before checking the tunnel was up). On the owner's direct request the second
+  start found an ngrok already serving `open-buckskin-wolverine.ngrok-free.dev` (PID 3285);
+  `PUBLIC_HOST` now holds that. Server started with `TTS_PROVIDER=cartesia`; `call.py` dialled
+  the owner's own number (`ad57ba2c`). Owner: "perfect".
+- Read the transcript, summary, leads, recording, server log and Groq usage; latency and cost
+  are in section 4, bugs in section 6 item 14 (not fixed, per the owner's rule).
+- Owner decided: Cartesia Neha is the default voice, Groq Developer the permanent plan. `.env`
+  now has `TTS_PROVIDER=cartesia`; `check_providers.py` passes for Deepgram, Cartesia, Groq.
+  `CLAUDE.md` updated to match.
+- The server and the ngrok tunnel may still be running from this session.
+- Next: fix `capture_lead` (items 2 and 14) when the owner asks; paid Cartesia plan before
+  traffic; the parallel-call test; the Deepgram endpointing tuning (STT is now the slowest stage).
+
+**2026-10-24 (later still).**
+- Called Ayushi twice (owner approved via `/permissions`; a third attempt failed first because
+  the Mac's resolver could not look up the ngrok host for ~40s, then went through). A live
+  tracker script (scratchpad `watch_call.py`) followed the second call's turns, tools and
+  latencies as they happened. Findings in section 6 item 15.
+- Owner asked for: another Cartesia voice, a professional "Kaho AI", gpt-oss-120b, no qwen.
+  Measured before changing anything (CLEANROOM, three rows): the voice was not the cause, Hindi
+  mode was; the wrong multiplication was the word "into", not model size. Changed `.env`
+  (`GROQ_MODEL_ID=openai/gpt-oss-120b`, effort `low`, fallback `openai/gpt-oss-20b`,
+  `CARTESIA_LANGUAGE=en`) and `VOICE_RULES` (test first: `tests/test_voice_rules.py`, red then
+  green). Restarted the server; `check_providers.py` passes on 120b. Left the voice as Neha
+  pending the owner's ear on the English-mode samples.
+- Owner asked not to be asked for permission; Claude lists permissions used at the end instead
+  (saved to Claude's memory).
+- Next: a real call on 120b + English-mode greeting; then `end_call` and `capture_lead` fixes
+  when the owner asks.
+
+**2026-10-24 (end of session).**
+- Called Ayushi on gpt-oss-120b (`0d5723b4`); findings in sections 4 and 6 item 16. Owner then
+  switched back to `openai/gpt-oss-20b` (effort medium, fallback off) and will say when to use
+  120b. Server restarted on 20b; `check_providers.py` passes.
+- Committed by concern and pushed at the owner's request; `.env.example` deliberately left out
+  (it holds real keys in the working tree). CI result not checked from here.
