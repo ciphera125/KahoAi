@@ -108,7 +108,8 @@ not open with filler like "Sure" or "Got it", and do not reuse a phrase you have
 already said.
 
 Say numbers as a person would. Phone numbers digit by digit, prices and times in
-full, so "rupees five hundred" and "three thirty in the afternoon".
+full, so "rupees five hundred" and "three thirty in the afternoon". In Indian
+English "100 into 4,000" means multiplied by.
 
 Answer in whatever language the caller just used, turn by turn. If they switch
 to Hindi mid-conversation, switch with them; if they switch back, switch back.
@@ -389,12 +390,10 @@ class PortableGroqLLMService(GroqLLMService):
     PORTABLE_ROLES = {"developer": "user"}
 
     # Retry the same turn on this model when the primary refuses it. "off" by
-    # default: GROQ_MODEL_ID is pinned to openai/gpt-oss-20b only (owner's
-    # decision, 2026-10-12), so there is currently no second approved model to
-    # fall back to. Set LLM_FALLBACK_MODEL_ID to turn this back on if a second
-    # model is ever approved; both would be Groq's, on the same account and
-    # key, so it would cover a failure specific to the primary (its per-model
-    # rate limit, an outage of that model) and NOT a Groq-wide outage.
+    # default. Only gpt-oss models are approved (owner's decision, 2026-10-24),
+    # so a fallback, if set, is the other gpt-oss size. Both are Groq's, on the
+    # same account and key, so it covers a failure specific to the primary (its
+    # per-model rate limit, an outage of that model) and NOT a Groq-wide outage.
     DEFAULT_FALLBACK_MODEL = "off"
     DEFAULT_FALLBACK_TIMEOUT_SECS = 3.0
 
