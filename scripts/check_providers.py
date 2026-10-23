@@ -291,6 +291,61 @@ def check_smallest() -> tuple[bool, str]:
         return False, f"{type(e).__name__}: {e}"
 
 
+def check_cartesia() -> tuple[bool, str]:
+    """Synthesize a short phrase over the websocket the agent streams from.
+
+    The message mirrors Pipecat's CartesiaTTSService, so a pass means the voice,
+    model and language the agent will use are all accepted.
+    """
+    api_key = env("CARTESIA_API_KEY")
+    voice = env("CARTESIA_VOICE_ID")
+    missing = [
+        name
+        for name, value in [("CARTESIA_API_KEY", api_key), ("CARTESIA_VOICE_ID", voice)]
+        if not value
+    ]
+    if missing:
+        return False, f"missing: {', '.join(missing)}"
+    from pipecat.services.cartesia.tts import _CARTESIA_API_VERSION
+    from websockets.exceptions import InvalidStatus, WebSocketException
+    from websockets.sync import client
+
+    message = {
+        "transcript": "Namaste",
+        "continue": False,
+        "context_id": "check-providers",
+        "model_id": env("CARTESIA_MODEL_ID") or "sonic-3.6",
+        "voice": {"mode": "id", "id": voice},
+        "language": env("CARTESIA_LANGUAGE") or "hi",
+        "output_format": {"container": "raw", "encoding": "pcm_s16le", "sample_rate": 24000},
+    }
+
+    def fail(reason: object) -> tuple[bool, str]:
+        # A provider can echo the request back, key included.
+        return False, str(reason).replace(api_key, "[REDACTED]")[:200]
+
+    try:
+        with client.connect(
+            "wss://api.cartesia.ai/tts/websocket",
+            additional_headers={"X-API-Key": api_key, "Cartesia-Version": _CARTESIA_API_VERSION},
+            open_timeout=TIMEOUT,
+        ) as ws:
+            ws.send(json.dumps(message))
+            while True:
+                reply = json.loads(ws.recv(timeout=TIMEOUT))
+                kind = reply.get("type")
+                if kind == "chunk":
+                    return True, ""
+                if kind == "error":
+                    return fail(reply.get("error", reply))
+                if kind == "done":
+                    return False, "the request succeeded but returned no audio"
+    except InvalidStatus as e:
+        return False, f"HTTP {e.response.status_code}"
+    except (WebSocketException, OSError, TimeoutError) as e:
+        return fail(f"{type(e).__name__}: {e}")
+
+
 LLM_CHECKS = {
     "groq": ("Groq (LLM)", check_groq),
     "bedrock": ("AWS Bedrock (LLM)", check_bedrock),
@@ -301,6 +356,7 @@ TTS_CHECKS = {
     "elevenlabs": ("ElevenLabs (TTS)", check_elevenlabs),
     "sarvam": ("Sarvam Bulbul (TTS)", check_sarvam),
     "smallest": ("Smallest AI (TTS)", check_smallest),
+    "cartesia": ("Cartesia Sonic (TTS)", check_cartesia),
 }
 
 

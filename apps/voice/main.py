@@ -1,9 +1,9 @@
 """Kaho AI voice agent entrypoint.
 
 A terminal-only pipeline: your mic/speakers -> Deepgram (STT) -> Groq (LLM)
--> Deepgram, ElevenLabs, Sarvam or Smallest (TTS), with Silero VAD driving turn-taking. No web
-server, no browser — run it with `python main.py` (or `./scripts/run_agent.sh`)
-and talk.
+-> Deepgram, ElevenLabs, Sarvam, Smallest or Cartesia (TTS), with Silero VAD
+driving turn-taking. No web server, no browser — run it with `python main.py`
+(or `./scripts/run_agent.sh`) and talk.
 
 TTS_PROVIDER picks the voice: Deepgram Aura is the default because it runs on
 the STT key we already have and costs nothing extra to iterate against, but its
@@ -54,6 +54,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
     LLMUserAggregatorParams,
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
 from pipecat.services.deepgram.stt import DeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
@@ -130,7 +131,10 @@ guess at a name or a number.
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
 SUPPORTED_LLM_PROVIDERS = ("groq",)
-SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam", "smallest")
+SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam", "smallest", "cartesia")
+# Voices that speak more than one language, so worth retuning to the caller's.
+# Aura is English-only.
+MULTILINGUAL_TTS_PROVIDERS = ("sarvam", "smallest", "elevenlabs", "cartesia")
 
 
 def ensure_ca_bundle() -> None:
@@ -174,7 +178,7 @@ def env(name: str) -> str | None:
     return os.getenv(name) or None
 
 
-def env_float(name: str, default: float) -> float:
+def env_float(name: str, default: float | None) -> float | None:
     raw = env(name)
     if raw is None:
         return default
@@ -658,7 +662,13 @@ def env_int(name: str) -> int | None:
 
 def build_tts(
     provider: str | None = None,
-) -> DeepgramTTSService | ElevenLabsTTSService | SarvamTTSService | SmallestTTSService:
+) -> (
+    DeepgramTTSService
+    | ElevenLabsTTSService
+    | SarvamTTSService
+    | SmallestTTSService
+    | CartesiaTTSService
+):
     provider = (provider or env("TTS_PROVIDER") or "deepgram").lower()
     if provider not in SUPPORTED_TTS_PROVIDERS:
         logger.error(
@@ -715,6 +725,35 @@ def build_tts(
             api_key=env("SMALLEST_API_KEY"),
             max_buffer_delay_ms=env_int("SMALLEST_MAX_BUFFER_DELAY_MS"),
             settings=SmallestTTSService.Settings(
+                **{k: v for k, v in options.items() if v is not None}
+            ),
+            text_filters=speech_text_filters(),
+            text_aggregation_mode=text_aggregation_mode(),
+        )
+
+    if provider == "cartesia":
+        require_env("CARTESIA_API_KEY", "CARTESIA_VOICE_ID")
+        raw_language = env("CARTESIA_LANGUAGE")
+        try:
+            language = Language(raw_language) if raw_language else None
+        except ValueError:
+            logger.error(f"CARTESIA_LANGUAGE={raw_language!r} is not a language code.")
+            sys.exit(1)
+        # Cartesia takes 0.6 to 1.5. Out of range would only fail on the first
+        # sentence of a live call, so it stops startup instead.
+        speed = env_float("CARTESIA_SPEED", None)
+        if speed is not None and not 0.6 <= speed <= 1.5:
+            logger.error(f"CARTESIA_SPEED={speed} is outside Cartesia's 0.6 to 1.5.")
+            sys.exit(1)
+        options = {
+            "voice": env("CARTESIA_VOICE_ID"),
+            "model": env("CARTESIA_MODEL_ID"),
+            "language": language,
+            "generation_config": GenerationConfig(speed=speed) if speed is not None else None,
+        }
+        return CartesiaTTSService(
+            api_key=env("CARTESIA_API_KEY"),
+            settings=CartesiaTTSService.Settings(
                 **{k: v for k, v in options.items() if v is not None}
             ),
             text_filters=speech_text_filters(),
@@ -845,21 +884,7 @@ def build_worker(
         ),
     )
 
-    # Only worth doing for a voice that speaks more than one language. Aura is
-    # English-only, so retuning it would be noise; Sarvam, Smallest and
-    # ElevenLabs are the multilingual ones. TTS_FOLLOW_CALLER_LANGUAGE=false opts out.
-    provider = (env("TTS_PROVIDER") or "deepgram").lower()
-    multilingual = provider in ("sarvam", "smallest", "elevenlabs")
-    follow = (env("TTS_FOLLOW_CALLER_LANGUAGE") or str(multilingual)).strip().lower() == "true"
-    if follow and not multilingual:
-        logger.warning(
-            "TTS_FOLLOW_CALLER_LANGUAGE is on but this voice speaks one language; ignoring."
-        )
-        follow = False
-    if follow:
-        logger.info("Voice will follow the caller's language, turn by turn.")
-
-    follow_proc = FollowCallerLanguage() if follow else None
+    follow_proc = FollowCallerLanguage() if voice_follows_caller_language() else None
 
     pipeline = Pipeline(
         [
@@ -1000,6 +1025,26 @@ def build_worker(
 
 def recordings_dir() -> Path:
     return Path(env("RECORDING_DIR") or HERE.parent.parent / "recordings")
+
+
+def voice_follows_caller_language() -> bool:
+    """Whether the voice is retuned to the caller's language, turn by turn.
+
+    Only worth doing for a voice that speaks more than one language. Aura is
+    English-only, so retuning it would be noise. TTS_FOLLOW_CALLER_LANGUAGE=false
+    opts out.
+    """
+    provider = (env("TTS_PROVIDER") or "deepgram").lower()
+    multilingual = provider in MULTILINGUAL_TTS_PROVIDERS
+    follow = (env("TTS_FOLLOW_CALLER_LANGUAGE") or str(multilingual)).strip().lower() == "true"
+    if follow and not multilingual:
+        logger.warning(
+            "TTS_FOLLOW_CALLER_LANGUAGE is on but this voice speaks one language; ignoring."
+        )
+        follow = False
+    if follow:
+        logger.info("Voice will follow the caller's language, turn by turn.")
+    return follow
 
 
 def build_tts_stack():
