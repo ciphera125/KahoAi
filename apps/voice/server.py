@@ -637,6 +637,10 @@ async def warm_up() -> None:
         except TimeoutError:
             logger.warning("Caching the recording notice timed out; calls will speak it")
             _prespoken_notice = None
+        except (Exception, SystemExit) as e:  # noqa: BLE001 - build_tts exits on bad config
+            # Warm-up never takes the server down; the notice is spoken the old way.
+            logger.warning(f"Could not cache the recording notice ({type(e).__name__})")
+            _prespoken_notice = None
         if _prespoken_notice:
             logger.info(f"Recording notice cached: {_prespoken_notice.duration_secs:.2f}s, "
                         "sent the moment each call opens")

@@ -259,3 +259,18 @@ async def test_the_server_warm_up_is_bounded_whatever_the_voice_does(monkeypatch
     started = time.monotonic()
     await asyncio.wait_for(server.warm_up(), 10)
     assert time.monotonic() - started < 5 and server._prespoken_notice is None
+
+
+async def test_warm_up_never_fails_when_the_voice_is_not_configured(monkeypatch):
+    # CI caught it (2026-10-24): with no voice keys, build_tts() exits, and
+    # warm-up must never take the server down. Calls then speak the notice.
+    import server
+
+    def unconfigured(*a, **k):
+        raise SystemExit(1)
+
+    monkeypatch.setattr(server, "build_tts", unconfigured)
+    monkeypatch.setattr(server, "_prespoken_notice", None)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    await server.warm_up()
+    assert server._prespoken_notice is None
