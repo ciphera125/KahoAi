@@ -21,13 +21,16 @@ need Plivo's V3 signature; `/ws` needs a single-use stream token. The Studio (12
 has sign-in, dashboard, agents, prompts, contacts, numbers, notifications and a tour, redesigned
 in IBM Plex.
 
-**Running right now (2026-10-25):** the phone server on **port 8010**, not 8000, because the
-owner's other project, PayTrace (`~/PayTrace/backend`, `uvicorn app.main:app --port 8000`), took
-`127.0.0.1:8000`. The owner's ngrok agent was repointed through its local API
-(`127.0.0.1:4040/api/tunnels`) so `open-buckskin-wolverine.ngrok-free.dev` -> `localhost:8010`;
-PayTrace has no public address while this holds. `.env` still says `PORT=8000`: start the phone
-server with `PORT=8010` while PayTrace is up, and check `GET /` on the public URL before calling
-(PayTrace answers with `{"service":"PayTrace API",...}`).
+**Running right now (2026-10-25):** the phone server on **port 8765** (`.env` `PORT=8765`).
+Port 8000 is taken by the owner's PayTrace API (`~/PayTrace/backend`), and 8010 by the Node app
+in the untracked `backend/` folder; both bind `127.0.0.1`, which wins over our `0.0.0.0` for
+`localhost`, so ngrok silently reached them. The owner's ngrok agent was repointed through its
+local API (`127.0.0.1:4040/api/tunnels`, tunnel `kahoai`) to `localhost:8765`; PayTrace has no
+public address while this holds. Before calling, check the public URL reaches us: an unsigned
+`POST /answer` must give 403 *in our server log*. The Studio must be restarted after any change
+to `scripts/call.py`: it imports the dialler once (an unsigned pre-dial check from a Studio
+started before `6d0e90e` caused a misleading "WEBHOOK_SECRET does not match" error).
+`WEBHOOK_SECRET` was rotated 2026-10-25 after Claude printed it unmasked.
 
 **Owner actions open:** rotate the keys leaked into an earlier session log (Deepgram, Smallest,
 ElevenLabs, Cartesia, Google) and delete the Google key; fill the persona's placeholders ("NBFC
@@ -715,10 +718,12 @@ signature validation below (`eeef867`). Remaining:
 
 ## 7. Gotchas that cost time
 
-- **Port 8000 is shared with the owner's PayTrace API.** It binds `127.0.0.1:8000`, which wins
-  over our `0.0.0.0:8000` for `localhost`, so ngrok silently forwards to PayTrace and the Studio's
-  pre-dial check gets a 404 ("server not started"). Run ours on `PORT=8010` and point the tunnel
-  there (ngrok local API, or `ngrok http 8010 --url open-buckskin-wolverine.ngrok-free.dev`).
+- **Other apps on this machine take our port.** PayTrace binds `127.0.0.1:8000` and the
+  `backend/` Node app `127.0.0.1:8010`; either wins over our `0.0.0.0` for `localhost`, so ngrok
+  silently forwards to them and the Studio's pre-dial check gets a 404 ("server not started").
+  We run on 8765. Check with `lsof -nP -iTCP:<port> -sTCP:LISTEN` after every restart.
+- **The Studio's "WEBHOOK_SECRET does not match" error means any 403** from the pre-dial check,
+  including a missing Plivo signature from a Studio running old code. Read the server log.
 - **zsh treats a word starting with `=` as a command lookup**: `echo =====` fails. Quote it.
 - **CI was red because of `pyaudio`.** The `local` extra needs PortAudio headers on
   Linux; CI now installs `portaudio19-dev`. It was red before this work too. It
@@ -1361,3 +1366,8 @@ and a full Hindi call untested, DPDP question with the CA.
   through its local API. Public `/answer` now reaches Kaho AI (403 unsigned, as it should).
 - PayTrace keeps running locally but has no public URL until the tunnel is pointed back.
 - No code changed. Handoff updated and pushed.
+- Later: the Studio's "WEBHOOK_SECRET does not match" error was a Studio started before the
+  signed pre-dial check (`6d0e90e`), still sending it unsigned. Restarted it. While diagnosing,
+  Claude printed `WEBHOOK_SECRET` unmasked in a log line; rotated in `.env`, both servers
+  restarted. The `backend/` Node app then took 8010; the phone server moved to **8765**
+  (`.env` updated), tunnel repointed. Signed pre-dial check passed (200), nothing dialled.
