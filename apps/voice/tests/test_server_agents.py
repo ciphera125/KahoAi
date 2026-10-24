@@ -131,3 +131,48 @@ def test_a_body_without_a_length_is_still_capped(client):
     r = client.post("/hangup?token=s3cret", content=chunks(),
                     headers={"content-type": "application/x-www-form-urlencoded"})
     assert r.status_code == 413
+
+
+# --- forged outcomes: Plivo's signature is required ------------------------------
+
+import base64  # noqa: E402
+import hashlib  # noqa: E402
+import hmac  # noqa: E402
+
+
+@pytest.fixture
+def signed(client, monkeypatch):
+    monkeypatch.setenv("PLIVO_AUTH_ID", "MAID")
+    monkeypatch.setenv("PLIVO_AUTH_TOKEN", "plivo-token")
+    monkeypatch.setenv("NUMBER_STORE_PATH", "/nonexistent/numbers.json")
+    monkeypatch.setenv("PLIVO_VERIFY_SIGNATURE", "true")
+    return client
+
+
+def plivo_sign(base, nonce="n1", token="plivo-token"):
+    return base64.b64encode(hmac.new(token.encode(), f"{base}.{nonce}".encode(),
+                                     hashlib.sha256).digest()).decode()
+
+
+def test_a_hangup_signed_by_plivo_is_recorded(signed):
+    base = "https://kaho.example.com/hangup?token=s3cret.CallStatusno-answerCallUUIDsig12345"
+    r = signed.post("/hangup?token=s3cret", content="CallUUID=sig12345&CallStatus=no-answer",
+                    headers={"content-type": "application/x-www-form-urlencoded",
+                             "X-Plivo-Signature-V3": plivo_sign(base),
+                             "X-Plivo-Signature-V3-Nonce": "n1"})
+    assert r.status_code == 200
+    assert call_outcomes.default_log().all()["sig12345"]["status"] == "no_answer"
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Plivo-Signature-V3": "forged",
+                                          "X-Plivo-Signature-V3-Nonce": "n1"}])
+def test_a_hangup_with_the_secret_but_no_valid_signature_is_refused(signed, headers):
+    r = signed.post("/hangup?token=s3cret", content="CallUUID=sig12345&CallStatus=completed",
+                    headers={"content-type": "application/x-www-form-urlencoded", **headers})
+    assert r.status_code == 403
+    assert call_outcomes.default_log().all() == {}
+
+
+def test_signatures_are_checked_unless_switched_off(monkeypatch):
+    monkeypatch.delenv("PLIVO_VERIFY_SIGNATURE", raising=False)
+    assert server.verify_signatures() is True

@@ -104,3 +104,76 @@ def test_public_users_have_no_secrets(store):
     user = owner(store)
     shown = json.dumps(store.public(user["id"]))
     assert "hash" not in shown and "salt" not in shown
+
+
+# --- low findings: lockout, invites, password change ------------------------------
+
+
+def test_a_trusted_browser_still_signs_in_while_strangers_are_locked_out(store):
+    user = owner(store)
+    device = store.issue_device(user["id"])
+    for _ in range(auth_store.MAX_FAILURES):
+        with pytest.raises(auth_store.AuthError):
+            store.check_password("aditya@example.com", "wrong password")
+    with pytest.raises(auth_store.AuthError, match="Too many"):
+        store.check_password("aditya@example.com", "correct horse")
+    assert store.check_password("aditya@example.com", "correct horse", device=device)["id"]
+
+
+def test_a_trusted_browser_has_its_own_lockout(store):
+    user = owner(store)
+    device = store.issue_device(user["id"])
+    for _ in range(auth_store.MAX_FAILURES):
+        with pytest.raises(auth_store.AuthError):
+            store.check_password("aditya@example.com", "wrong password", device=device)
+    with pytest.raises(auth_store.AuthError, match="Too many"):
+        store.check_password("aditya@example.com", "correct horse", device=device)
+
+
+def test_another_users_device_is_not_trusted(store):
+    owner(store)
+    member = store.sign_up("Ayushi", "ay@example.com", "another pass", "",
+                           invite=store.invite_code())
+    theirs = store.issue_device(member["id"])
+    for _ in range(auth_store.MAX_FAILURES):
+        with pytest.raises(auth_store.AuthError):
+            store.check_password("aditya@example.com", "wrong password")
+    with pytest.raises(auth_store.AuthError, match="Too many"):
+        store.check_password("aditya@example.com", "correct horse", device=theirs)
+
+
+def test_an_invite_works_once(store):
+    owner(store)
+    code = store.invite_code()
+    store.sign_up("Ayushi", "ay@example.com", "another pass", "", invite=code)
+    with pytest.raises(auth_store.AuthError):
+        store.sign_up("Eve", "eve@example.com", "another pass", "", invite=code)
+    assert store.invite_code() != code
+
+
+def test_an_invite_expires(store, monkeypatch):
+    owner(store)
+    code = store.invite_code()
+    later = time.time() + auth_store.INVITE_SECS + 5
+    monkeypatch.setattr(auth_store.time, "time", lambda: later)
+    with pytest.raises(auth_store.AuthError):
+        store.sign_up("Ayushi", "ay@example.com", "another pass", "", invite=code)
+
+
+def test_the_owner_can_replace_the_invite(store):
+    owner(store)
+    old = store.invite_code()
+    new = store.new_invite_code()
+    assert new != old and store.invite_code() == new
+
+
+def test_changing_the_password_signs_out_everywhere(store):
+    user = owner(store)
+    token = store.start_session(user["id"])
+    with pytest.raises(auth_store.AuthError):
+        store.change_password(user["id"], "wrong password", "a new password")
+    with pytest.raises(ValueError):
+        store.change_password(user["id"], "correct horse", "short")
+    store.change_password(user["id"], "correct horse", "a new password")
+    assert store.user_for(token) is None
+    assert store.check_password("aditya@example.com", "a new password")["id"] == user["id"]

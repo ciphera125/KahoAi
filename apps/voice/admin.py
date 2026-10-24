@@ -38,10 +38,12 @@ from prompt_store import MAX_PROMPT_CHARS, normalize_number, our_number
 
 HERE = Path(__file__).resolve().parent
 PAGE = HERE / "admin_page.html"
+SCRIPT = HERE / "admin_app.js"
 HOST = "127.0.0.1"
 PORT = int(os.getenv("ADMIN_PORT") or 8001)
 LOCAL_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 SESSION_COOKIE = "kaho_session"
+DEVICE_COOKIE = "kaho_device"  # marks a browser that has signed in; see auth_store
 OPEN_PATHS = {"/api/auth/state", "/api/auth/login", "/api/auth/signup", "/api/auth/logout"}
 
 # The terminal dialler, loaded whole: calls placed from this page go through the
@@ -112,7 +114,7 @@ async def body_of(request: Request) -> dict:
 @app.get("/", response_class=HTMLResponse)
 async def page() -> Response:
     return HTMLResponse(PAGE.read_text(encoding="utf-8"), headers={
-        "Content-Security-Policy": "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "Content-Security-Policy": "default-src 'self'; script-src 'self'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; "
         "frame-ancestors 'none'; form-action 'self'; base-uri 'none'",
@@ -120,14 +122,24 @@ async def page() -> Response:
         "X-Content-Type-Options": "nosniff"})
 
 
+@app.get("/app.js")
+async def script() -> Response:
+    return Response(SCRIPT.read_text(encoding="utf-8"), media_type="text/javascript",
+                    headers={"Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff"})
+
+
 # --- accounts -------------------------------------------------------------------
 
 
-def _signed_in(user: dict) -> JSONResponse:
+def _signed_in(user: dict, request: Request | None = None) -> JSONResponse:
     token = auth_store().start_session(user["id"])
     r = JSONResponse(user)
     r.set_cookie(SESSION_COOKIE, token, max_age=7 * 24 * 3600, httponly=True,
                  samesite="strict", path="/")
+    device = request.cookies.get(DEVICE_COOKIE) if request else None
+    if not auth_store().knows_device(user["id"], device):
+        r.set_cookie(DEVICE_COOKIE, auth_store().issue_device(user["id"]),
+                     max_age=365 * 24 * 3600, httponly=True, samesite="strict", path="/")
     return r
 
 
@@ -137,7 +149,7 @@ async def auth_state() -> dict:
 
 
 @app.post("/api/auth/signup")
-def sign_up(body: dict):
+def sign_up(request: Request, body: dict):
     try:
         user = auth_store().sign_up(body.get("name"), body.get("email"), body.get("password"),
                                     body.get("company") or "", invite=body.get("invite"))
@@ -147,16 +159,39 @@ def sign_up(body: dict):
         return bad_request(str(e))
     activity_log().add("account", f"{user['name']} joined the workspace", view="dashboard",
                        actor=user["name"])
-    return _signed_in(user)
+    return _signed_in(user, request)
 
 
 @app.post("/api/auth/login")
-def sign_in(body: dict):
+def sign_in(request: Request, body: dict):
     try:
-        user = auth_store().check_password(body.get("email"), body.get("password"))
+        user = auth_store().check_password(body.get("email"), body.get("password"),
+                                           device=request.cookies.get(DEVICE_COOKIE))
     except AuthError as e:
         return JSONResponse({"error": str(e)}, status_code=401)
-    return _signed_in(user)
+    return _signed_in(user, request)
+
+
+@app.post("/api/auth/password")
+def change_password(request: Request, body: dict):
+    """Every other session ends; this browser gets a fresh one."""
+    user = request.state.user
+    try:
+        auth_store().change_password(user["id"], body.get("current"), body.get("new"))
+    except AuthError as e:
+        return JSONResponse({"error": str(e)}, status_code=401)
+    except ValueError as e:
+        return bad_request(str(e))
+    note(request, "account", f"{user['name']} changed their password", "dashboard")
+    return _signed_in(user, request)
+
+
+@app.post("/api/auth/invite")
+async def new_invite(request: Request):
+    if denied := not_owner(request):
+        return denied
+    invite = auth_store().invite(renew=True)
+    return {"invite_code": invite["code"], "invite_expires": invite["expires"]}
 
 
 @app.post("/api/auth/logout")
@@ -183,7 +218,8 @@ async def me(request: Request) -> dict:
         "members": [{"name": m["name"], "email": m["email"], "role": m["role"]}
                     for m in auth_store().members()]}
     if user["role"] == "owner":
-        out["invite_code"] = auth_store().invite_code()
+        invite = auth_store().invite()
+        out["invite_code"], out["invite_expires"] = invite["code"], invite["expires"]
     return out
 
 

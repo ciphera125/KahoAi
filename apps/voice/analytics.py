@@ -18,6 +18,9 @@ from call_history import PAGE_SIZES, describe
 IST = ZoneInfo("Asia/Kolkata")
 SUCCESS_MIN_CALLER_TURNS = 2
 RINGING_STALE_SECS = 15 * 60  # a "ringing" line with no outcome after this is unknown
+# What each transcript says, by path, kept until the file changes (size or mtime),
+# so the dashboard does not re-read every call on every load.
+_seen: dict[str, tuple[tuple[int, int], dict]] = {}
 
 
 def _rows(path: Path):
@@ -53,13 +56,27 @@ def all_calls(calls_dir: Path, outcomes: dict, index: dict, now: datetime | None
     """Every call we know of, newest first."""
     now = now or datetime.now(UTC)
     calls: dict[str, dict] = {}
+    present = set()
     if Path(calls_dir).exists():
         for path in Path(calls_dir).glob("*.jsonl"):
-            info = describe(path, index)
-            caller_turns, lead = _engagement(path)
-            info.update(status="answered", caller_turns=caller_turns, lead=lead, agent_id=None,
-                        cause=None, cost=None, has_transcript=True)
+            key, stat = str(path), path.stat()
+            present.add(key)
+            version = (stat.st_mtime_ns, stat.st_size)
+            cached = _seen.get(key)
+            if cached is None or cached[0] != version:
+                info = describe(path)
+                caller_turns, lead = _engagement(path)
+                info.update(caller_turns=caller_turns, lead=lead)
+                _seen[key] = cached = (version, info)
+            info = dict(cached[1])
+            known = (index or {}).get(info["call_id"]) or {}
+            info["peer"] = info["peer"] or known.get("peer")
+            info["direction"] = info["direction"] or known.get("direction")
+            info.update(status="answered", agent_id=None, cause=None, cost=None,
+                        has_transcript=True)
             calls[info["call_id"]] = info
+    for gone in [k for k in _seen if k not in present and k.startswith(str(calls_dir))]:
+        del _seen[gone]
     for call_id, out in outcomes.items():
         info = calls.get(call_id) or {
             "call_id": call_id, "peer": None, "direction": None, "started_at": None,

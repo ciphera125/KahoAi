@@ -459,3 +459,37 @@ def test_members_still_do_the_daily_work(member):
     assert r.status_code == 200
     assert member.patch(f"/api/agents/{r.json()['id']}", json={"tools": []}).status_code == 200
     assert member.get("/api/me").json()["role"] == "member"
+
+
+# --- low findings -------------------------------------------------------------------
+
+
+def test_the_page_runs_no_inline_script(anon):
+    r = anon.get("/")
+    csp = r.headers["content-security-policy"]
+    script_src = next(p for p in csp.split(";") if p.strip().startswith("script-src"))
+    assert "unsafe-inline" not in script_src
+    assert '<script src="/app.js"></script>' in r.text and "<script>" not in r.text
+    js = anon.get("/app.js")
+    assert js.status_code == 200 and "javascript" in js.headers["content-type"]
+
+
+def test_signing_in_trusts_the_browser(anon):
+    r = anon.post("/api/auth/signup", json={"name": "A", "email": "a@example.com",
+                                            "password": "correct horse"})
+    assert "kaho_device=" in r.headers.get("set-cookie", "")
+
+
+def test_change_password_keeps_this_browser_signed_in(client):
+    r = client.post("/api/auth/password", json={"current": "correct horse",
+                                                "new": "a new password"})
+    assert r.status_code == 200 and client.get("/api/me").status_code == 200
+    assert client.post("/api/auth/password", json={"current": "nope nope",
+                                                   "new": "another one"}).status_code == 401
+
+
+def test_only_the_owner_makes_a_new_invite(client, member):
+    old = client.get("/api/me").json()["invite_code"]
+    assert member.post("/api/auth/invite").status_code == 403
+    new = client.post("/api/auth/invite").json()["invite_code"]
+    assert new != old and client.get("/api/me").json()["invite_code"] == new

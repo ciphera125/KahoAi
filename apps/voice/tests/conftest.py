@@ -18,3 +18,5 @@ def _local_data_files(tmp_path, monkeypatch):
     monkeypatch.setenv("ACTIVITY_PATH", str(tmp_path / "_activity.jsonl"))
     monkeypatch.setenv("OUTCOME_LOG_PATH", str(tmp_path / "_outcomes.jsonl"))
     monkeypatch.setenv("CALL_INDEX_PATH", str(tmp_path / "_call_index.json"))
+    # Most tests post unsigned webhooks; test_server_agents turns the check back on.
+    monkeypatch.setenv("PLIVO_VERIFY_SIGNATURE", "false")

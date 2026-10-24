@@ -29,6 +29,7 @@ import aiohttp
 import call_outcomes
 import numbers_store
 import personas
+import plivo_signature
 import prompt_store
 import uvicorn
 from dotenv import load_dotenv
@@ -329,6 +330,22 @@ async def read_capped(request: Request, limit: int = MAX_WEBHOOK_BODY) -> bytes 
     return bytes(body)
 
 
+def verify_signatures() -> bool:
+    """Plivo's signature is checked unless PLIVO_VERIFY_SIGNATURE=false (tests)."""
+    return (env("PLIVO_VERIFY_SIGNATURE") or "true").strip().lower() != "false"
+
+
+def signed_by_plivo(request: Request, body: dict) -> bool:
+    """Whether Plivo signed this webhook. The URL is rebuilt with PUBLIC_HOST, as
+    Plivo called it through the tunnel, not as it arrives here."""
+    url = f"https://{env('PUBLIC_HOST')}{request.url.path}"
+    if request.url.query:
+        url += f"?{request.url.query}"
+    return plivo_signature.valid(
+        request.method, url, body, request.headers.get("x-plivo-signature-v3-nonce"),
+        request.headers.get("x-plivo-signature-v3"), plivo_auth()[1])
+
+
 @app.api_route("/hangup", methods=["GET", "POST"])
 async def hangup(request: Request, token: str | None = Query(None)):
     """Plivo's report of how an outbound call ended (picked up, busy, no answer).
@@ -341,8 +358,12 @@ async def hangup(request: Request, token: str | None = Query(None)):
     body = await read_capped(request)
     if body is None:
         return Response(status_code=413)
-    params = parse_qs(body.decode("utf-8", "replace"))
-    params.update(parse_qs(request.url.query))
+    form = parse_qs(body.decode("utf-8", "replace"), keep_blank_values=True)
+    if verify_signatures() and not signed_by_plivo(request, form):
+        # The shared secret alone is not enough: it rides in URLs and logs.
+        logger.warning("Refusing a /hangup report without a valid Plivo signature")
+        return Response(status_code=403)
+    params = {**form, **parse_qs(request.url.query)}
     first = lambda key: (params.get(key) or [None])[0]  # noqa: E731
     call_id = first("CallUUID") or first("RequestUUID")
     try:

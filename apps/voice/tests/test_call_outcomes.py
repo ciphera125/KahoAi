@@ -180,3 +180,19 @@ def test_an_existing_readable_file_is_made_private(log):
     log.path.chmod(0o644)
     log.record("abc123", status="answered")
     assert log.path.stat().st_mode & 0o077 == 0
+
+
+def test_unchanged_transcripts_are_not_read_again(tmp_path, monkeypatch):
+    d = tmp_path / "calls"
+    d.mkdir()
+    transcript(d, "cache0001", ASHA, "2026-10-24T05:00:00+00:00", "2026-10-24T05:01:00+00:00")
+    reads = []
+    real = analytics.describe
+    monkeypatch.setattr(analytics, "describe", lambda p, i=None: reads.append(p) or real(p, i))
+    analytics.all_calls(d, {}, {})
+    analytics.all_calls(d, {}, {})
+    assert len(reads) == 1
+    transcript(d, "cache0001", ASHA, "2026-10-24T05:00:00+00:00", "2026-10-24T05:03:00+00:00",
+               caller_turns=3)
+    calls = analytics.all_calls(d, {}, {})
+    assert len(reads) == 2 and calls[0]["duration_secs"] == 180
