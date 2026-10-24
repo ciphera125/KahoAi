@@ -120,7 +120,8 @@ def test_default_is_end_call_only():
 
 
 async def test_end_call_hangs_up(tmp_path):
-    call, _ = make_call(tmp_path)
+    call, transcript = make_call(tmp_path)
+    transcript.user("Thanks, bye.")
     hung = []
 
     async def hang_up():
@@ -145,7 +146,8 @@ async def test_end_call_hanging_up_skips_the_follow_up_llm_reply(tmp_path):
     """A successful end_call leaves no one to hear a reply, and a reply is a
     second LLM request: one that hangs would block the hang-up behind it
     (seen live, 2026-10-02). run_llm=False tells Pipecat not to ask."""
-    call, _ = make_call(tmp_path)
+    call, transcript = make_call(tmp_path)
+    transcript.user("Okay, bye.")
 
     async def hang_up():
         pass
@@ -214,9 +216,11 @@ def lead_rows(directory):
     return [json.loads(x) for x in files[0].read_text(encoding="utf-8").splitlines()]
 
 
-async def capture(tmp_path, caller=None, **args):
+async def capture(tmp_path, caller=None, said=("Hi, I'm Asha Rao.", "Ravi here."), **args):
     call, transcript = make_call(tmp_path)
     call.caller_number = caller
+    for text in said:
+        transcript.user(text)
     schemas = tools.build_tool_schemas(call, ["capture_lead"])
     p, got = params(**args)
     await run(schemas, "capture_lead", p)
@@ -282,3 +286,125 @@ async def test_two_leads_append_to_the_same_days_file(leads, tmp_path):
     await capture(tmp_path, caller="+919999988888", name="A", reason="one")
     await capture(tmp_path, caller="+919999988888", name="B", reason="two")
     assert [r["name"] for r in lead_rows(leads)] == ["A", "B"]
+
+
+# Junk leads seen on real calls on 2026-10-24, one test per kind: the model
+# called capture_lead during its own greeting, with placeholders, or with its
+# own name.
+
+
+async def test_no_lead_before_the_caller_has_said_anything(leads, tmp_path):
+    result, _ = await capture(
+        tmp_path, caller="+919999988888", said=(), name="Aayushi", reason="Introduction"
+    )
+    # Its own message: the model should wait for the caller, not ask for a name.
+    assert "not said anything" in result["error"]
+    assert not leads.exists()
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"name": "?", "reason": "Cairo AI explanation"},
+        {"name": "Ravi", "reason": "?"},
+        {"name": "Ravi", "reason": "interested", "phone": "caller number?"},
+        {"name": "unknown", "reason": "interested"},
+        {"name": "N/A", "reason": "interested"},
+    ],
+)
+async def test_placeholders_are_refused(leads, tmp_path, args):
+    result, _ = await capture(tmp_path, caller="+919999988888", **args)
+    assert "error" in result
+    assert not leads.exists()
+
+
+async def test_a_name_the_caller_never_said_is_refused(leads, tmp_path):
+    # The agent saved its own name after the caller had only said hello.
+    result, _ = await capture(
+        tmp_path, caller="+919999988888", said=("Hi.", "Hello?"),
+        name="Aayushi", reason="introducing herself",
+    )
+    assert "error" in result and "name" in result["error"]
+    assert not leads.exists()
+
+
+async def test_a_name_said_in_devanagari_is_accepted(leads, tmp_path):
+    # STT writes a Hindi speaker's name in Devanagari and the model writes it in
+    # Latin script; that cannot be matched letter for letter, so it is allowed.
+    result, _ = await capture(
+        tmp_path, caller="+919999988888", said=("मेरा नाम आयुषी है।",),
+        name="Aayushi", reason="wants a callback",
+    )
+    assert result["status"] == "saved"
+
+
+def test_a_null_phone_is_valid_for_the_schema():
+    # Groq rejects the whole reply when an argument breaks the schema
+    # ("/phone: expected string, but got null"), which lost a greeting.
+    phone = tools.REGISTRY["capture_lead"].properties["phone"]
+    assert "null" in phone["type"]
+
+
+# end_call hung up on callers who wanted to keep talking, three times on real
+# calls on 2026-10-24. The last was speech-to-text: the caller said "अच्छा"
+# ("okay") and nova-3 multi wrote "That's all.". No prompt fixes a mishearing,
+# so the code requires a real goodbye before it hangs up.
+
+
+async def ending(tmp_path, *turns):
+    """Play (role, text) turns into the transcript, then call end_call."""
+    call, transcript = make_call(tmp_path)
+    hung_up = []
+
+    async def hang_up():
+        hung_up.append(True)
+
+    call.hang_up = hang_up
+    for role, text in turns:
+        transcript.user(text) if role == "caller" else transcript.assistant(text)
+    schemas = tools.build_tool_schemas(call, ["end_call"])
+    p, got = params()
+    await run(schemas, "end_call", p)
+    return got[0], bool(hung_up)
+
+
+@pytest.mark.parametrize(
+    "turns",
+    [
+        # 4f6452c9, 188ae535, fc2a2387 (the STT heard "That's all." for "अच्छा")
+        [("agent", "Photosynthesis is how plants make food."),
+         ("caller", "Sorry to interrupt you.")],
+        [("agent", "The company's name is Kaho AI."), ("caller", "1 more time.")],
+        [("agent", "मैं Kaho AI से फोन कर रही हूँ।"), ("caller", "That's all.")],
+        [("agent", "Hello, I'm Aayushi."), ("caller", "Hi.")],
+        [],
+    ],
+)
+async def test_no_hang_up_without_a_goodbye(tmp_path, turns):
+    result, hung_up = await ending(tmp_path, *turns)
+    assert not hung_up
+    assert "error" in result and "anything else" in result["error"]
+
+
+@pytest.mark.parametrize(
+    "turns",
+    [
+        [("agent", "Sure."), ("caller", "Okay, bye.")],
+        [("agent", "Done."), ("caller", "Thank you, goodbye!")],
+        [("agent", "ठीक है।"), ("caller", "ठीक है, अलविदा।")],
+        [("agent", "Okay."), ("caller", "You can hang up now.")],
+        # 0d5723b4, a correct ending: the agent asked, the caller said no.
+        [("agent", "Is there anything else you'd like to know?"), ("caller", "No. That's it.")],
+        [("agent", "क्या आप कुछ और जानना चाहेंगे?"), ("caller", "नहीं, बस।")],
+    ],
+)
+async def test_a_real_goodbye_hangs_up(tmp_path, turns):
+    result, hung_up = await ending(tmp_path, *turns)
+    assert hung_up and result == {"status": "ending"}
+
+
+async def test_a_no_that_was_not_an_answer_to_anything_else_does_not_end(tmp_path):
+    result, hung_up = await ending(
+        tmp_path, ("agent", "Would you like the morning slot?"), ("caller", "No.")
+    )
+    assert not hung_up

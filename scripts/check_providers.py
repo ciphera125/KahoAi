@@ -346,6 +346,43 @@ def check_cartesia() -> tuple[bool, str]:
         return fail(f"{type(e).__name__}: {e}")
 
 
+def check_google() -> tuple[bool, str]:
+    """Synthesize a short phrase with the Chirp 3 HD voice the agent will use.
+
+    The voice is named in the same locale as the language, as the agent does:
+    Google rejects any request where the two differ.
+    """
+    api_key = env("GOOGLE_TTS_API_KEY")
+    voice = env("GOOGLE_TTS_VOICE")
+    missing = [
+        name
+        for name, value in [("GOOGLE_TTS_API_KEY", api_key), ("GOOGLE_TTS_VOICE", voice)]
+        if not value
+    ]
+    if missing:
+        return False, f"missing: {', '.join(missing)}"
+    locale = {"hi": "hi-IN"}.get((env("GOOGLE_TTS_LANGUAGE") or "en").lower(), "en-IN")
+    try:
+        r = httpx.post(
+            "https://texttospeech.googleapis.com/v1/text:synthesize",
+            params={"key": api_key},
+            json={
+                "input": {"text": "Namaste"},
+                "voice": {"languageCode": locale, "name": f"{locale}-Chirp3-HD-{voice}"},
+                "audioConfig": {"audioEncoding": "LINEAR16", "sampleRateHertz": 8000},
+            },
+            timeout=TIMEOUT,
+        )
+    except httpx.HTTPError as e:
+        return False, f"{type(e).__name__}: {e}".replace(api_key, "[REDACTED]")
+    if r.status_code != 200:
+        message = r.json().get("error", {}).get("message", r.text)
+        return False, f"HTTP {r.status_code}: {message}".replace(api_key, "[REDACTED]")[:200]
+    if not r.json().get("audioContent"):
+        return False, "the request succeeded but returned no audio"
+    return True, ""
+
+
 LLM_CHECKS = {
     "groq": ("Groq (LLM)", check_groq),
     "bedrock": ("AWS Bedrock (LLM)", check_bedrock),
@@ -357,6 +394,7 @@ TTS_CHECKS = {
     "sarvam": ("Sarvam Bulbul (TTS)", check_sarvam),
     "smallest": ("Smallest AI (TTS)", check_smallest),
     "cartesia": ("Cartesia Sonic (TTS)", check_cartesia),
+    "google": ("Google Chirp 3 HD (TTS)", check_google),
 }
 
 

@@ -75,6 +75,42 @@ def load(path: Path) -> list[dict]:
     return records
 
 
+def usage(records: list[dict]) -> dict:
+    """What the selected calls spent: LLM tokens per model, TTS characters per voice."""
+    llm: dict[str, dict[str, int]] = {}
+    tts: dict[str, int] = defaultdict(int)
+    for r in records:
+        if r.get("metric") == "llmusage":
+            m = llm.setdefault(
+                r.get("model") or "?", {"requests": 0, "prompt_tokens": 0, "completion_tokens": 0}
+            )
+            m["requests"] += 1
+            m["prompt_tokens"] += r.get("prompt_tokens") or 0
+            m["completion_tokens"] += r.get("completion_tokens") or 0
+        elif r.get("metric") == "ttsusage":
+            # Older lines carried the character count only in "seconds".
+            chars = r.get("characters", r.get("seconds")) or 0
+            tts[(r.get("processor") or "?").split("#")[0]] += int(chars)
+    calls = len({r.get("run") for r in records if r.get("metric") in ("llmusage", "ttsusage")})
+    return {"llm": llm, "tts": dict(tts), "calls": calls}
+
+
+def print_usage(records: list[dict]) -> None:
+    totals = usage(records)
+    if not totals["calls"]:
+        return
+    calls = totals["calls"]
+    print(f"\nusage across {calls} run(s)")
+    for model, m in totals["llm"].items():
+        print(
+            f"  LLM {model}: {m['requests']} requests, {m['prompt_tokens']:,} prompt + "
+            f"{m['completion_tokens']:,} completion tokens "
+            f"(~{(m['prompt_tokens'] + m['completion_tokens']) // calls:,} per run)"
+        )
+    for voice, chars in totals["tts"].items():
+        print(f"  TTS {voice}: {chars:,} characters (~{chars // calls:,} per run)")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--path", type=Path, default=DEFAULT_LOG)
@@ -102,6 +138,7 @@ def main() -> int:
             by_stage[stage].append(float(seconds))
 
     if not by_stage:
+        print_usage(records)
         sys.exit("The log has no stage timings in it yet.")
 
     print(f"{len(runs)} run(s), {sum(len(v) for v in by_stage.values())} measurements")
@@ -145,6 +182,7 @@ def main() -> int:
         print("Judge a call by the measured wait: the stage sums leave out turn detection.")
     else:
         print("VAD stop_secs is added on top of this; see VAD_STOP_SECS in .env.")
+    print_usage(records)
     return 0
 
 

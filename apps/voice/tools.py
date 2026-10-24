@@ -168,10 +168,46 @@ def build_tool_schemas(
     ]
 
 
+# Words that end a call outright. "That's all" is not one: nova-3 has written it
+# for a caller who said "अच्छा" ("okay"), and the call was hung up on them.
+_GOODBYE = re.compile(
+    r"\b(?:bye|goodbye|good bye|hang up|cut the call|end the call|disconnect)\b"
+    r"|अलविदा|बाय|फ़ोन रख|फोन रख|कॉल काट|phone rakh|call kaat",
+    re.IGNORECASE,
+)
+# A short no, which ends the call only as the answer to "anything else?".
+_DECLINE = re.compile(
+    r"^\W*(?:(?:no|nope|nothing|nah|nahi|nahin|that'?s (?:it|all))\b|नहीं|बस|कुछ नहीं)",
+    re.IGNORECASE,
+)
+_ASKED_ANYTHING_ELSE = re.compile(r"anything else|something else|any other|कुछ और|और कुछ", re.I)
+
+
+def caller_said_goodbye(turns: list[tuple[str, str]]) -> bool:
+    """Whether the caller's words since the agent last spoke end the call.
+
+    Either a goodbye in so many words, or a short no to the agent asking whether
+    there is anything else. On real calls the model hung up on "Sorry to
+    interrupt you.", "1 more time." and a misheard "अच्छा"; none of those pass.
+    """
+    last_agent, caller_since = "", []
+    for role, text in turns:
+        if role == "agent":
+            last_agent, caller_since = text, []
+        else:
+            caller_since.append(text)
+    said = " ".join(caller_since)
+    if _GOODBYE.search(said):
+        return True
+    return bool(caller_since and _ASKED_ANYTHING_ELSE.search(last_agent) and _DECLINE.search(said))
+
+
 @tool(
     "end_call",
-    "Hang up. Use only when the caller clearly signals they are done: they say "
-    "goodbye, 'that's all', 'hang up', or otherwise state the call is over. "
+    "Hang up. Use only when the caller says goodbye ('bye', 'alvida', 'hang up') "
+    "or answers no when you have just asked whether there is anything else. "
+    "Anything short of that, including 'that's all' or 'okay' on their own, is "
+    "not a goodbye: ask whether there is anything else instead. "
     "Never use it for a question, including one about the call itself, "
     "recording, or privacy ('are you recording this?', 'is this legal?', 'who "
     "am I talking to?') -- answer the question and keep talking. Never use it "
@@ -189,6 +225,9 @@ async def end_call(args: dict, call: CallContext) -> dict:
     # Queued after the goodbye has been spoken, not cut across it.
     if call.hang_up is None:
         return {"error": "this call cannot be ended from here"}
+    if call.transcript is not None and not caller_said_goodbye(call.transcript.turns):
+        return {"error": "the caller has not said goodbye, so do not hang up; keep helping, "
+                "or ask if there is anything else you can do for them"}
     await call.hang_up()
     return {"status": "ending"}
 
@@ -206,6 +245,27 @@ def clean_phone(raw: str | None) -> str | None:
     return ("+" if raw.startswith("+") else "") + digits
 
 
+_PLACEHOLDERS = {"unknown", "n/a", "na", "none", "null", "caller", "name", "not given"}
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+
+
+def _is_placeholder(value: str) -> bool:
+    """A stand-in for a value the model does not have: "?", "unknown", no letters."""
+    text = value.strip().lower().strip(" .")
+    return "?" in text or text in _PLACEHOLDERS or not re.search(r"[^\W\d_]", text)
+
+
+def _caller_said(name: str, heard: list[str]) -> bool:
+    """Whether some part of the name occurs in what the caller said.
+
+    A name the STT wrote in Devanagari cannot be matched against the model's Latin
+    spelling, so any Devanagari speech lets it through rather than refuse a real lead.
+    """
+    said = " ".join(heard).lower()
+    parts = re.findall(r"[^\W\d_]{3,}", name.lower())
+    return not parts or any(p in said for p in parts) or bool(_DEVANAGARI.search(said))
+
+
 @tool(
     "capture_lead",
     "Save a caller's details so a person can follow up. Use it whenever the caller "
@@ -219,7 +279,10 @@ def clean_phone(raw: str | None) -> str | None:
             "description": "One line on what they want, in their own terms.",
         },
         "phone": {
-            "type": "string",
+            # Null allowed: the model sends null when it has no other number, and
+            # Groq rejects the whole reply when an argument breaks the schema
+            # (seen live, 2026-10-24: it cost the call its greeting).
+            "type": ["string", "null"],
             "description": "Number to reach them on, only if they gave one different "
             "from the one they are calling from.",
         },
@@ -231,6 +294,22 @@ async def capture_lead(args: dict, call: CallContext) -> dict:
     reason = " ".join(str(args.get("reason") or "").split())
     if not name or not reason:
         return {"error": "a name and a reason are both needed; ask the caller for the missing one"}
+
+    # On real calls the model saved leads during its own greeting, with "?" for
+    # every field, and with its own name. The prompt already said not to; the
+    # code now refuses, so nothing it guesses reaches the leads file.
+    heard = call.transcript.caller_text if call.transcript is not None else None
+    if heard is not None and not heard:
+        return {"error": "the caller has not said anything yet; never save a lead before "
+                "they ask for a callback and give their details"}
+    for field_name, value in (("name", name), ("reason", reason)):
+        if _is_placeholder(value):
+            return {"error": f"do not guess; ask the caller for their real {field_name}"}
+    raw_phone = str(args.get("phone") or "")
+    if raw_phone and ("?" in raw_phone or not re.search(r"\d", raw_phone)):
+        return {"error": "do not guess; ask the caller for their real phone number"}
+    if heard is not None and not _caller_said(name, heard):
+        return {"error": "the caller has not told you that name; ask them for their name"}
 
     stated = clean_phone(args.get("phone"))
     phone = stated or clean_phone(call.caller_number)

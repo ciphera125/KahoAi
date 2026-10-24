@@ -1,7 +1,7 @@
 """Kaho AI voice agent entrypoint.
 
 A terminal-only pipeline: your mic/speakers -> Deepgram (STT) -> Groq (LLM)
--> Deepgram, ElevenLabs, Sarvam, Smallest or Cartesia (TTS), with Silero VAD
+-> Deepgram, ElevenLabs, Sarvam, Smallest, Cartesia or Google (TTS), with Silero VAD
 driving turn-taking. No web server, no browser — run it with `python main.py`
 (or `./scripts/run_agent.sh`) and talk.
 
@@ -18,6 +18,7 @@ import re
 import ssl
 import sys
 import time
+from collections import deque
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -34,16 +35,19 @@ from pipecat.frames.frames import (
     BotStartedSpeakingFrame,
     EndTaskFrame,
     Frame,
+    InterimTranscriptionFrame,
     InterruptionFrame,
     LLMRunFrame,
     ManuallySwitchServiceFrame,
     MetricsFrame,
     TranscriptionFrame,
     TTSSpeakFrame,
+    TTSTextFrame,
     TTSUpdateSettingsFrame,
     UserStoppedSpeakingFrame,
     VADUserStoppedSpeakingFrame,
 )
+from pipecat.metrics.metrics import LLMTokenUsage
 from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.service_switcher import ServiceSwitcher, ServiceSwitcherStrategyFailover
@@ -132,10 +136,10 @@ guess at a name or a number.
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
 SUPPORTED_LLM_PROVIDERS = ("groq",)
-SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam", "smallest", "cartesia")
+SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam", "smallest", "cartesia", "google")
 # Voices that speak more than one language, so worth retuning to the caller's.
 # Aura is English-only.
-MULTILINGUAL_TTS_PROVIDERS = ("sarvam", "smallest", "elevenlabs", "cartesia")
+MULTILINGUAL_TTS_PROVIDERS = ("sarvam", "smallest", "elevenlabs", "cartesia", "google")
 
 
 def ensure_ca_bundle() -> None:
@@ -229,6 +233,32 @@ def build_turn_strategies() -> UserTurnStrategies:
     )
 
 
+class LiveCaptions(BaseObserver):
+    """Write what the agent says and what the caller is saying to the transcript as
+    live captions, for the Studio's live view. TTSTextFrame carries the agent's words
+    as they are spoken; InterimTranscriptionFrame the caller's as STT hears them.
+    Observers see a frame at every hop, so each is written once, by frame id.
+    """
+
+    def __init__(self, transcript: CallTranscript):
+        super().__init__()
+        self._transcript = transcript
+        self._seen: deque[int] = deque(maxlen=256)
+
+    async def on_push_frame(self, data: FramePushed) -> None:
+        frame = data.frame
+        if isinstance(frame, TTSTextFrame):
+            role = "agent"
+        elif isinstance(frame, InterimTranscriptionFrame):
+            role = "caller"
+        else:
+            return
+        if frame.id in self._seen:
+            return
+        self._seen.append(frame.id)
+        self._transcript.live(role, frame.text)
+
+
 class TurnTimingLogger(BaseObserver):
     """Append one JSON object per metric to a log that latency_summary.py reads.
 
@@ -309,10 +339,20 @@ class TurnTimingLogger(BaseObserver):
                     "ttfb": item.ttfb,
                     "leading_silence": item.leading_silence,
                 }
-            # Only durations. Usage metrics also carry a `value`, but theirs is
-            # an object (token counts, audio seconds) that json would choke on.
+            # LLM usage is an object of token counts; log the counts themselves,
+            # so what each call spends is on disk next to how long it took.
+            elif isinstance(getattr(item, "value", None), LLMTokenUsage):
+                usage = item.value
+                record |= {
+                    "prompt_tokens": usage.prompt_tokens,
+                    "completion_tokens": usage.completion_tokens,
+                    "total_tokens": usage.total_tokens,
+                }
             elif isinstance(getattr(item, "value", None), int | float):
                 record["seconds"] = item.value
+                # TTS usage is a character count, which is what TTS bills by.
+                if kind == "ttsusage":
+                    record["characters"] = item.value
             else:
                 continue
             self._write(record)
@@ -336,7 +376,7 @@ class TurnTimingLogger(BaseObserver):
             self._vad_stopped_at = self._turn_ended_at = None
 
 
-def load_system_prompt(persona_path: Path | None = None) -> str:
+def load_system_prompt(persona_path: Path | None = None, persona_text: str | None = None) -> str:
     """Build the system instruction: the voice rules, then the chosen persona.
 
     AGENT_SYSTEM_PROMPT_PATH swaps the persona without touching code — that file
@@ -344,7 +384,13 @@ def load_system_prompt(persona_path: Path | None = None) -> str:
     A per-call `persona_path` (an outbound call's agent) wins over it. This exits
     the process on an unreadable file, so a caller taking names from the network
     must resolve them with personas.resolve() first.
+
+    `persona_text`, a prompt saved on the admin page for this call's number,
+    wins over every file. The voice rules still come first either way.
     """
+    if persona_text and persona_text.strip():
+        logger.info("Persona: saved prompt for this number")
+        return f"{VOICE_RULES}\n\n{persona_text.strip()}"
     path = persona_path or Path(env("AGENT_SYSTEM_PROMPT_PATH") or DEFAULT_PROMPT_PATH)
     if not path.is_absolute():
         path = (HERE / path).resolve()
@@ -502,7 +548,9 @@ class PortableGroqLLMService(GroqLLMService):
         return params
 
 
-def build_llm(persona_path: Path | None = None, on_fallback=None) -> GroqLLMService:
+def build_llm(
+    persona_path: Path | None = None, on_fallback=None, persona_text: str | None = None
+) -> GroqLLMService:
     provider = (env("LLM_PROVIDER") or "groq").lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
         logger.error(
@@ -537,7 +585,7 @@ def build_llm(persona_path: Path | None = None, on_fallback=None) -> GroqLLMServ
         on_fallback=on_fallback,
         settings=GroqLLMService.Settings(
             model=env("GROQ_MODEL_ID"),
-            system_instruction=load_system_prompt(persona_path),
+            system_instruction=load_system_prompt(persona_path, persona_text),
             max_tokens=int(max_tokens) if max_tokens else None,
             temperature=float(temperature) if temperature else None,
             reasoning_effort=reasoning_effort,
@@ -759,6 +807,23 @@ def build_tts(
             text_aggregation_mode=text_aggregation_mode(),
         )
 
+    if provider == "google":
+        require_env("GOOGLE_TTS_API_KEY", "GOOGLE_TTS_VOICE")
+        # Imported here so the gRPC stack loads only when Google is the voice.
+        from google_tts import LOCALES, GoogleChirpTTSService
+
+        language = (env("GOOGLE_TTS_LANGUAGE") or "en").lower()
+        if language not in LOCALES:
+            logger.error(f"GOOGLE_TTS_LANGUAGE={language!r} must be one of {', '.join(LOCALES)}.")
+            sys.exit(1)
+        return GoogleChirpTTSService(
+            api_key=env("GOOGLE_TTS_API_KEY"),
+            voice=env("GOOGLE_TTS_VOICE"),
+            language=language,
+            text_filters=speech_text_filters(),
+            text_aggregation_mode=text_aggregation_mode(),
+        )
+
     if provider == "elevenlabs":
         require_env("ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID")
         return ElevenLabsTTSService(
@@ -789,6 +854,9 @@ def build_worker(
     persona_path: Path | None = None,
     transfer=None,
     recording_sample_rate: int = 16000,
+    persona_text: str | None = None,
+    tool_names: list[str] | None = None,
+    opening_line: str | None = None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -803,6 +871,8 @@ def build_worker(
     async callable that hands the live call to a human (phone server only).
     recording_sample_rate is the rate the call's recording is saved at; the phone
     server passes the phone line's 8kHz, since anything higher stores no more sound.
+    tool_names and opening_line come from a Studio agent: its tools replace
+    TOOLS_ENABLED, and the greeting opens with its line.
     """
     require_env("DEEPGRAM_API_KEY")
 
@@ -831,6 +901,7 @@ def build_worker(
         on_fallback=lambda primary, backup, reason: transcript.event(
             "llm_fallback", primary=primary, to=backup, reason=reason
         ),
+        persona_text=persona_text,
     )
     tts, tts_services, switcher = build_tts_stack()
 
@@ -839,6 +910,10 @@ def build_worker(
     call_id = call_id or datetime.now(UTC).strftime("local-%Y%m%dT%H%M%S")
     calls_dir = Path(env("CALL_LOG_DIR") or HERE.parent.parent / "logs" / "calls")
     transcript = CallTranscript(call_id, calls_dir)
+    if caller_number:
+        # Who was on the other end, for the Studio's call history. A phone number,
+        # not call content, so it goes in its own field rather than through masking.
+        transcript.event("call_party", number=caller_number)
     logger.info(f"Transcript -> {calls_dir}/{call_id}.jsonl (sensitive numbers masked)")
 
     # Audio of every call, unannounced and unmasked by the owner's decision; see
@@ -864,7 +939,7 @@ def build_worker(
     try:
         tool_schemas = build_tool_schemas(
             call,
-            enabled_names(env("TOOLS_ENABLED")),
+            enabled_names(env("TOOLS_ENABLED")) if tool_names is None else list(tool_names),
             env_float("TOOL_TIMEOUT_SECS", DEFAULT_TIMEOUT_SECS),
         )
     except ValueError as e:
@@ -942,7 +1017,7 @@ def build_worker(
     worker = PipelineWorker(
         pipeline,
         params=params,
-        observers=[TurnTimingLogger(timings), BotSpeechObserver(health)],
+        observers=[TurnTimingLogger(timings), BotSpeechObserver(health), LiveCaptions(transcript)],
     )
     worker.health = health
     worker.transcript = transcript
@@ -958,6 +1033,17 @@ def build_worker(
     @user_aggregator.event_handler("on_user_turn_stopped")
     async def reply_is_due(aggregator, strategy, message):
         health.arm()
+        restore_tools()  # in case the greeting never finished
+
+    held_tools: list = []
+
+    def restore_tools():
+        if held_tools:
+            context.set_tools(held_tools.pop())
+
+    @assistant_aggregator.event_handler("on_assistant_turn_stopped")
+    async def greeting_done(aggregator, message):
+        restore_tools()
 
     if switcher is not None:
 
@@ -994,8 +1080,17 @@ def build_worker(
         # every model accepts is the portable choice, since the whole point of
         # GROQ_MODEL_ID is being able to swap models freely.
         instruction = "Start by concisely introducing yourself."
+        if opening_line:
+            instruction = f'Open the call with this line, word for word: "{opening_line}"'
 
         async def ask_for_the_greeting():
+            # No tools on the greeting: there is nothing to act on yet, and with
+            # them gpt-oss-20b called capture_lead instead of greeting in 6 of 12
+            # live requests (2026-10-24). tool_choice "none" is no help: the model
+            # still calls the tool and Groq rejects the request. Without tools,
+            # 15 of 15 greeted. They come back once the greeting is done.
+            held_tools.append(context.tools)
+            context.set_tools(NOT_GIVEN)
             context.add_message({"role": "user", "content": instruction})
             await worker.queue_frames([LLMRunFrame()])
             # The greeting is a reply too: a dead TTS would otherwise open in silence.

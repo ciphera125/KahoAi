@@ -30,6 +30,7 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 # it is nothing but single characters (a PAN spelled out letter by letter).
 _HAS_DIGIT = re.compile(r"\d|[०-९]")
 _MAX_HELD = 30
+_ANY_DIGIT = re.compile(r"\d")
 
 
 class CallTranscript:
@@ -42,6 +43,11 @@ class CallTranscript:
         self.path = directory / f"{safe_id}.jsonl"
         self._ended = False
         self._held: list[dict] = []
+        # What the caller has said so far, masked, for tools that must only act
+        # on what the caller actually said (capture_lead). Memory only.
+        self.caller_text: list[str] = []
+        # Both sides in order, masked, for end_call's goodbye check. Memory only.
+        self.turns: list[tuple[str, str]] = []
         self.write({"event": "call_start"})
 
     def write(self, record: dict) -> None:
@@ -59,6 +65,8 @@ class CallTranscript:
         text = (text or "").strip()
         if not text:
             return
+        self.caller_text.append(mask_sensitive(text))
+        self.turns.append(("caller", self.caller_text[-1]))
         if self._looks_like_fragment(text):
             self._held.append({"event": "turn", "role": "user", "text": text})
             if sum(r.get("role") == "user" for r in self._held) >= _MAX_HELD:
@@ -71,12 +79,24 @@ class CallTranscript:
         text = (text or "").strip()
         if not text:
             return
+        self.turns.append(("agent", mask_sensitive(text)))
         record = {"event": "turn", "role": "assistant", "text": text, "interrupted": interrupted}
         # Held behind any pending fragments so the transcript stays in order.
         if self._held:
             self._held.append(record)
         else:
             self.write(record)
+
+    def live(self, role: str, text: str) -> None:
+        """A live caption ("agent" or "caller") for the Studio's live transcript.
+
+        Captions are fragments, and a number read out across several of them
+        cannot be recognised by per-line masking, so every digit is blanked here.
+        The turn's own line, masked properly, follows when the turn ends.
+        """
+        text = " ".join((text or "").split())
+        if text:
+            self.write({"event": "live", "role": role, "text": _ANY_DIGIT.sub("•", text)})
 
     def event(self, name: str, **fields) -> None:
         """A marker line (a failover, a failure). Fields are ours, never call content."""
