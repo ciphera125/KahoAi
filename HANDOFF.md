@@ -1282,3 +1282,15 @@ refuses Do-not-call numbers. 629 tests. Still open (low): login lockout can be t
 anyone at the machine, forged outcomes by anyone with WEBHOOK_SECRET (Plivo signature check
 not done), invite codes never expire, no password change, CSP allows inline scripts, the
 dashboard reads every transcript per request. `.env.example` (real keys) still uncommitted.
+
+**2026-10-24 (low pen-test findings fixed, pushed).** /hangup requires Plivo's V3 signature
+(`plivo_signature.py`, matched Plivo's own code on 5 cases; **not yet seen on a real Plivo
+callback** - if real reports are refused, the log says "without a valid Plivo signature";
+"Sync with Plivo" still fills outcomes, and `PLIVO_VERIFY_SIGNATURE=false` turns the check off).
+Device cookies keep the owner's own browser out of a stranger's lockout; invites are single-use
+and expire in 7 days (new code from the profile); password change signs out other sessions;
+the page's script is /app.js and the CSP forbids inline scripts; the dashboard caches each
+transcript until it changes. 656 tests. Re-attacked live: stranger locked out while the owner's
+browser signed in, invite reuse refused, forged /hangup refused with and without a fake signature.
+Remaining: `/answer` and `/ws` still trust WEBHOOK_SECRET alone; style-src still allows inline
+styles; the data stores are single-workspace JSON files.
