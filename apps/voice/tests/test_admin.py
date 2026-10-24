@@ -33,7 +33,7 @@ def client(anon):
 def test_the_page_loads(anon):
     r = anon.get("/")
     assert r.status_code == 200
-    assert "Inter" in r.text and 'id="auth"' in r.text
+    assert "IBM+Plex+Sans" in r.text and "IBM+Plex+Mono" in r.text and 'id="auth"' in r.text
 
 
 @pytest.mark.parametrize(

@@ -130,7 +130,7 @@ function go(hash) { if (location.hash === hash) route(); else location.hash = ha
 /* ---------- profile ---------- */
 function renderMe() {
   $("me-avatar").textContent = initials(S.me.name); $("me-name").textContent = S.me.name; $("me-email").textContent = S.me.company || S.me.email;
-  const h = new Date().getHours(); $("greet").textContent = `Good ${h < 12 ? "morning" : h < 17 ? "afternoon" : "evening"}, ${S.me.name.split(" ")[0]}`;
+
 }
 $("me-btn").onclick = async () => {
   try { S.me = await api("GET", "/api/me"); } catch (e) { return toast(e.message, true); }
@@ -191,7 +191,7 @@ async function loadDashboard() {
   const t = d.totals, finished = t.calls - t.ringing;
   const tile = (k, v, s, pct, hero) => el("div", { className: "kpi glass card" + (hero ? " hero" : "") }, el("span", { className: "k", textContent: k }), el("span", { className: "v", textContent: v }), el("span", { className: "s", textContent: s }), pct != null ? el("div", { className: "meter" }, Object.assign(el("i"), { style: `width:${Math.min(100, pct)}%` })) : null);
   $("kpis").replaceChildren(
-    tile("Calls made", t.calls.toLocaleString(), `${plural(t.people, "person")} reached out to`),
+    tile("Calls made", t.calls.toLocaleString(), `${t.people.toLocaleString()} ${t.people === 1 ? "person" : "people"} called`),
     tile("Picked up", `${d.rates.answer}%`, `${t.answered} of ${finished} calls`, d.rates.answer),
     tile("Successful", `${d.rates.success}%`, `${t.successful} real conversations`, d.rates.success, true),
     tile("Avg. talk time", fmtTalk(d.talk.avg_secs), "on calls that were picked up"),
@@ -219,8 +219,8 @@ async function loadDashboard() {
   d.by_day.forEach((x, i) => {
     const h = ((H - pad - 8) * x.calls) / top, ha = ((H - pad - 8) * x.answered) / top, X = 4 + i * bw + bw * 0.18, w = Math.max(2, bw * 0.64);
     const g = mk("g", {}); const tt = mk("title", {}); tt.textContent = `${new Date(x.date).toLocaleDateString([], { day: "numeric", month: "short" })}: ${plural(x.calls, "call")}, ${x.answered} picked up`; g.append(tt);
-    if (x.calls) { g.append(mk("rect", { x: X, y: H - pad - h, width: w, height: h, rx: Math.min(4, w / 2), fill: "rgba(180,198,198,.22)" })); if (x.answered) g.append(mk("rect", { x: X, y: H - pad - ha, width: w, height: ha, rx: Math.min(4, w / 2), fill: "#3CCFB8" })); }
-    else g.append(mk("rect", { x: X, y: H - pad - 2, width: w, height: 2, rx: 1, fill: "rgba(255,255,255,.08)" }));
+    if (x.calls) { g.append(mk("rect", { x: X, y: H - pad - h, width: w, height: h, rx: 1, style: "fill: var(--chart-2)" })); if (x.answered) g.append(mk("rect", { x: X, y: H - pad - ha, width: w, height: ha, rx: 1, style: "fill: var(--chart-1)" })); }
+    else g.append(mk("rect", { x: X, y: H - pad - 2, width: w, height: 2, rx: 1, style: "fill: var(--border)" }));
     svg.append(g);
     const every = n > 31 ? 14 : n > 10 ? 5 : 1;
     if (i % every === 0 || i === n - 1) { const lab = mk("text", { x: X + w / 2, y: H - 6, "text-anchor": "middle" }); lab.textContent = new Date(x.date).toLocaleDateString([], { day: "numeric", month: "short" }); svg.append(lab); }
@@ -522,7 +522,7 @@ function watchCall(uuid, label, sub) {
   if (source) source.close();
   open = { agent: null, caller: null }; typing = null;
   const box = $("chat"); box.replaceChildren();
-  $("chat-avatar").textContent = label.startsWith("+") ? "☎" : initials(label); $("chat-title").textContent = label; $("chat-sub").textContent = sub;
+  $("chat-avatar").textContent = label.startsWith("+") ? "#" : initials(label); $("chat-title").textContent = label; $("chat-sub").textContent = sub;
   setState("Ringing", "warn"); showTyping(box);
   source = new EventSource(`/api/calls/${encodeURIComponent(uuid)}/stream`);
   source.onmessage = (m) => {
