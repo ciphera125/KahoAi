@@ -83,12 +83,14 @@ async def test_the_caller_cannot_cut_the_notice_short(call):
     assert any(isinstance(s, MuteUntilFirstBotCompleteUserMuteStrategy) for s in strategies)
 
 
-async def test_an_unrecorded_call_has_no_notice_and_no_mute(call, monkeypatch):
+async def test_an_unrecorded_call_has_no_notice_but_its_greeting_is_heard_in_full(
+        call, monkeypatch):
     monkeypatch.setenv("RECORDING_ENABLED", "false")
     worker = await opening(call, said=1)
     assert call.tts.said == [GREETING]
     assert call.llm.requests[0][-1]["content"] == "Start by concisely introducing yourself."
-    assert mute_strategies(worker) == []
+    # The caller cannot cut off the greeting (892bf848, 2026-10-25).
+    assert [type(s) for s in mute_strategies(worker)] == [MuteUntilFirstBotCompleteUserMuteStrategy]
 
 
 async def test_the_notice_can_be_turned_off_while_recording(call, monkeypatch):

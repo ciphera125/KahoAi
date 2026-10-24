@@ -62,7 +62,7 @@ from pipecat.processors.aggregators.llm_response_universal import (
 )
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.cartesia.tts import CartesiaTTSService, GenerationConfig
-from pipecat.services.deepgram.stt import DeepgramSTTService
+from pipecat.services.deepgram.stt import DeepgramSTTService as PipecatDeepgramSTTService
 from pipecat.services.deepgram.tts import DeepgramTTSService
 from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
 from pipecat.services.groq.llm import GroqLLMService
@@ -420,6 +420,24 @@ def require_env(*names: str) -> None:
         sys.exit(1)
 
 
+class DeepgramSTTService(PipecatDeepgramSTTService):
+    """Deepgram, connecting in the background instead of holding up the call.
+
+    Pipecat waits for Deepgram's handshake before the pipeline starts: 1.0s on
+    892bf848 (2026-10-25), the largest part of pickup-to-greeting. Nothing needs
+    the caller's words that early, since the caller is muted through the notice
+    and greeting, so the pipeline starts at once and audio that arrives before
+    the connection is dropped (run_stt sends only on an open connection).
+    Reconnects after a drop work the same way, also without waiting.
+    """
+
+    async def _connect(self):
+        logger.debug("Connecting to Deepgram in the background")
+        self._quick_failure_tracker.reset()
+        self._connection_settled.clear()
+        self._connection_task = self.create_task(self._connection_handler())
+
+
 class PortableGroqLLMService(GroqLLMService):
     """Groq, with message roles normalised to the ones every model accepts.
 
@@ -499,7 +517,69 @@ class PortableGroqLLMService(GroqLLMService):
             return True  # APITimeoutError is a subclass of APIConnectionError
         return isinstance(exc, openai.APIStatusError) and exc.status_code >= 500
 
+    @staticmethod
+    def _rejected_tool_call(exc: Exception) -> bool:
+        """Groq checks a tool call's arguments against its schema and fails the
+        stream when they do not match ("Tool call validation failed")."""
+        body = getattr(exc, "body", None)
+        return isinstance(exc, openai.APIError) and (
+            getattr(exc, "code", None) == "tool_use_failed"
+            or (isinstance(body, dict) and body.get("code") == "tool_use_failed")
+            or "Tool call validation failed" in str(exc))
+
+    async def _answer_in_words_if_a_tool_call_is_rejected(self, stream, context):
+        """Pass the stream through; if Groq rejects a tool call before any words
+        were said, ask once more without tools, so the turn is spoken.
+
+        On 892bf848 (2026-10-25) gpt-oss-20b called capture_lead without its
+        required "reason", Groq failed the turn, and the caller heard only "One
+        moment" and then the apology. After words were spoken a retry would say
+        them twice, so the error is raised as before.
+        """
+        spoke = False
+        try:
+            async for chunk in stream:
+                choices = getattr(chunk, "choices", None)
+                if choices and getattr(choices[0].delta, "content", None):
+                    spoke = True
+                yield chunk
+        except openai.APIError as e:
+            if spoke or not self._rejected_tool_call(e):
+                raise
+            logger.warning(f"Groq rejected a tool call ({safe_reason(e)}); answering this turn "
+                           "again without tools")
+            retry = await self._completions_without_tools(context)
+            try:
+                async for chunk in retry:
+                    yield chunk
+            finally:
+                if hasattr(retry, "close"):
+                    await retry.close()
+        finally:
+            if hasattr(stream, "close"):
+                await stream.close()
+
+    async def _completions_without_tools(self, context):
+        adapter = self.get_llm_adapter()
+        params = self.build_chat_completion_params(
+            adapter.get_llm_invocation_params(
+                context,
+                system_instruction=self._settings.system_instruction,
+                convert_developer_to_user=not self.supports_developer_role,
+            )
+        )
+        params.pop("tools", None)
+        params.pop("tool_choice", None)
+        log_groq_call("PortableGroqLLMService._completions_without_tools", params.get("model"))
+        return await self._client.chat.completions.create(**params)
+
     async def get_chat_completions(self, context):
+        stream = await self._chat_completions(context)
+        if not hasattr(stream, "__aiter__"):
+            return stream
+        return self._answer_in_words_if_a_tool_call_is_rejected(stream, context)
+
+    async def _chat_completions(self, context):
         log_groq_call("PortableGroqLLMService.get_chat_completions", self._settings.model)
         try:
             return await super().get_chat_completions(context)
@@ -731,6 +811,20 @@ class MuteUntil(BaseUserMuteStrategy):
 
     async def process_frame(self, frame) -> bool:
         return time.monotonic() < self._until
+
+
+def opening_mute_strategies(prespoken: bool, notice_ends_at: float | None) -> list:
+    """The caller cannot talk over the opening: the notice, then the greeting.
+
+    The greeting is protected too. On 892bf848 (2026-10-25) a voice near the
+    phone was taken for the caller 0.3s into it and cut it to "Hello,", though
+    the caller had said nothing; people often answer and wait for the bot to
+    speak. Released when the greeting ends, or if it fails before any audio.
+    """
+    first_speech = [MuteUntilFirstBotCompleteUserMuteStrategy()]
+    if prespoken:
+        return [MuteUntil(notice_ends_at), *first_speech]
+    return first_speech
 
 
 class SpokenPunctuationFilter(BaseTextFilter):
@@ -1136,11 +1230,9 @@ def build_worker(
         user_params=LLMUserAggregatorParams(
             vad_analyzer=build_vad(),
             user_turn_strategies=build_turn_strategies(),
-            # The caller can neither talk over the notice nor, with an early "hello?",
-            # cancel it before it starts. Released once it has played, or if it fails.
-            user_mute_strategies=(
-                [MuteUntil(notice_ends_at)] if prespoken
-                else [MuteUntilFirstBotCompleteUserMuteStrategy()] if notice else []),
+            # The caller can neither talk over the notice and greeting nor, with an
+            # early "hello?", cancel them. Released once the greeting has played.
+            user_mute_strategies=opening_mute_strategies(bool(prespoken), notice_ends_at),
         ),
     )
 
