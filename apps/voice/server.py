@@ -260,7 +260,11 @@ async def answer(request: Request, token: str | None = Query(None)):
     if not authorized(token):
         return Response(status_code=403)
     # Plivo posts its parameters as a form body; a GET carries them in the query.
-    params = parse_qs((await request.body()).decode("utf-8", "replace"))
+    body = await read_capped(request)
+    if body is None:
+        logger.warning("Refusing an oversized /answer body")
+        return Response(status_code=413)
+    params = parse_qs(body.decode("utf-8", "replace"))
     params.update(parse_qs(request.url.query))
     first = lambda key: (params.get(key) or [None])[0]  # noqa: E731
 
@@ -306,6 +310,25 @@ async def answer(request: Request, token: str | None = Query(None)):
     )
 
 
+MAX_WEBHOOK_BODY = 16 * 1024  # Plivo's form posts are well under 2KB
+
+
+async def read_capped(request: Request, limit: int = MAX_WEBHOOK_BODY) -> bytes | None:
+    """The request body, or None if it is over `limit`. Stops reading at the limit,
+    so a huge body (with or without a Content-Length) is never held in memory."""
+    try:
+        if int(request.headers.get("content-length") or 0) > limit:
+            return None
+    except ValueError:
+        return None
+    body = bytearray()
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > limit:
+            return None
+    return bytes(body)
+
+
 @app.api_route("/hangup", methods=["GET", "POST"])
 async def hangup(request: Request, token: str | None = Query(None)):
     """Plivo's report of how an outbound call ended (picked up, busy, no answer).
@@ -315,8 +338,10 @@ async def hangup(request: Request, token: str | None = Query(None)):
     Plivo does not retry it."""
     if not authorized(token):
         return Response(status_code=403)
-    body = (await request.body())[:8192].decode("utf-8", "replace")
-    params = parse_qs(body)
+    body = await read_capped(request)
+    if body is None:
+        return Response(status_code=413)
+    params = parse_qs(body.decode("utf-8", "replace"))
     params.update(parse_qs(request.url.query))
     first = lambda key: (params.get(key) or [None])[0]  # noqa: E731
     call_id = first("CallUUID") or first("RequestUUID")

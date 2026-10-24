@@ -13,6 +13,8 @@ import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
+from prompt_store import append_private
+
 DEFAULT_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "activity.jsonl"
 MAX_ITEMS = 200
 MAX_TEXT = 160
@@ -42,14 +44,13 @@ class ActivityLog:
                "view": view if view in VIEWS else None,
                "ref": str(ref)[:80] if ref else None, "actor": str(actor)[:80] if actor else None}
         with _lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            append_private(self.path, json.dumps(row, ensure_ascii=False) + "\n")
             rows = self._rows()
             if len(rows) > MAX_ITEMS + 50:  # trim now and then, not on every write
                 tmp = self.path.with_suffix(".tmp")
-                tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n"
-                                       for r in rows[-MAX_ITEMS:]), encoding="utf-8")
+                tmp.unlink(missing_ok=True)
+                append_private(tmp, "".join(json.dumps(r, ensure_ascii=False) + "\n"
+                                            for r in rows[-MAX_ITEMS:]))
                 os.replace(tmp, self.path)
 
     def recent(self, limit: int = 30) -> list[dict]:

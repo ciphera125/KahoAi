@@ -287,3 +287,14 @@ def test_plivo_is_asked_to_report_how_the_call_ended(monkeypatch):
     body = net.posts[0][1]["json"]
     assert body["hangup_url"].startswith("https://abc.ngrok.app/hangup?token=")
     assert "peer=%2B919876543210" in body["hangup_url"] and body["hangup_method"] == "POST"
+
+
+def test_a_do_not_call_contact_is_refused_before_anything_is_sent(monkeypatch, tmp_path):
+    import contacts_store
+
+    monkeypatch.setenv("CONTACT_STORE_PATH", str(tmp_path / "c.json"))
+    store = contacts_store.default_store()
+    store.set_dnc(store.create("Asha", ["+919876543210"])["id"], True)
+    net = Net(monkeypatch)
+    assert cli() == 2
+    assert net.gets == [] and net.posts == []

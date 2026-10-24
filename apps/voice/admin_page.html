@@ -671,6 +671,7 @@ const COLOURS = ["marigold", "plum", "orchid", "teal", "silver", "rose"];
 const COLOUR_NAMES = { marigold: "Marigold", plum: "Sky", orchid: "Pink", teal: "Teal", silver: "Silver", rose: "Coral" };
 const S = { me: null, cfg: { max_chars: 8000, limits: { max_minutes: 30, ring_secs: [15, 60] } }, providers: [], numbers: [], contacts: [], tags: [], agents: [], prompts: [], tools: [] };
 let openContactId = null;
+const isOwner = () => !!S.me && S.me.role === "owner";  // the server enforces it; this only hides what would be refused
 
 function toast(text, isError) { const t = $("toast"); t.textContent = text; t.className = "toast show" + (isError ? " err" : ""); clearTimeout(toast.t); toast.t = setTimeout(() => (t.className = "toast"), 3000); }
 async function api(method, path, body) {
@@ -899,18 +900,18 @@ function renderNumbers() {
   if (!S.numbers.length) { box.append(el("div", { className: "empty", textContent: "No numbers yet. Add one with “Add new number”." })); return; }
   for (const n of S.numbers) {
     const [label, cls] = STATUS[n.status];
-    const items = [["Edit", () => numberForm(n.provider, n)]];
-    if (!n.is_default) items.push(["Set as default", async () => { await api("POST", `/api/numbers/${n.id}/default`); toast("Default number updated."); refreshNumbers(); refreshBell(); }]);
-    items.push(["Delete", async () => { if (!(await confirmBox(`Delete ${n.number}?`, "The number and its saved credentials are removed from the Studio. Nothing changes at the provider.", "Delete"))) return; await api("DELETE", `/api/numbers/${n.id}`); toast("Number deleted."); refreshNumbers(); refreshBell(); }, true]);
+    const items = isOwner() ? [["Edit", () => numberForm(n.provider, n)]] : [];
+    if (isOwner() && !n.is_default) items.push(["Set as default", async () => { await api("POST", `/api/numbers/${n.id}/default`); toast("Default number updated."); refreshNumbers(); refreshBell(); }]);
+    if (isOwner()) items.push(["Delete", async () => { if (!(await confirmBox(`Delete ${n.number}?`, "The number and its saved credentials are removed from the Studio. Nothing changes at the provider.", "Delete"))) return; await api("DELETE", `/api/numbers/${n.id}`); toast("Number deleted."); refreshNumbers(); refreshBell(); }, true]);
     const sub = [n.provider_label, n.label].filter(Boolean).join(" · ") + (n.credentials_from_env ? " · credentials from .env" : "");
     const pick = el("select", { title: "Which agent answers calls to this number" }, el("option", { value: "", textContent: "Default persona" }), ...S.agents.map((a) => el("option", { value: a.id, textContent: a.name })));
-    pick.value = n.agent_id || ""; pick.onchange = async () => { try { await api("POST", `/api/numbers/${n.id}/agent`, { agent_id: pick.value || null }); toast("Saved. The next call to this number uses it."); refreshNumbers(); refreshBell(); } catch (e) { toast(e.message, true); } };
+    pick.value = n.agent_id || ""; pick.disabled = !isOwner(); pick.onchange = async () => { try { await api("POST", `/api/numbers/${n.id}/agent`, { agent_id: pick.value || null }); toast("Saved. The next call to this number uses it."); refreshNumbers(); refreshBell(); } catch (e) { toast(e.message, true); } };
     box.append(el("div", { className: "row n-row", dataset: { number: n.id } },
       el("div", { className: "badge " + n.provider, textContent: n.provider_label.slice(0, 2).toUpperCase() }),
       el("div", { style: "min-width:0" }, el("div", { className: "num" }, n.number, n.is_default ? el("span", { className: "star", textContent: "Default" }) : null), el("div", { className: "muted ellip", textContent: sub })),
       el("div", {}, pick),
       el("div", {}, el("span", { className: "pill " + cls, textContent: label })),
-      el("div", { className: "row-actions" }, menuButton(items))));
+      el("div", { className: "row-actions" }, items.length ? menuButton(items) : null)));
   }
 }
 function renderAddMenu() {
@@ -1034,7 +1035,7 @@ $("t-scrim").querySelector("[data-close]").onclick = () => $("t-scrim").classLis
 function syncSelection() {
   const n = selected.size, total = S.contacts.length;
   $("c-count").textContent = n ? `${n} selected` : plural(total, "contact");
-  $("c-bulk-delete").hidden = !n;
+  $("c-bulk-delete").hidden = !n || !isOwner();
   $("c-all").checked = total > 0 && n === total; $("c-all").indeterminate = n > 0 && n < total;
 }
 $("c-all").onclick = () => { if ($("c-all").checked) S.contacts.forEach((c) => selected.add(c.id)); else selected.clear(); renderContacts(); };
@@ -1228,7 +1229,7 @@ async function openAgent(id, promptId) {
   agentPromptId = promptId && agent.prompt_ids.includes(promptId) ? promptId : agent.active_prompt_id || agent.prompt_ids[0] || null;
   $("ag-name").textContent = agent.name; $("ag-desc").textContent = agent.description || "No description yet.";
   const menu = $("ag-menu"); menu.replaceChildren();
-  for (const [t, fn, bad] of [["Edit name and description", editAgentDetails], ["Delete agent", deleteAgent, true]]) { const b = el("button", { type: "button", className: bad ? "bad" : "" }, t); b.onclick = (e) => { e.stopPropagation(); closeMenus(); fn(); }; menu.append(b); }
+  for (const [t, fn, bad] of [["Edit name and description", editAgentDetails], ...(isOwner() ? [["Delete agent", deleteAgent, true]] : [])]) { const b = el("button", { type: "button", className: bad ? "bad" : "" }, t); b.onclick = (e) => { e.stopPropagation(); closeMenus(); fn(); }; menu.append(b); }
   setTab(promptId ? "prompt" : agentTab); renderAgentPrompt(); renderTools(); renderSettings();
 }
 $("ag-more").onclick = (e) => toggleMenu($("ag-menu"), e);
@@ -1313,7 +1314,7 @@ function renderPrompts() {
       el("span", { className: "num", textContent: p.version_count }),
       el("span", {}, el("span", { className: "pill " + (p.in_use ? "active" : "muted"), textContent: p.in_use ? "In use" : "Not in use" })),
       el("span", { className: "muted", textContent: whenShort(p.updated_at) }),
-      el("div", { className: "row-actions" }, menuButton([["Edit", () => editPromptForm(p)], ["Change agent", () => assignForm(p)], ["Delete", () => deletePrompt(p), true]]))));
+      el("div", { className: "row-actions" }, menuButton([["Edit", () => editPromptForm(p)], ["Change agent", () => assignForm(p)], ...(isOwner() ? [["Delete", () => deletePrompt(p), true]] : [])]))));
   }
 }
 function newPromptForm(agentId) { form({ title: "New prompt", wide: true, fields: [{ name: "name", label: "Name", placeholder: "EMI reminder, Hindi" }, { name: "agent_id", label: "Agent", type: "select", options: [{ value: "", label: "No agent yet" }, ...agentOptions(false)], value: agentId || "" }, { name: "prompt", label: "Prompt", type: "textarea" }],
@@ -1377,6 +1378,7 @@ let bellTimer = null;
 async function boot() {
   S.me = await api("GET", "/api/me");
   $("auth").hidden = true; $("app").hidden = false; renderMe();
+  $("add-btn").hidden = !isOwner(); $("d-sync").hidden = !isOwner();
   const [cfg, provs, tools] = await Promise.all([api("GET", "/api/config"), api("GET", "/api/providers"), api("GET", "/api/tools")]);
   S.cfg = cfg; S.providers = provs; S.tools = tools; renderAddMenu();
   await Promise.all([refreshPrompts(true), refreshContacts()]);

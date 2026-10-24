@@ -42,3 +42,8 @@ def test_a_corrupt_line_is_skipped(feed):
     with feed.path.open("a", encoding="utf-8") as f:
         f.write("not json\n")
     assert [i["text"] for i in feed.recent()] == ["ok"]
+
+
+def test_the_feed_file_is_private_to_its_owner(feed):
+    feed.add("contact", "Called +919876543210", view="calls")
+    assert feed.path.stat().st_mode & 0o077 == 0

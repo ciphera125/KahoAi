@@ -421,3 +421,41 @@ def test_an_agent_cannot_ask_for_longer_than_the_server_allows(client, bot, monk
     monkeypatch.setenv("MAX_CALL_DURATION_SECS", "600")
     r = client.patch(f"/api/agents/{bot['id']}", json={"settings": {"max_minutes": 25}})
     assert r.status_code == 400 and "10" in r.json()["error"]
+
+
+# --- roles ------------------------------------------------------------------------
+
+
+@pytest.fixture
+def member(client):
+    code = client.get("/api/me").json()["invite_code"]
+    other = TestClient(admin.app, base_url=LOCAL)
+    assert other.post("/api/auth/signup", json={"name": "Ayushi", "email": "ay@example.com",
+                                                "password": "another pass",
+                                                "invite": code}).status_code == 200
+    return other
+
+
+@pytest.mark.parametrize("method, path, body", [
+    ("post", "/api/numbers", {"provider": "plivo", "number": "+919800000009"}),
+    ("patch", "/api/numbers/x", {"credentials": {"auth_token": "stolen"}}),
+    ("delete", "/api/numbers/x", None),
+    ("post", "/api/numbers/x/default", None),
+    ("post", "/api/numbers/x/agent", {"agent_id": None}),
+    ("delete", "/api/agents/ag_000000000000", None),
+    ("delete", "/api/prompts/pr_000000000000", None),
+    ("post", "/api/contacts/delete", {"ids": []}),
+    ("post", "/api/dashboard/sync", None),
+])
+def test_members_cannot_change_numbers_or_delete_in_bulk(member, method, path, body):
+    kwargs = {"json": body} if body is not None else {}
+    r = getattr(member, method)(path, **kwargs)
+    assert r.status_code == 403 and "owner" in r.json()["error"]
+
+
+def test_members_still_do_the_daily_work(member):
+    assert member.post("/api/contacts", json={"name": "Asha", "numbers": []}).status_code == 200
+    r = member.post("/api/agents", json={"name": "Bot", "prompt": "Hi"})
+    assert r.status_code == 200
+    assert member.patch(f"/api/agents/{r.json()['id']}", json={"tools": []}).status_code == 200
+    assert member.get("/api/me").json()["role"] == "member"

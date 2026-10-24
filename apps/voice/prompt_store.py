@@ -40,6 +40,19 @@ def normalize_number(raw: str) -> str:
     return "+" + digits
 
 
+def append_private(path: Path, text: str) -> None:
+    """Append to a file only its owner can read (it holds names and numbers),
+    making an existing file private too. One write per call, so a line from
+    another process is never interleaved with it."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, text.encode("utf-8"))
+    finally:
+        os.close(fd)
+
+
 def write_json_atomic(path: Path, data) -> None:
     """Write beside the target, then swap it in, so a crash or a full disk leaves
     the old file whole rather than half a new one."""

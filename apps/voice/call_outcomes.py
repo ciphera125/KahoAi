@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 import httpx
-from prompt_store import normalize_number
+from prompt_store import append_private, normalize_number
 
 DEFAULT_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "call_outcomes.jsonl"
 CALL_ID = re.compile(r"^[A-Za-z0-9-]{6,64}$")
@@ -91,9 +91,7 @@ class OutcomeLog:
             raise ValueError("not a call id")
         row = {"call_id": call_id, **_clean(fields)}
         with _lock:
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            with self.path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            append_private(self.path, json.dumps(row, ensure_ascii=False) + "\n")
 
     def all(self) -> dict[str, dict]:
         out: dict[str, dict] = {}

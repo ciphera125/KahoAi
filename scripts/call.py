@@ -39,6 +39,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "voice"))
 
 import personas  # noqa: E402
+from contacts_store import default_store as contact_store  # noqa: E402
 
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 PLIVO_CALL_URL = "https://api.plivo.com/v1/Account/{auth_id}/Call/"
@@ -245,8 +246,20 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     return p.parse_args(argv)
 
 
+def check_not_dnc(number: str) -> None:
+    """Refuse a number marked Do not call in the Studio's contacts. An unreadable
+    contacts file refuses too: not being able to check is not permission."""
+    try:
+        dnc = contact_store().is_dnc(number)
+    except (OSError, ValueError) as e:
+        raise CallError(f"Could not read the contacts to check Do not call ({e}).", 2) from e
+    if dnc:
+        raise CallError(f"{number} is marked Do not call in the Studio's contacts.", 2)
+
+
 def run(args: argparse.Namespace) -> int:
     number = check_number(args.number, "--number")
+    check_not_dnc(number)
     try:
         personas.resolve(args.agent)
     except ValueError as e:

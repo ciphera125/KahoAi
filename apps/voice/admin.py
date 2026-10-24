@@ -74,6 +74,16 @@ async def this_machine_and_signed_in(request: Request, call_next):
     return await call_next(request)
 
 
+def not_owner(request: Request) -> JSONResponse | None:
+    """403 unless the signed-in user owns the workspace. Members do the daily
+    work (calls, contacts, agents, prompts); the owner alone changes phone
+    numbers and their credentials, deletes agents and prompts, deletes in bulk
+    and syncs from Plivo."""
+    if (getattr(request.state, "user", None) or {}).get("role") != "owner":
+        return JSONResponse({"error": "only the workspace owner can do this"}, status_code=403)
+    return None
+
+
 def bad_request(message: str) -> JSONResponse:
     return JSONResponse({"error": message}, status_code=400)
 
@@ -307,6 +317,8 @@ async def edit_agent(agent_id: str, request: Request):
 
 @app.delete("/api/agents/{agent_id}")
 async def delete_agent(agent_id: str, request: Request):
+    if denied := not_owner(request):
+        return denied
     try:
         name = _agents().get_agent(agent_id)["name"]
         _agents().delete_agent(agent_id)
@@ -385,6 +397,8 @@ async def assign_prompt(prompt_id: str, request: Request):
 
 @app.delete("/api/prompts/{prompt_id}")
 async def delete_prompt(prompt_id: str, request: Request):
+    if denied := not_owner(request):
+        return denied
     try:
         name = _agents().get_prompt(prompt_id)["name"]
         _agents().delete_prompt(prompt_id)
@@ -454,6 +468,8 @@ def _public(number_id: str) -> dict:
 
 @app.post("/api/numbers")
 async def add_number(request: Request):
+    if denied := not_owner(request):
+        return denied
     body = await body_of(request)
     try:
         row = number_store().add(str(body.get("provider") or ""), str(body.get("number") or ""),
@@ -466,6 +482,8 @@ async def add_number(request: Request):
 
 @app.patch("/api/numbers/{number_id}")
 async def edit_number(number_id: str, request: Request):
+    if denied := not_owner(request):
+        return denied
     body = await body_of(request)
     try:
         number_store().update(number_id, label=body.get("label"),
@@ -480,6 +498,8 @@ async def edit_number(number_id: str, request: Request):
 
 @app.post("/api/numbers/{number_id}/agent")
 async def route_number(number_id: str, request: Request):
+    if denied := not_owner(request):
+        return denied
     body = await body_of(request)
     try:
         row = _public(number_id)
@@ -498,6 +518,8 @@ async def route_number(number_id: str, request: Request):
 
 @app.post("/api/numbers/{number_id}/default")
 async def make_default(number_id: str, request: Request):
+    if denied := not_owner(request):
+        return denied
     try:
         number_store().set_default(number_id)
     except KeyError:
@@ -509,6 +531,8 @@ async def make_default(number_id: str, request: Request):
 
 @app.delete("/api/numbers/{number_id}")
 async def delete_number(number_id: str, request: Request):
+    if denied := not_owner(request):
+        return denied
     try:
         number = _public(number_id)["number"]
         number_store().delete(number_id)
@@ -634,6 +658,8 @@ async def dashboard(days: int = 30):
 @app.post("/api/dashboard/sync")
 def sync_dashboard(request: Request):
     """Read how recent calls ended from Plivo's call records (read-only there)."""
+    if denied := not_owner(request):
+        return denied
     auth_id, auth_token = plivo_credentials()
     if not auth_id or not auth_token:
         return bad_request("Plivo is not connected; add its credentials on Numbers")
@@ -739,6 +765,8 @@ async def delete_contact(contact_id: str, request: Request):
 
 @app.post("/api/contacts/delete")
 async def delete_contacts(request: Request):
+    if denied := not_owner(request):
+        return denied
     body = await body_of(request)
     n = contact_store().delete_many([str(i) for i in body.get("ids") or []])
     if n:

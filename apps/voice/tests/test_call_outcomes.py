@@ -168,3 +168,15 @@ def test_sync_reports_a_refusal_without_the_token(log, monkeypatch):
     with pytest.raises(RuntimeError) as e:
         call_outcomes.sync_from_plivo(log, "MA1", "tok", OURS)
     assert "tok" not in str(e.value).replace("Plivo", "")
+
+
+def test_the_outcome_file_is_private_to_its_owner(log):
+    log.record("abc123", status="answered", peer=ASHA)
+    assert log.path.stat().st_mode & 0o077 == 0
+
+
+def test_an_existing_readable_file_is_made_private(log):
+    log.path.write_text("", encoding="utf-8")
+    log.path.chmod(0o644)
+    log.record("abc123", status="answered")
+    assert log.path.stat().st_mode & 0o077 == 0

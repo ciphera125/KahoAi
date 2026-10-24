@@ -112,3 +112,22 @@ def test_a_hangup_without_the_token_is_refused_and_not_recorded(client):
 def test_a_junk_hangup_is_ignored(client, body):
     assert hangup(client, body).status_code == 200
     assert call_outcomes.default_log().all() == {}
+
+
+@pytest.mark.parametrize("path", ["/hangup", "/answer"])
+def test_an_oversized_webhook_body_is_refused_unread(client, path):
+    big = "CallUUID=abc12345-9&CallStatus=completed&x=" + "A" * (1024 * 1024)
+    r = client.post(f"{path}?token=s3cret", content=big,
+                    headers={"content-type": "application/x-www-form-urlencoded"})
+    assert r.status_code == 413
+    assert call_outcomes.default_log().all() == {}
+
+
+def test_a_body_without_a_length_is_still_capped(client):
+    def chunks():
+        for _ in range(64):
+            yield b"A" * 1024
+
+    r = client.post("/hangup?token=s3cret", content=chunks(),
+                    headers={"content-type": "application/x-www-form-urlencoded"})
+    assert r.status_code == 413
