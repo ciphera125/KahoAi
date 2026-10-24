@@ -283,9 +283,9 @@ async def test_phone_numbers_are_not_masked(leads, tmp_path):
 
 
 async def test_two_leads_append_to_the_same_days_file(leads, tmp_path):
-    await capture(tmp_path, caller="+919999988888", name="A", reason="one")
-    await capture(tmp_path, caller="+919999988888", name="B", reason="two")
-    assert [r["name"] for r in lead_rows(leads)] == ["A", "B"]
+    await capture(tmp_path, caller="+919999988888", name="Asha", reason="one")
+    await capture(tmp_path, caller="+919999988888", name="Ravi", reason="two")
+    assert [r["name"] for r in lead_rows(leads)] == ["Asha", "Ravi"]
 
 
 # Junk leads seen on real calls on 2026-10-24, one test per kind: the model
@@ -408,3 +408,58 @@ async def test_a_no_that_was_not_an_answer_to_anything_else_does_not_end(tmp_pat
         tmp_path, ("agent", "Would you like the morning slot?"), ("caller", "No.")
     )
     assert not hung_up
+
+
+# Call 892bf848 (2026-10-25): a stray voice was transcribed "Hey. I'm with b", and
+# gpt-oss-20b answered with capture_lead {"name": "b", "reason": "No request
+# specified"} in 2 of 10 replays. A one-letter name had no part long enough to
+# check, so it passed as "said by the caller" and the lead would have been saved.
+
+
+async def test_a_one_letter_name_is_never_a_lead(leads, tmp_path):
+    result, _ = await capture(
+        tmp_path, caller="+919999988888", said=("Hey. I'm with b",),
+        name="b", reason="Caller wants to speak with Kaho AI",
+    )
+    assert "error" in result and "name" in result["error"]
+    assert not leads.exists()
+
+
+@pytest.mark.parametrize("reason", ["No request specified", "not specified",
+                                    "No reason given", "nothing", "-"])
+async def test_a_reason_that_says_there_is_none_is_refused(leads, tmp_path, reason):
+    result, _ = await capture(tmp_path, caller="+919999988888",
+                              said=("I'm Ravi, call me back",), name="Ravi", reason=reason)
+    assert "error" in result and "reason" in result["error"]
+    assert not leads.exists()
+
+
+async def test_a_name_must_be_a_word_the_caller_said_not_part_of_one(leads, tmp_path):
+    # "Ram" is inside "program"; that is not the caller saying their name.
+    result, _ = await capture(tmp_path, caller="+919999988888",
+                              said=("Tell me about the program",), name="Ram",
+                              reason="wants details")
+    assert "error" in result and "name" in result["error"]
+    assert not leads.exists()
+
+
+async def test_a_two_letter_name_the_caller_said_is_accepted(leads, tmp_path):
+    result, _ = await capture(tmp_path, caller="+919999988888",
+                              said=("My name is Om, call me back",), name="Om",
+                              reason="wants a callback")
+    assert result["status"] == "saved"
+
+
+def test_no_lead_field_is_required_by_the_schema():
+    # Groq fails the whole turn when a required argument is missing ("missing
+    # properties: 'reason'", 892bf848); the handler asks for it instead.
+    lead = tools.REGISTRY["capture_lead"]
+    assert lead.required == []
+    for field in ("name", "reason"):
+        assert "null" in lead.properties[field]["type"]
+
+
+async def test_a_missing_reason_is_asked_for_not_rejected_by_groq(leads, tmp_path):
+    result, _ = await capture(tmp_path, caller="+919999988888",
+                              said=("I'm Ravi",), name="Ravi", reason=None)
+    assert "error" in result and "reason" in result["error"]

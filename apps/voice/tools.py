@@ -249,6 +249,15 @@ _PLACEHOLDERS = {"unknown", "n/a", "na", "none", "null", "caller", "name", "not 
 _DEVANAGARI = re.compile(r"[\u0900-\u097F]")
 
 
+# A reason that says there is none: gpt-oss-20b saved "No request specified" for a
+# caller who had asked for nothing (892bf848, 2026-10-25).
+_NO_REASON = re.compile(
+    r"^\W*(?:no(?:thing)?|not|none)\b.*\b(?:specified|given|stated|mentioned|provided|"
+    r"request|reason)\W*$|^\W*(?:nothing|not specified|unspecified)\W*$",
+    re.IGNORECASE,
+)
+
+
 def _is_placeholder(value: str) -> bool:
     """A stand-in for a value the model does not have: "?", "unknown", no letters."""
     text = value.strip().lower().strip(" .")
@@ -262,8 +271,14 @@ def _caller_said(name: str, heard: list[str]) -> bool:
     spelling, so any Devanagari speech lets it through rather than refuse a real lead.
     """
     said = " ".join(heard).lower()
-    parts = re.findall(r"[^\W\d_]{3,}", name.lower())
-    return not parts or any(p in said for p in parts) or bool(_DEVANAGARI.search(said))
+    if _DEVANAGARI.search(said):
+        return True
+    # Whole words of two letters or more ("Om" is a name; "b" is not), each matched
+    # as a word: "Ram" inside "program" is not the caller saying it. A name with no
+    # such part was once let through unchecked, and "b" nearly became a lead.
+    words = set(re.findall(r"[^\W\d_]+", said))
+    parts = re.findall(r"[^\W\d_]{2,}", name.lower())
+    return any(p in words for p in parts)
 
 
 @tool(
@@ -273,9 +288,12 @@ def _caller_said(name: str, heard: list[str]) -> bool:
     "something, as soon as you have their name and what they want, not only at the "
     "end of the call. Read the details back and save only after the caller confirms.",
     properties={
-        "name": {"type": "string", "description": "The caller's name."},
+        # Nothing is required and null is allowed: Groq fails the whole turn on
+        # a missing or null argument ("missing properties: 'reason'", 892bf848,
+        # 2026-10-25), and the caller hears silence. The handler asks instead.
+        "name": {"type": ["string", "null"], "description": "The caller's name."},
         "reason": {
-            "type": "string",
+            "type": ["string", "null"],
             "description": "One line on what they want, in their own terms.",
         },
         "phone": {
@@ -287,7 +305,7 @@ def _caller_said(name: str, heard: list[str]) -> bool:
             "from the one they are calling from.",
         },
     },
-    required=["name", "reason"],
+    required=[],
 )
 async def capture_lead(args: dict, call: CallContext) -> dict:
     name = " ".join(str(args.get("name") or "").split())
@@ -305,6 +323,9 @@ async def capture_lead(args: dict, call: CallContext) -> dict:
     for field_name, value in (("name", name), ("reason", reason)):
         if _is_placeholder(value):
             return {"error": f"do not guess; ask the caller for their real {field_name}"}
+    if _NO_REASON.search(reason):
+        return {"error": "the caller has not asked for anything; save a lead only for a "
+                "real request, and ask what they want if you need to (reason)"}
     raw_phone = str(args.get("phone") or "")
     if raw_phone and ("?" in raw_phone or not re.search(r"\d", raw_phone)):
         return {"error": "do not guess; ask the caller for their real phone number"}
