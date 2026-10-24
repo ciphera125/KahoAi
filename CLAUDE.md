@@ -105,29 +105,45 @@ headers, never from the billing page.
 
 Silero VAD decides when the caller's turn has ended. Providers are swappable by
 env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
-(deepgram, elevenlabs, sarvam, smallest, cartesia or google), `TTS_FALLBACK_PROVIDER`
+(deepgram, elevenlabs, sarvam, smallest or cartesia), `TTS_FALLBACK_PROVIDER`
 (a backup voice if the first one dies mid-call).
 
-The voice is **Smallest `meher`** (owner's decision, 2026-10-24, after hearing
-Google Chirp 3 HD on calls and finding it robotic), backed up by **Google Chirp 3
-HD, voice Despina** (`TTS_FALLBACK_PROVIDER=google`). Google is wired as: `TTS_PROVIDER=google`, `GOOGLE_TTS_API_KEY`, `GOOGLE_TTS_VOICE`
-(bare name), `GOOGLE_TTS_LANGUAGE` (en|hi). Chosen for cost: 1M characters a month
-free, then $30/M, where Cartesia's 20K free credits lasted a few calls. First audio
-~250-390ms. `google_tts.py` authenticates with an API key (Pipecat's own service
-wants a service account) and switches the voice's locale with the language,
-because Google rejects any request whose language and voice locale differ.
+The voice is **Smallest `suri`** (owner's pick by ear, 2026-10-24; `lakshmi` and `manmeet` were the
+other two liked; `meher` before), starting in English (`SMALLEST_LANGUAGE=en`: the notice and greeting
+are English, and starting in Hindi audibly switched 2s in on call ddedb4fd), backed up by **ElevenLabs** (`TTS_FALLBACK_PROVIDER=elevenlabs`,
+built-in voice `EXAVITQu4vr4xnSDxMaL`, since the free plan refuses Voice Library voices over the
+API). **Google TTS was removed and Cartesia is on hold** (owner, 2026-10-24): Cartesia's code
+stays, unused. A voice that refuses a request (a 402, a spent quota) still calls itself usable,
+so Pipecat's switcher never left it and the caller heard silence; `CallHealth` now moves to the
+backup on the first voice error, never switches back to the one that failed, and asks again for
+a reply the caller was still owed (`reply_retried` in the transcript). Sarvam is ruled out
+(owner, 2026-10-02); Deepgram Aura is English-only.
 
-Cartesia Sonic, voice Neha, was the voice before that (owner's decision after a
-real call, `CARTESIA_*` vars); its free credits ran out on 2026-10-24. `CARTESIA_LANGUAGE=en` on
-purpose: in Hindi mode every Cartesia voice mangles "Kaho AI" (heard back as
-"Cahu", "Kahoo"), in English mode every voice says it cleanly, and the greeting is
-spoken before the caller has said anything, so it must start in English. Hindi
-replies still switch to Hindi mode (`FollowCallerLanguage`), where the name is not
-fixed; inline IPA phonemes did not fix it either. About 80ms to first audio,
-half Smallest's. Its free plan allows **only 2 connections at once**, so a third
-parallel call gets no voice from it; it needs a paid plan before real traffic.
-Smallest (`meher`) still works and is the natural backup. Sarvam is ruled out (owner,
-2026-10-02); Deepgram Aura is English-only.
+Text between the model and the voice: `CapReplyLength` speaks at most `REPLY_MAX_SENTENCES`
+(default 3) per reply; `RepeatedSentenceFilter` drops a sentence said twice in a row (sentence
+aggregation only). Transcripts are cleaned before the model reads them (`NormalizeTranscripts`):
+"Cairo AI" and similar become "Kaho AI", Bengali letters become Devanagari. The "one moment"
+filler is Hindi after a Hindi turn (`FILLER_MESSAGE_HI`) and is cancelled if the caller resumes.
+
+The brand is spoken as **"KahoAI"**, one word: `BrandNameFilter` rewrites every way the model
+writes it, because the owner chose that spelling by ear (sample b_KahoAI_hi_sentence).
+
+**Fast opening.** The phone server synthesises the recording notice once at startup
+(`notice_audio.py`, bounded at `NOTICE_SYNTH_TIMEOUT_SECS`, silence trimmed) and sends it as
+Plivo playAudio the moment a stream opens, before any provider has connected. Measured on a
+real call (831f85db): pickup to notice on the line 340ms (was ~1.8s), to the greeting 2.2s
+(was 5.6s). The caller is muted until the notice ends (`MuteUntil`); the greeting is asked for
+`GREETING_LEAD_SECS` (0.8) before it ends; the notice is written into the recording. Still a
+~0.65s gap after a short notice while Deepgram connects (~1s); pre-connecting it is the next lever.
+
+Webhooks: `/answer`, `/hangup` and `/transfer` need `WEBHOOK_SECRET` *and* Plivo's V3 signature
+(`plivo_signature.py`, checked on a real call 2026-10-24); our own preflight signs its request
+the same way. `/ws` needs a single-use token `/answer` issues (`STREAM_TOKEN_SECS`), and the
+call's settings stay on the server, not in the stream URL. `PLIVO_VERIFY_SIGNATURE=false` is
+for tests only.
+
+Dependencies are pinned in `apps/voice/constraints.txt` (pipecat-ai 1.12.0, openai 3.19.2...):
+unpinned, CI picked up pipecat 1.14 and went red. Bump a pin deliberately, with a real call.
 
 ## Commands
 

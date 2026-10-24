@@ -1294,3 +1294,46 @@ transcript until it changes. 656 tests. Re-attacked live: stranger locked out wh
 browser signed in, invite reuse refused, forged /hangup refused with and without a fake signature.
 Remaining: `/answer` and `/ws` still trust WEBHOOK_SECRET alone; style-src still allows inline
 styles; the data stores are single-workspace JSON files.
+
+**2026-10-24 (owner: fix every open finding one by one; remove Google; hold Cartesia; redesign;
+make CI green).** Done in this order, each test-first, nothing in parallel:
+1. **CI** had been red since 8bf6d0e: pipecat-ai/openai were unpinned and CI got pipecat 1.14,
+   breaking 9 LLM fallback/timeout tests. `constraints.txt` pins the tested versions; runner
+   pinned to ubuntu-24.04, actions bumped to Node-24 versions. Pushed (bb555a4); CI green.
+2. **Google TTS removed** (code, checks, `google` extra, tests, `.env`). **Cartesia on hold.**
+   Backup voice is now ElevenLabs, voice `EXAVITQu4vr4xnSDxMaL` (the configured Library voice
+   is paid-only over the API; checked live).
+3. **Backup voice takes over** on the first voice error and the owed reply is asked for again
+   (end-to-end test with a refusing fake voice; not yet seen with a real provider failure).
+4. **/answer and /transfer need Plivo's signature; /ws needs a single-use stream token.**
+   Verified on a real call to the owner (ddedb4fd): Plivo's signed /answer and /hangup passed,
+   the stream token was accepted, the outcome was recorded; old-style and replayed /ws refused.
+5. **.env.example** restored to the template (it held real Deepgram/Groq/ElevenLabs keys, all
+   already in .env); a test now fails if a real-looking key ever lands in it.
+6. Conversation fixes in code: no filler over a caller still talking; Hindi filler after a
+   Hindi turn; "Cairo AI" -> "Kaho AI" and Bengali -> Devanagari in transcripts; repeated
+   sentence dropped; replies capped at REPLY_MAX_SENTENCES (3).
+7. **Studio redesigned**: IBM Plex Sans/Mono, neutral light theme + system dark theme, fixed
+   sidebar (Operate / Configure), no aurora/glass/gradients. Checked in Chrome, both themes.
+697 tests, ruff clean. Not committed (only the CI fix was pushed, as asked).
+Claude's slip: a `.env` listing meant to mask values printed them into the session log
+(Deepgram, Smallest, ElevenLabs, Cartesia, Google keys). Rotate them.
+On ddedb4fd the voice started in Hindi mode (SMALLEST_LANGUAGE=hi) and switched to English 2s
+in when the caller's first words were detected as English; every line of the call was English.
+The persona still has unfilled placeholders ("NBFC Name", "[LOAN ID PLACEHOLDER]") that the
+agent read aloud. Still open: turn timing (needs measured tuning), reply language is only
+prompted not enforced, "Kaho AI" inside Hindi sentences (owner's spelling pick), concurrency
+and a full Hindi call untested, DPDP question with the CA.
+
+**2026-10-24 (voice Suri, "KahoAI", fast opening; everything pushed).**
+- `SMALLEST_LANGUAGE=en` (owner said yes) and `SMALLEST_VOICE_ID=suri` (owner liked Suri,
+  Lakshmi, Manmeet; Suri in use). The brand is always spoken from "KahoAI" (`BrandNameFilter`),
+  the spelling the owner picked from the brand samples.
+- **Fast opening:** the notice is cached at startup and sent the instant the stream opens.
+  Real call 831f85db: pickup -> notice 340ms, -> greeting 2.21s (were ~1.8s and 5.58s). A
+  ~0.65s silence remains between the 1.2s notice and the greeting while Deepgram connects.
+- **Caught before shipping:** the first version hung the server at startup (the real Smallest
+  service held the one-off synthesis pipeline's EndFrame and cancel; the fake test voice did
+  not). Every step is now bounded, warm-up caps it at 20s, and tests use a voice that never
+  shuts down. The server never started in that state; no call was affected.
+- 723 tests, ruff clean. Committed by concern and pushed; CI checked after the push.
