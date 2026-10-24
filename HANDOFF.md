@@ -12,9 +12,12 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-24 (final). **LLM is `openai/gpt-oss-20b`, effort medium, fallback off,
-GPT-OSS only, no qwen.** gpt-oss-120b ran one real call (`0d5723b4`, 215s) and the owner switched
-back to 20b for speed; the owner will say when to use 120b. Pushed this session (section 2).
+Last updated: 2026-10-24 (final, later). **The voice is Smallest `meher` again (owner's decision), backed up by Google Chirp 3 HD
+Despina**. Google (Leda, then Despina) sounded robotic to the owner on two calls; before that,
+the default had briefly been Google, backed up by Smallest, because Cartesia's free credits ran out (172 of 20K left, most of it spent
+on Claude's own testing). Built test-first (`google_tts.py`, 17 tests), live-checked, server
+restarted on it, **not yet heard on a call and not committed**. LLM is `openai/gpt-oss-20b`,
+effort medium, fallback off, GPT-OSS only, no qwen; the owner will say when to use 120b.
 Before that, the LLM had briefly been `openai/gpt-oss-120b` (effort low), fallback
 `openai/gpt-oss-20b` (owner's decision). The Cartesia name problem was
 traced to Hindi mode, not the voice: `CARTESIA_LANGUAGE` is now `en`, so the greeting says "Kaho
@@ -670,6 +673,18 @@ signature validation below (`eeef867`). Remaining:
      promised to "fix" the name, which it cannot do.
    - "Kaho AI" mispronounced; cause found and partly fixed (see the header and CLEANROOM).
    - Still open after the fix: the name inside Hindi sentences.
+17. **Pen-test of the Google voice, reported not fixed (2026-10-24).**
+   - Run live: a rejected request (bad key; the same would happen past a quota) produces no audio
+     and the service still reports itself usable, so the switch to the Smallest backup likely
+     does not happen; the caller hears silence until the 10s response deadline. Same as Cartesia.
+   - The API key was created unrestricted and was pasted into chat. Restrict it to the
+     Text-to-Speech API in the Google console; anyone holding it can bill the project.
+   - Past 1M characters a month Google bills silently at $30/M: no budget alert or quota cap is
+     set, and the agent does not count characters.
+   - Adds the gRPC/google-cloud stack to `requirements.txt` (`pipecat-ai[...,google]`); CI has
+     not run with it yet.
+   - Not heard by a person: English "Kaho" transcribes as "Caho" on most voices (likely the same
+     sound); Hindi as "कहो".
 16. **From the 120b call `0d5723b4`, reported not fixed (2026-10-24).** Replies too long (cut off
    11 times): cap length in code, not only in `VOICE_RULES`. ~3s waits when the caller pauses
    mid-sentence (4 of 14 turns): the turn-detection ceiling, part of item 4. The default persona
@@ -1108,3 +1123,162 @@ tuned; Sarvam wired in; qwen interrupt crash found and fixed and pushed.
   120b. Server restarted on 20b; `check_providers.py` passes.
 - Committed by concern and pushed at the owner's request; `.env.example` deliberately left out
   (it holds real keys in the working tree). CI result not checked from here.
+
+**2026-10-24 (after the push).**
+- Owner found Cartesia's free credits gone (172 left). Counted: the four Cartesia calls used
+  ~4.5-6K characters; Claude's own benchmarks and probes used ~13-15K, including a deliberate
+  5,000-character stress test. Told the owner; agreed to estimate credit spend before tests.
+- Owner supplied a Google Cloud API key for Chirp 3 HD. Measured first (CLEANROOM), then built
+  `GoogleChirpTTSService` test-first: 11 tests (a real bug caught: two language changes in a row
+  lost the first), 6 for `check_google`, mutations caught. Live through the class: en, hi, bn
+  (kept hi), en, no errors. `TTS_PROVIDER=google`, `GOOGLE_TTS_VOICE=Aoede`,
+  `GOOGLE_TTS_LANGUAGE=en`, `TTS_FALLBACK_PROVIDER=smallest`; `check_providers.py` passes for
+  Deepgram, Google, Groq, Smallest. 373 tests. Server restarted on it. Not committed.
+- Pen-test findings in section 6 item 17.
+- Owner asked for the most natural Hindi Google voice and for latency and spend logging. Leda
+  chosen by a Deepgram-confidence proxy (CLEANROOM). LLM tokens and TTS characters now land in
+  `logs/turns.jsonl` and `latency_summary.py` prints them (3 tests, red first; 376 total). The
+  live tracker shows them too. Groq's streamed usage reaching the log is **not yet seen on a real
+  call**. Server restarted on Leda. Not committed.
+- Two calls on Google (`e39b7374` Leda, `718d2f63` Despina). Owner: "the most robotic voice".
+  Built a phone-quality comparison set (Google Chirp x4, Smallest meher, ElevenLabs Sarah,
+  Cartesia Neha); Gemini TTS needs the "Agent Platform API" enabled and was not sampled.
+- **New, worst bug, not fixed:** on `718d2f63` gpt-oss-20b called `capture_lead` instead of the
+  greeting, with `phone: null`; Groq rejected the whole completion ("parameters for tool
+  capture_lead did not match schema: /phone expected string, but got null"), so the greeting was
+  lost and the caller heard ~14s of silence and "One moment". The same tool-at-greeting bug saved
+  junk leads on every call today. Fix order proposed to the owner: `capture_lead` gating and an
+  optional `phone`, then turn detection (3s waits on every short reply), then `end_call`.
+- Owner switched back to Smallest `meher`; backup is now Google Despina. Server restarted;
+  `check_providers.py` passes for Smallest and Google. Not committed.
+
+**2026-10-24 (capture_lead and end_call fixes).**
+- `capture_lead` (tests first, 5 mutations caught): refused before the caller has said anything,
+  for placeholder values ("?", "unknown", "N/A", a phone with no digits), and for a name the
+  caller never said (Devanagari speech lets a name through, since it cannot be matched).
+  `phone` now allows null in the schema. Root cause found live: on 6 of 12 greeting requests
+  gpt-oss-20b called `capture_lead` instead of greeting (the greeting arrives as a "user"
+  message). `tool_choice: "none"` does not help (Groq: "Tool choice is none, but model called a
+  tool", 4 of 10); sending the greeting request with **no tools** gave 15 of 15 clean greetings.
+  So `build_worker` holds the tools back for the greeting and restores them after the first
+  assistant turn (or the caller's first turn, if the greeting never finished).
+- `end_call` (tests first, 3 mutations caught): the last wrong hang-up (`fc2a2387`) was STT,
+  not the model: the caller said "अच्छा" and nova-3 multi wrote "That's all." (re-transcribed
+  from the recording: `hi` hears "अच्छा"). Code now requires the caller's words since the agent
+  last spoke to contain a goodbye ("bye", "अलविदा", "hang up", ...) or a short no right after
+  the agent asked "anything else?". Otherwise the model is told to keep helping. "That's all"
+  alone no longer ends a call. Tool description aligned.
+- Samples for the owner: all 37 female Hindi voices on Smallest `lightning_v3.1_pro`
+  (`smallest_hi/`), and 7 written forms of the brand name on `meher` (`brand/`). 399 tests.
+  Server restarted. Not committed.
+- Owner asked for a plan (not code) for a local prompt-per-number website; plan given, waiting
+  for "go".
+
+**2026-10-24 (Prompt Studio).**
+- Owner said go. Built test-first (33 tests, 3 security mutations caught): `prompt_store.py`
+  (JSON file `data/number_prompts.json`, gitignored; atomic writes; 8,000-char cap; a corrupt file
+  reads as empty and is never overwritten), `admin.py` + `admin_page.html` (Inter, aubergine,
+  silver, marigold), served on **127.0.0.1:8001**, separate from the ngrok-exposed phone server,
+  refusing any request with a non-local Host, a forwarding header or another site's Origin.
+  Prompts are keyed by our Plivo number (+918065520552, from `PLIVO_FROM_NUMBER`). The phone
+  server reads the store at the start of every call (`server.persona_text_for_call`); a saved
+  prompt wins over `--agent` and the default file; VOICE_RULES still lead; the store can never
+  fail a call. 432 tests, ruff clean. Seen rendering in Chrome. **No call has used a saved prompt
+  yet.** Not committed.
+- Missing before clients: login, version history and undo, preview/test call before a prompt
+  goes live, real storage, hosting with HTTPS and an audit log, per-client number ownership.
+
+**2026-10-24 (Studio: sidebar, Call, Numbers).**
+- Hover-expanding icon sidebar; three sections. **Call**: dial any number from one of our
+  numbers through `scripts/call.py`'s own `preflight` and `dial` (loaded as a module, so the
+  never-retry rule holds), consent checkbox required. **Numbers**: `numbers_store.py`
+  (`data/numbers.json`), providers Plivo, Exotel, Twilio, SIP trunk with their credential fields;
+  our Plivo number seeded from .env without copying its token; a token saved there wins over .env
+  and the phone server now uses it for hang-ups (`server.plivo_auth`); secrets are masked in every
+  API response; Exotel/Twilio/SIP save but show "not connected" and cannot place calls (no
+  telephony for them yet). Row menu: Edit, Set as default, Call from this number, Edit prompt,
+  Delete; "Add new number" dropdown top right opens a per-provider form.
+- Found and fixed while building: the test suite wrote an empty `data/numbers.json` over the real
+  one (server tests drive the call path); `tests/conftest.py` now points every test at temp files,
+  and seeding no longer saves an empty list. 457 tests, ruff clean, checked in Chrome. **No call
+  has been placed from the page yet.** Not committed.
+
+**2026-10-24 (Studio: Contacts, live transcript, alignment).**
+- **Contacts** (`contacts_store.py`, `data/contacts.json`): list with select-all and bulk delete,
+  search, per-row call button and ⋯ menu; a phone-book drawer per contact (numbers with tags,
+  call button and ⋯ edit/delete; shared tags create/edit/delete with a colour palette). Every
+  call button opens a "Call from" pop-up (active numbers only) with a required consent box.
+- **Live transcript** on the Call page, WhatsApp-style (agent left, caller right). The phone
+  server writes live captions into the call's transcript (`LiveCaptions` observer:
+  `TTSTextFrame` = agent words as spoken, `InterimTranscriptionFrame` = caller words as heard),
+  through `CallTranscript.live`, which blanks every digit; the final masked turn replaces each
+  caption. The Studio streams the transcript file as server-sent events
+  (`/api/calls/{id}/stream`, id validated against path traversal); tool lines go out as the tool
+  name only, never their arguments. Plivo's request id is the transcript's file name.
+- Alignment pass: one spacing scale, one header layout, fixed column grids; all "local / this
+  Mac" wording removed (the local-only protection itself is unchanged).
+- Tests first: 23 new (480 total), mutation-checked (digit blanking, caption dedupe, tool-detail
+  hiding, call-id validation). Verified in Chrome with a scripted transcript (live captions,
+  `••` replaced by the final text, states Ringing/Live/Ended) and demo contacts (drawer, tags,
+  call pop-up, consent refusal), all demo data removed after. **Live captions have not been
+  seen on a real call yet.** Not committed.
+
+**2026-10-24 (Studio: versions, call history, calmer icons).**
+- **Prompt versions:** every save is kept (newest first, capped at 50); restore makes it current
+  (and a new version); delete removes it from history; revert-to-default keeps the history.
+- **Call history per contact:** clicking a contact expands its calls, grouped by day, 10/20/25/50
+  per page, each with duration, summary, a transcript viewer and a CSV download. Transcripts now
+  name the other party (`call_party` line, written by `build_worker`); the 15 older calls were
+  matched from Plivo's call records by `scripts/backfill_call_index.py` into
+  `data/call_index.json`. The CSV escapes cells that start like a spreadsheet formula.
+- **Fixes the owner asked for:** a tag created in a contact's phone book now attaches to that
+  contact (contact-level tags) and shows in the list; ⋯ on a contact edits only its name and
+  numbers; the phone book has its own button; icons flattened (no glow, outline call icon).
+- 503 tests (written first, CSV guard mutation-checked), ruff clean, checked in Chrome on real
+  data. Owner already had contact "Aayuu"; Claude added "Aditya Nair" (owner's number) with an
+  "Owner" tag while testing. Not committed.
+
+
+**2026-10-24 (Studio becomes a business app: sign-in, dashboard, agents, prompts table).**
+- **Sign in / sign up** (`auth_store.py`): the first account owns the workspace; later accounts
+  need the owner's invite code (profile). scrypt hashes, sessions as an HttpOnly SameSite=Strict
+  cookie with only its SHA-256 on disk, 7-day expiry, 5 wrong passwords lock an email for 5 min.
+  Every `/api/` route except signing in answers 401 without a session. **The owner has not
+  created their account yet**: the first person to sign up at http://127.0.0.1:8001 becomes owner.
+- **Sidebar order** (Claude's pick): Dashboard, Calls, Contacts | Agents, Prompts, Numbers (daily
+  work first, setup below). Bottom-left: the signed-in user; click for profile (counts, team,
+  invite code, sign out). Top right: `?` tour (10 steps, auto on first sign-in) and notifications
+  (`activity.py`, data/activity.jsonl; each links to where the change happened).
+- **Agents** (`agents_store.py`, data/agents.json): name, description, several prompts (one "in
+  use"), tools (per agent, replacing TOOLS_ENABLED for its calls), call settings (opening line,
+  longest call ≤ the server ceiling, ring time), Test call. Numbers route to an agent for inbound
+  calls; the old per-number prompt was migrated into "Main line agent" (answers +918065520552,
+  history kept). The phone server takes `studio_agent` on /answer and /ws, re-reads the agent at
+  stream start (deleted mid-ring = default persona), and `call_agent` is written to the transcript.
+- **Prompts page** is a table: name (opens it inside its agent), agent, versions, in use, last
+  edited, ⋯ Edit / Change agent / Delete.
+- **Dashboard** (`analytics.py`, `call_outcomes.py`): calls, picked up %, successful % (picked up
+  and the person replied twice or a lead was saved), avg talk time, minutes, how calls ended
+  (picked up / no answer / declined / failed), calls per day, best hour (IST), agents, latest
+  calls. Outcomes come from Plivo's hangup callback (`/hangup` on the phone server, token-checked;
+  `call.py` and the Studio now pass `hangup_url`) and from "Sync with Plivo" (call records,
+  read-only). Not yet seen: a real unanswered call reported by the callback.
+- **Contacts:** last call + outcome per contact, Do not call (enforced by the Studio's dial
+  endpoint only, not `scripts/call.py`), ⋯ Edit opens the side panel with pencil edits for name
+  and numbers (no add-number), tags attach to the contact. Call page fields are one size.
+- **Colours:** purple replaced by deep teal + sea blue (calm, trust-coded in fintech), marigold
+  kept only for calling actions. CSP, X-Frame-Options DENY and no-referrer on the page.
+- 612 tests (written first), ruff clean. Checked in Chrome on a copy of the data on port 8002
+  (sign-up, tour, every page, tag fix, prompt move, notifications, profile, XSS in names).
+  Claude's slip: an early test run (before conftest covered `AGENT_STORE_PATH`) wrote a test
+  agent into the real data/agents.json, which also blocked the migration; deleted and migrated.
+  An attack run left one fake outcome line in data/call_outcomes.jsonl; deleted. Not committed.
+
+**2026-10-24 (medium pen-test findings fixed, pushed).** Owner asked to fix the medium findings
+and push. Webhook bodies capped at 16KB (413; re-attacked: 50MB and chunked bodies refused in
+<0.1s); outcome and activity logs written 0600; owner/member roles (owner alone changes numbers
+and credentials, deletes agents/prompts, bulk-deletes contacts, syncs Plivo); `scripts/call.py`
+refuses Do-not-call numbers. 629 tests. Still open (low): login lockout can be triggered by
+anyone at the machine, forged outcomes by anyone with WEBHOOK_SECRET (Plivo signature check
+not done), invite codes never expire, no password change, CSP allows inline scripts, the
+dashboard reads every transcript per request. `.env.example` (real keys) still uncommitted.

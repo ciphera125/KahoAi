@@ -46,6 +46,20 @@ apps/voice/server.py     phone entrypoint: Plivo calls (in and out) over a webso
 apps/voice/interruptions.py  which caller sounds may interrupt the agent (words, not noise or backchannel)
 apps/voice/duration_limit.py  hard ceiling on any call's length, enforced beside the pipeline
 apps/voice/personas.py   safe lookup of a persona by name (agent names can arrive from the network)
+apps/voice/admin.py      Kaho AI Studio (127.0.0.1:8001, this machine only, behind sign-in): Dashboard, Calls + live
+                         transcript, Contacts, Agents, Prompts, Numbers; notifications and a tour
+apps/voice/auth_store.py  Studio accounts: first is owner, others need its invite code; scrypt, hashed sessions;
+                         only the owner changes numbers/credentials and deletes agents, prompts, contacts in bulk
+apps/voice/agents_store.py  agents, their prompts (versions) and tools/settings; numbers route to agents
+                         (data/agents.json); calls read call_config(), which never raises
+apps/voice/call_outcomes.py  how each call ended (Plivo /hangup callback, Studio dials, Plivo sync)
+apps/voice/analytics.py  every call joined from outcomes + transcripts, and the dashboard's numbers
+apps/voice/activity.py   the Studio's notifications feed (data/activity.jsonl)
+apps/voice/contacts_store.py  contacts, their numbers and tags (data/contacts.json, gitignored)
+apps/voice/call_history.py  calls per contact (from transcripts' call_party line) and transcripts as CSV
+scripts/backfill_call_index.py  one-off: the other party for pre-2026-10-24 calls, from Plivo's records
+apps/voice/numbers_store.py  our numbers and provider credentials (data/numbers.json); secrets masked, only Plivo can call
+apps/voice/prompt_store.py  the per-number prompt from before agents (migrated into agents.json); still a fallback
 scripts/call.py          dial out through Plivo into the same pipeline (--number, --agent)
 apps/voice/recording.py  call audio to recordings/<call_id>.recording.wav, and its deletion after RECORDING_RETENTION_DAYS
 apps/voice/resilience.py  what happens when a provider fails mid-call (backup TTS, apology, hang-up rules)
@@ -91,11 +105,20 @@ headers, never from the billing page.
 
 Silero VAD decides when the caller's turn has ended. Providers are swappable by
 env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
-(deepgram, elevenlabs, sarvam, smallest or cartesia), `TTS_FALLBACK_PROVIDER`
+(deepgram, elevenlabs, sarvam, smallest, cartesia or google), `TTS_FALLBACK_PROVIDER`
 (a backup voice if the first one dies mid-call).
 
-The voice is **Cartesia Sonic, voice Neha** (owner's decision, 2026-10-24, after a
-real call): `TTS_PROVIDER=cartesia`, `CARTESIA_*` vars. `CARTESIA_LANGUAGE=en` on
+The voice is **Smallest `meher`** (owner's decision, 2026-10-24, after hearing
+Google Chirp 3 HD on calls and finding it robotic), backed up by **Google Chirp 3
+HD, voice Despina** (`TTS_FALLBACK_PROVIDER=google`). Google is wired as: `TTS_PROVIDER=google`, `GOOGLE_TTS_API_KEY`, `GOOGLE_TTS_VOICE`
+(bare name), `GOOGLE_TTS_LANGUAGE` (en|hi). Chosen for cost: 1M characters a month
+free, then $30/M, where Cartesia's 20K free credits lasted a few calls. First audio
+~250-390ms. `google_tts.py` authenticates with an API key (Pipecat's own service
+wants a service account) and switches the voice's locale with the language,
+because Google rejects any request whose language and voice locale differ.
+
+Cartesia Sonic, voice Neha, was the voice before that (owner's decision after a
+real call, `CARTESIA_*` vars); its free credits ran out on 2026-10-24. `CARTESIA_LANGUAGE=en` on
 purpose: in Hindi mode every Cartesia voice mangles "Kaho AI" (heard back as
 "Cahu", "Kahoo"), in English mode every voice says it cleanly, and the greeting is
 spoken before the caller has said anything, so it must start in English. Hindi
@@ -113,8 +136,9 @@ python scripts/check_providers.py    # one real call per provider, fails loudly
 TTS_PROVIDER=cartesia python scripts/check_providers.py   # check another voice
 python apps/voice/main.py            # run the agent on your mic and speakers
 python apps/voice/server.py          # run it as a phone server for Plivo (see .env.example)
+python apps/voice/admin.py           # Kaho AI Studio on http://127.0.0.1:8001 (this machine only)
 python scripts/call.py --number +91XXXXXXXXXX --agent sales   # dial out; the server must be up
-python scripts/latency_summary.py    # per-stage latency from logs/turns.jsonl
+python scripts/latency_summary.py    # per-stage latency, LLM tokens and TTS characters from logs/turns.jsonl
 cd apps/voice && venv/bin/pytest -q
 ruff check --config apps/voice/pyproject.toml .
 ```
@@ -145,7 +169,9 @@ is the only writer for call content and masks inside `write`, so a new caller
 cannot forget. Numbers arrive split across turns ("2 3 4" / "5 6 7"), so
 digit-like turns are held and checked together; do not "simplify" that back to
 per-turn masking. Any new store of call content must write through it too.
-The one exception is call audio, which cannot be masked: `recording.py` keeps it
+Live captions (`CallTranscript.live`, written by `LiveCaptions` in `main.py` for the Studio's
+live transcript) blank every digit, because a caption can be one fragment of a number; the
+turn's own masked line replaces it. The one exception is call audio, which cannot be masked: `recording.py` keeps it
 in `recordings/`, in full, by the owner's decision (2026-10-02), and deletes it
 after `RECORDING_RETENTION_DAYS` (default 60). Anything derived from a recording
 (a re-transcription, say) is call content and is masked again.
