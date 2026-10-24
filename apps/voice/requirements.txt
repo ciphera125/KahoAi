@@ -1,3 +1,4 @@
+-c constraints.txt
 pipecat-ai[silero,deepgram,elevenlabs,sarvam,smallest,groq,local,aws,websocket,google]
 python-dotenv
 # Pinned to match the botocore range pipecat-ai[aws]'s aiobotocore requires;
