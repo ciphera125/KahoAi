@@ -22,8 +22,8 @@ has sign-in, dashboard, agents, prompts, contacts, numbers, notifications and a 
 in IBM Plex.
 
 **Running right now (2026-10-25):** the phone server on **port 8765** (`.env` `PORT=8765`).
-Port 8000 is taken by the owner's PayTrace API (`~/PayTrace/backend`), and 8010 by the Node app
-in the untracked `backend/` folder; both bind `127.0.0.1`, which wins over our `0.0.0.0` for
+Port 8000 is taken by the owner's PayTrace API (`~/PayTrace/backend`), and 8020 by the new
+Studio API in `backend/` (it held 8010 briefly on 2026-10-25, then moved); both bind `127.0.0.1`, which wins over our `0.0.0.0` for
 `localhost`, so ngrok silently reached them. The owner's ngrok agent was repointed through its
 local API (`127.0.0.1:4040/api/tunnels`, tunnel `kahoai`) to `localhost:8765`; PayTrace has no
 public address while this holds. Before calling, check the public URL reaches us: an unsigned
@@ -37,7 +37,11 @@ ElevenLabs, Cartesia, Google) and delete the Google key; fill the persona's plac
 Name", "[LOAN ID PLACEHOLDER]"), which the agent reads aloud. `backend/` (an untracked Node
 project, not ours) is deliberately not committed.
 
-**Next technical lever:** pre-connect Deepgram so the ~0.65s gap after the notice goes.
+**Opening (2026-10-25):** notice at 0ms, greeting 1.30-1.49s after pickup on simulated calls
+(Deepgram connects in the background); the caller cannot interrupt the notice or greeting; a
+silent caller hears nothing more until they speak. Not yet timed on a real phone call (the
+network adds ~0.3s). Groq tool-call rejections are retried once without tools; junk leads like
+name "b" are refused.
 
 Owner rules (in `CLAUDE.md`, "How we build"): test-first with the red run shown; pen-test before
 every push and report findings without fixing them; don't ask permission, list it at the end.
@@ -719,7 +723,7 @@ signature validation below (`eeef867`). Remaining:
 ## 7. Gotchas that cost time
 
 - **Other apps on this machine take our port.** PayTrace binds `127.0.0.1:8000` and the
-  `backend/` Node app `127.0.0.1:8010`; either wins over our `0.0.0.0` for `localhost`, so ngrok
+  `backend/` Studio API `127.0.0.1:8020`; either wins over our `0.0.0.0` for `localhost`, so ngrok
   silently forwards to them and the Studio's pre-dial check gets a 404 ("server not started").
   We run on 8765. Check with `lsof -nP -iTCP:<port> -sTCP:LISTEN` after every restart.
 - **The Studio's "WEBHOOK_SECRET does not match" error means any 403** from the pre-dial check,
@@ -1371,3 +1375,65 @@ and a full Hindi call untested, DPDP question with the CA.
   Claude printed `WEBHOOK_SECRET` unmasked in a log line; rotated in `.env`, both servers
   restarted. The `backend/` Node app then took 8010; the phone server moved to **8765**
   (`.env` updated), tunnel repointed. Signed pre-dial check passed (200), nothing dialled.
+
+**2026-10-25 (owner: move the Studio to its own React frontend and Node/Express backend, MVC,
+built to scale; then "complete this session and start the server").** A second session, alongside
+the voice one above.
+- **Built: `backend/`** (untracked, not committed). Node 22+ / Express 5, MVC: `src/models` (SQL
+  only), `src/controllers`, `src/routes`, `src/middleware`, `src/services` (dialler, Plivo sync,
+  V3 signature, live events). PostgreSQL 16 (`kaho_studio`), migrations in `src/db/migrations`.
+  It is a feature-for-feature port of `admin.py` and its stores, so the API matches what
+  `admin_app.js` calls. **Runs now on `127.0.0.1:8020`** (`cd backend && npm start`); its `.env`
+  is `backend/.env` (gitignored, fresh `SECRETS_KEY` / `INTERNAL_API_TOKEN`, call settings copied
+  from the root `.env`, `WEBHOOK_SECRET` re-synced after tonight's rotation).
+- **Scale and durability:** stateless workers (`WEB_CONCURRENCY`, node cluster, graceful
+  shutdown), every query bounded by `statement_timeout`, row locks/transactions instead of
+  whole-file rewrites, sign-in lockout in Postgres (shared, survives restarts), rate limits in
+  Redis when `REDIS_URL` is set, live transcript fanned out across processes via
+  LISTEN/NOTIFY, dashboard and paging done in SQL. Provider credentials encrypted at rest
+  (AES-256-GCM). Old scrypt hashes import as they are, so passwords keep working.
+- **Voice <-> Studio contract (built, not yet used by the voice service):** `/internal/v1`,
+  bearer `INTERNAL_API_TOKEN`: `GET call-config?agent_id=|number=` (never errors), `GET dnc`,
+  `PUT calls/:id` (outcome), `POST calls/:id/events` (transcript lines, re-masked on arrival with
+  a port of `masking.py` checked against Python's output). Until `server.py` calls these, the
+  voice service still reads `data/*.json`, so **the old Studio (8001) remains the one calls obey**.
+- **Data:** `npm run import:legacy` copied data/ and logs/calls into Postgres (1 user, 1 agent,
+  20 calls, 968 transcript lines); safe to re-run.
+- **Tests:** 81 (vitest + supertest on a real Postgres test DB), written first and shown red;
+  lint clean. They include Plivo signatures equal to Python's byte for byte, a fake Plivo and
+  voice server, a never-answering Plivo, masking, and the live stream.
+- **Pen test, run live on the server:** CSRF from another origin 403, DNS-rebinding Host 403,
+  forwarded header 403, internal API without/with a bad token 401, SQL injection in sign-in
+  refused, path traversal in a call id refused, 200KB body 413, login flood 429 by attempt 21,
+  no session tokens or bearer tokens in the log, bad JSON gives no stack. Load: 2,000 parallel
+  connections for 10s, about 15K req/s, no crash, but nearly all were 429: one IP hits the
+  600/min API limit, so real users behind one office NAT would be throttled (finding, not fixed).
+  Reasoned only: contacts list returns every contact (no server paging); the live stream has no
+  per-user cap on open connections; `PUBLIC_SCHEME=http` exists for tests, refused in production.
+- **Not done:** `frontend/` (React) not started; moving `apps/voice`, `recordings/`, `leads/`,
+  `logs/` into a `voice/` folder was deferred because this other session was editing those files;
+  wiring `server.py` to the internal API; nothing committed.
+- Port clash caused here: this backend first bound `127.0.0.1:8010`, which the voice server had
+  just moved to; it now uses 8020 (see the entry above for the voice side).
+
+**2026-10-25 (owner: the bot said "One moment" while I was silent; greeting within 1.5s; the
+first line must always be completed).**
+- Cause, call 892bf848: a nearby voice (Meet audio) was taken for the caller 0.3s into the
+  greeting and cut it to "Hello,"; gpt-oss-20b answered "Hey. I'm with b" with a capture_lead
+  missing `reason`; Groq rejected the turn; no reply, so the filler, then the apology at 10s x2.
+- Fixed, test-first (red shown each time): the caller is muted through notice and greeting;
+  Deepgram connects in the background; a `tool_use_failed` turn is retried once without tools;
+  `capture_lead` has no required fields; a lead name must be a whole 2+ letter word the caller
+  said; "No request specified"-style reasons refused. 743 tests, ruff clean.
+- Measured on 4 simulated calls (real Deepgram/Groq/Smallest through the live server, no phone):
+  greeting heard 1.30-1.49s after pickup (1.80s on 892bf848); 12s of caller silence after it
+  produced no filler.
+- Pen test, run live: speech over notice and greeting ignored; speech after the greeting heard
+  and answered; replayed/made-up stream token, forged signature, wrong secret, unsigned /answer
+  all 403. The bad-lead replay against real Groq: 3 of 12 tried name "b", 0 saved. Findings,
+  not fixed: anything said during the greeting is lost (accepted by the owner); persona
+  placeholders ("[NBFC NAME]", "[LOAN ID PLACEHOLDER]") are read aloud. The tool-rejection retry
+  was not triggered live (Groq did not reject in 8 replays); unit tests only.
+- Simulated calls' transcripts and recordings (fake number +910000000001) were deleted.
+- The backend session plans edits to server.py, recording.py, tools.py (leads writer),
+  scripts/call.py, admin.py; it was told to pull this push first.

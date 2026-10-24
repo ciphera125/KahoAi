@@ -132,9 +132,11 @@ writes it, because the owner chose that spelling by ear (sample b_KahoAI_hi_sent
 (`notice_audio.py`, bounded at `NOTICE_SYNTH_TIMEOUT_SECS`, silence trimmed) and sends it as
 Plivo playAudio the moment a stream opens, before any provider has connected. Measured on a
 real call (831f85db): pickup to notice on the line 340ms (was ~1.8s), to the greeting 2.2s
-(was 5.6s). The caller is muted until the notice ends (`MuteUntil`); the greeting is asked for
-`GREETING_LEAD_SECS` (0.8) before it ends; the notice is written into the recording. Still a
-~0.65s gap after a short notice while Deepgram connects (~1s); pre-connecting it is the next lever.
+(was 5.6s). Deepgram now connects in the background, so the pipeline no longer waits ~1s for
+it: pickup to greeting 1.30-1.49s on simulated calls (2026-10-25). The greeting is asked for
+`GREETING_LEAD_SECS` (0.8) before the notice ends; the notice is written into the recording.
+**The caller is muted through the notice and the whole greeting** (owner, 2026-10-25: the first
+line is always completed; a nearby voice once cut it to "Hello,"). From then on every word is heard.
 
 Webhooks: `/answer`, `/hangup` and `/transfer` need `WEBHOOK_SECRET` *and* Plivo's V3 signature
 (`plivo_signature.py`, checked on a real call 2026-10-24); our own preflight signs its request
