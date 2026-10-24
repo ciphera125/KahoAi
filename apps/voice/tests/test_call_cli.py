@@ -279,3 +279,11 @@ def test_without_a_terminal_it_refuses_unless_told_to_go_ahead(monkeypatch, caps
 def test_an_absurd_ring_timeout_is_rejected(monkeypatch, value):
     net = Net(monkeypatch)
     assert cli("--ring-timeout", value) == 2 and net.posts == []
+
+
+def test_plivo_is_asked_to_report_how_the_call_ended(monkeypatch):
+    net = Net(monkeypatch)
+    assert cli() == 0
+    body = net.posts[0][1]["json"]
+    assert body["hangup_url"].startswith("https://abc.ngrok.app/hangup?token=")
+    assert "peer=%2B919876543210" in body["hangup_url"] and body["hangup_method"] == "POST"

@@ -35,3 +35,6 @@ logs/
 leads/
 # Call recordings hold callers' voices, and any ID number they read out, unmasked.
 recordings/
+
+# Local admin data (prompts saved per number)
+data/

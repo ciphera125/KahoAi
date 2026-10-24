@@ -111,7 +111,7 @@ def _stub_run_call(monkeypatch, on_accept=None):
     so these tests exercise the rate limiter in stream() without needing a
     real pipeline (build_worker needs real provider keys)."""
 
-    async def fake(websocket, token, caller, persona_path, limit):
+    async def fake(websocket, token, caller, persona_path, limit, **_):
         await websocket.accept()
         if on_accept:
             on_accept()

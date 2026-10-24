@@ -24,8 +24,12 @@ from contextlib import asynccontextmanager
 from html import escape
 from urllib.parse import parse_qs, quote
 
+import agents_store
 import aiohttp
+import call_outcomes
+import numbers_store
 import personas
+import prompt_store
 import uvicorn
 from dotenv import load_dotenv
 from duration_limit import configured_ceiling, enforce_max_duration, resolve_max_duration
@@ -184,6 +188,7 @@ def answer_xml(
     apology: str = DEFAULT_APOLOGY,
     agent: str | None = None,
     max_secs: float | None = None,
+    studio_agent: str | None = None,
 ) -> str:
     """The Plivo XML that connects a live call to our websocket.
 
@@ -194,6 +199,8 @@ def answer_xml(
     query = f"token={token}" + (f"&from={quote(caller)}" if caller else "")
     if agent:
         query += f"&agent={quote(agent)}"
+    if studio_agent:
+        query += f"&studio_agent={quote(studio_agent)}"
     if max_secs is not None:
         query += f"&max={max_secs:g}"
     url = escape(f"wss://{host}/ws?{query}")
@@ -274,13 +281,56 @@ async def answer(request: Request, token: str | None = Query(None)):
         return Response(str(e), status_code=400)
 
     peer = clean_caller(first("peer"))
+    # A Studio agent: named by an outbound call from the Studio, or the one our
+    # number routes to for an inbound call. Checked here, so a bad id never rings.
+    studio_agent = first("studio_agent")
+    if studio_agent:
+        config = agents_store.default_store().call_config(studio_agent)
+        if config is None:
+            logger.error("Refusing the call: unknown Studio agent")
+            return Response("unknown agent", status_code=400)
+    elif not peer:
+        studio_agent = agents_store.default_store().agent_for_number(first("To"))
+        config = agents_store.default_store().call_config(studio_agent)
+    else:
+        config = None
+    if config:
+        max_secs = min(max_secs, config["max_secs"])
     caller = peer or clean_caller(first("From"))
     logger.info(f"{'Outbound call to' if peer else 'Inbound call from'} {caller or 'unknown'}")
     apology = env("FAILURE_MESSAGE") or DEFAULT_APOLOGY
     return Response(
-        answer_xml(env("PUBLIC_HOST"), token, caller, apology, agent, max_secs),
+        answer_xml(env("PUBLIC_HOST"), token, caller, apology, agent, max_secs,
+                   config["agent_id"] if config else None),
         media_type="text/xml",
     )
+
+
+@app.api_route("/hangup", methods=["GET", "POST"])
+async def hangup(request: Request, token: str | None = Query(None)):
+    """Plivo's report of how an outbound call ended (picked up, busy, no answer).
+
+    It arrives from the internet, so only the fields we use are kept, each one
+    checked; anything else in it is dropped. Junk is answered 200 and ignored, so
+    Plivo does not retry it."""
+    if not authorized(token):
+        return Response(status_code=403)
+    body = (await request.body())[:8192].decode("utf-8", "replace")
+    params = parse_qs(body)
+    params.update(parse_qs(request.url.query))
+    first = lambda key: (params.get(key) or [None])[0]  # noqa: E731
+    call_id = first("CallUUID") or first("RequestUUID")
+    try:
+        call_outcomes.default_log().record(
+            call_id or "",
+            status=call_outcomes.classify(first("CallStatus"), first("HangupCauseName"),
+                                          first("BillDuration")),
+            cause=first("HangupCauseName"), duration_secs=first("BillDuration"),
+            request_uuid=first("RequestUUID"), peer=clean_caller(first("peer")),
+            direction=first("Direction"), agent_id=first("studio_agent"))
+    except ValueError:
+        logger.warning("Ignoring a hangup report with no usable call id")
+    return Response(status_code=200)
 
 
 async def read_start(websocket: WebSocket) -> dict:
@@ -299,6 +349,7 @@ async def stream(
     caller: str | None = Query(None, alias="from"),
     agent: str | None = Query(None),
     max_secs: float | None = Query(None, alias="max"),
+    studio_agent: str | None = Query(None),
 ):
     if not authorized(token):
         await websocket.close(code=1008)
@@ -328,10 +379,38 @@ async def stream(
         logger.error(f"Rejecting the stream: {e}")
         await websocket.close(code=1011)
         return
+    # Read again, not trusted from the URL: an agent deleted while the phone rang
+    # leaves this call on the default persona rather than failing it.
+    agent_config = agents_store.default_store().call_config(studio_agent)
+    if agent_config:
+        limit = min(limit, agent_config["max_secs"])
     try:
-        await _run_call(websocket, token, caller, persona_path, limit)
+        await _run_call(websocket, token, caller, persona_path, limit, agent_config=agent_config)
     finally:
         ws_limiter().release()
+
+
+def persona_text_for_call(agent_config: dict | None = None) -> str | None:
+    """The prompt this call uses, read fresh for each call: the Studio agent's
+    prompt in use, else the prompt saved for our number before agents existed.
+
+    It wins over an outbound call's --agent: the Studio is where the owner
+    decides what callers hear. None (nothing saved, or the store unreadable)
+    keeps the persona the call would have had anyway.
+    """
+    if agent_config and agent_config.get("prompt"):
+        logger.info(f"Using the Studio agent {agent_config['agent_id']}")
+        return agent_config["prompt"]
+    text = prompt_store.prompt_for_our_number()
+    if text:
+        logger.info(f"Using the prompt saved for {prompt_store.our_number()}")
+    return text
+
+
+def plivo_auth() -> tuple[str | None, str | None]:
+    """Plivo credentials for hanging up and transferring: the ones saved on the
+    admin page if any, else .env, so a token rotated there is used here too."""
+    return numbers_store.plivo_credentials()
 
 
 async def _run_call(
@@ -340,6 +419,7 @@ async def _run_call(
     caller: str | None,
     persona_path: str | None,
     limit: float,
+    agent_config: dict | None = None,
 ) -> None:
     await websocket.accept()
 
@@ -347,7 +427,7 @@ async def _run_call(
     stream_id, call_id = start.get("streamId"), start.get("callId")
     logger.info(f"Call {call_id} connected on stream {stream_id}")
 
-    auth_id, auth_token = env("PLIVO_AUTH_ID"), env("PLIVO_AUTH_TOKEN")
+    auth_id, auth_token = plivo_auth()
     serializer = FailOpenPlivoSerializer(
         stream_id=stream_id,
         call_id=call_id,
@@ -382,7 +462,12 @@ async def _run_call(
         persona_path=persona_path,
         transfer=hand_to_human if transfer_number() else None,
         recording_sample_rate=PHONE_LINE_RATE,
+        persona_text=persona_text_for_call(agent_config),
+        tool_names=agent_config["tools"] if agent_config else None,
+        opening_line=agent_config["opening_line"] if agent_config else None,
     )
+    if agent_config:
+        worker.transcript.event("call_agent", agent_id=agent_config["agent_id"])
 
     async def cancel_pipeline() -> None:
         await worker.cancel(reason="maximum call duration")

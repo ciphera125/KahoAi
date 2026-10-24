@@ -116,6 +116,14 @@ def build_answer_url(cfg: dict, agent: str, number: str, max_secs: float) -> str
     )
 
 
+def build_hangup_url(cfg: dict, number: str, studio_agent: str | None = None) -> str:
+    """Where Plivo reports how the call ended (picked up, busy, no answer)."""
+    return (
+        f"https://{cfg['PUBLIC_HOST']}/hangup?token={quote(cfg['WEBHOOK_SECRET'])}"
+        f"&peer={quote(number)}" + (f"&studio_agent={quote(studio_agent)}" if studio_agent else "")
+    )
+
+
 def redact(url: str, cfg: dict) -> str:
     return url.replace(quote(cfg["WEBHOOK_SECRET"]), "***")
 
@@ -155,7 +163,14 @@ def preflight(answer_url: str, cfg: dict) -> None:
         )
 
 
-def dial(cfg: dict, number: str, answer_url: str, max_secs: float, ring_timeout: int) -> dict:
+def dial(
+    cfg: dict,
+    number: str,
+    answer_url: str,
+    max_secs: float,
+    ring_timeout: int,
+    hangup_url: str | None = None,
+) -> dict:
     """Ask Plivo to place the call. Never retried; see the module docstring."""
     payload = {
         "from": cfg["PLIVO_FROM_NUMBER"],
@@ -166,6 +181,8 @@ def dial(cfg: dict, number: str, answer_url: str, max_secs: float, ring_timeout:
         "time_limit": int(max_secs) + PLIVO_LIMIT_GRACE_SECS,
         "ring_timeout": ring_timeout,
     }
+    if hangup_url:
+        payload.update(hangup_url=hangup_url, hangup_method="POST")
     url = PLIVO_CALL_URL.format(auth_id=cfg["PLIVO_AUTH_ID"])
     unknown = (
         "The call MAY OR MAY NOT have been placed. Check the Plivo console (Logs, Calls) "
@@ -251,7 +268,8 @@ def run(args: argparse.Namespace) -> int:
 
     confirm(number, args.agent, max_secs, args.yes)
     preflight(answer_url, cfg)
-    result = dial(cfg, number, answer_url, max_secs, args.ring_timeout)
+    result = dial(cfg, number, answer_url, max_secs, args.ring_timeout,
+                  hangup_url=build_hangup_url(cfg, number))
     print(f"Call placed to {number}. Plivo request: {result.get('request_uuid', 'unknown')}")
     print("Watch the server terminal for the call. The transcript will be under logs/calls/.")
     return 0
