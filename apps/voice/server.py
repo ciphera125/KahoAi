@@ -8,9 +8,11 @@ stream to wss://<PUBLIC_HOST>/ws. That websocket carries 8kHz mu-law both ways;
 PlivoFrameSerializer converts it to and from the PCM the pipeline works in, and
 tells Plivo to drop queued audio when the caller barges in.
 
-Both routes require WEBHOOK_SECRET as a ?token= query parameter, because the
-server is on the public internet and an open /ws would let anyone run up our
-STT, LLM and TTS bills. The answer XML carries the token into the stream URL.
+The server is on the public internet, and an open /ws would let anyone run up
+our STT, LLM and TTS bills, so: /answer, /hangup and /transfer need WEBHOOK_SECRET
+as ?token= *and* Plivo's V3 signature (the secret alone rides in URLs and logs);
+/ws needs a single-use token that /answer issues for that one call, valid for
+STREAM_TOKEN_SECS, with the call's settings kept here rather than in its URL.
 """
 
 import asyncio
@@ -20,6 +22,8 @@ import json
 import math
 import os
 import re
+import secrets
+import time
 from contextlib import asynccontextmanager
 from html import escape
 from urllib.parse import parse_qs, quote
@@ -27,6 +31,7 @@ from urllib.parse import parse_qs, quote
 import agents_store
 import aiohttp
 import call_outcomes
+import notice_audio
 import numbers_store
 import personas
 import plivo_signature
@@ -37,7 +42,15 @@ from duration_limit import configured_ceiling, enforce_max_duration, resolve_max
 from fastapi import FastAPI, Query, Request, Response, WebSocket
 from groq_usage import log_groq_call
 from loguru import logger
-from main import build_worker, ensure_ca_bundle, env, recordings_dir, require_env
+from main import (
+    build_tts,
+    build_worker,
+    ensure_ca_bundle,
+    env,
+    recording_notice_text,
+    recordings_dir,
+    require_env,
+)
 from pipecat.pipeline.worker import PipelineParams
 from pipecat.serializers.plivo import PlivoFrameSerializer
 from pipecat.transports.websocket.fastapi import FastAPIWebsocketParams, FastAPIWebsocketTransport
@@ -182,29 +195,35 @@ def clean_caller(raw: str | None) -> str | None:
     return digits or None
 
 
-def answer_xml(
-    host: str,
-    token: str,
-    caller: str | None = None,
-    apology: str = DEFAULT_APOLOGY,
-    agent: str | None = None,
-    max_secs: float | None = None,
-    studio_agent: str | None = None,
-) -> str:
-    """The Plivo XML that connects a live call to our websocket.
+STREAM_TOKEN_SECS = 120.0  # Plivo opens the stream within a second of the answer
+_streams: dict[str, tuple[float, dict]] = {}
 
-    The caller's number arrives on this webhook and not on the websocket, so it
-    rides along on the stream URL for the tools to use, as do an outbound call's
-    agent and maximum duration.
-    """
-    query = f"token={token}" + (f"&from={quote(caller)}" if caller else "")
-    if agent:
-        query += f"&agent={quote(agent)}"
-    if studio_agent:
-        query += f"&studio_agent={quote(studio_agent)}"
-    if max_secs is not None:
-        query += f"&max={max_secs:g}"
-    url = escape(f"wss://{host}/ws?{query}")
+
+def issue_stream(call: dict) -> str:
+    """A single-use token for one call's stream. What the answer decided (caller,
+    agent, duration) stays here, keyed by it, so the stream URL carries nothing
+    to tamper with and no shared secret."""
+    now = time.monotonic()
+    for token in [t for t, (expires, _) in _streams.items() if expires < now]:
+        del _streams[token]
+    token = secrets.token_urlsafe(24)
+    _streams[token] = (now + STREAM_TOKEN_SECS, dict(call))
+    return token
+
+
+def claim_stream(token: str | None) -> dict | None:
+    """The call a stream token was issued for, once; None if unknown, used or expired."""
+    if not token or len(token) > 64:
+        return None
+    entry = _streams.pop(token, None)
+    if entry is None or entry[0] < time.monotonic():
+        return None
+    return entry[1]
+
+
+def answer_xml(host: str, stream_token: str, apology: str = DEFAULT_APOLOGY) -> str:
+    """The Plivo XML that connects a live call to our websocket."""
+    url = escape(f"wss://{host}/ws?stream={stream_token}")
     return (
         '<?xml version="1.0" encoding="UTF-8"?>'
         "<Response>"
@@ -232,10 +251,17 @@ def transfer_xml(number: str, message: str = "Connecting you now.") -> str:
 
 
 @app.api_route("/transfer", methods=["GET", "POST"])
-async def transfer(token: str | None = Query(None)):
+async def transfer(request: Request, token: str | None = Query(None)):
     """Plivo fetches this after a transfer request and dials the human."""
     number = transfer_number()
     if not authorized(token) or not number:
+        return Response(status_code=403)
+    body = await read_capped(request)
+    if body is None:
+        return Response(status_code=413)
+    form = parse_qs(body.decode("utf-8", "replace"), keep_blank_values=True)
+    if verify_signatures() and not signed_by_plivo(request, form):
+        logger.warning("Refusing a /transfer request without a valid Plivo signature")
         return Response(status_code=403)
     return Response(transfer_xml(number), media_type="text/xml")
 
@@ -265,8 +291,12 @@ async def answer(request: Request, token: str | None = Query(None)):
     if body is None:
         logger.warning("Refusing an oversized /answer body")
         return Response(status_code=413)
-    params = parse_qs(body.decode("utf-8", "replace"))
-    params.update(parse_qs(request.url.query))
+    form = parse_qs(body.decode("utf-8", "replace"), keep_blank_values=True)
+    if verify_signatures() and not signed_by_plivo(request, form):
+        # WEBHOOK_SECRET alone is not enough: it rides in URLs and logs.
+        logger.warning("Refusing an /answer request without a valid Plivo signature")
+        return Response(status_code=403)
+    params = {**form, **parse_qs(request.url.query)}
     first = lambda key: (params.get(key) or [None])[0]  # noqa: E731
 
     # An outbound call is dialled by scripts/call.py, which names the agent, the
@@ -304,11 +334,10 @@ async def answer(request: Request, token: str | None = Query(None)):
     caller = peer or clean_caller(first("From"))
     logger.info(f"{'Outbound call to' if peer else 'Inbound call from'} {caller or 'unknown'}")
     apology = env("FAILURE_MESSAGE") or DEFAULT_APOLOGY
-    return Response(
-        answer_xml(env("PUBLIC_HOST"), token, caller, apology, agent, max_secs,
-                   config["agent_id"] if config else None),
-        media_type="text/xml",
-    )
+    stream_token = issue_stream({"caller": caller, "agent": agent, "max_secs": max_secs,
+                                 "studio_agent": config["agent_id"] if config else None})
+    return Response(answer_xml(env("PUBLIC_HOST"), stream_token, apology),
+                    media_type="text/xml")
 
 
 MAX_WEBHOOK_BODY = 16 * 1024  # Plivo's form posts are well under 2KB
@@ -389,17 +418,15 @@ async def read_start(websocket: WebSocket) -> dict:
 
 
 @app.websocket("/ws")
-async def stream(
-    websocket: WebSocket,
-    token: str | None = Query(None),
-    caller: str | None = Query(None, alias="from"),
-    agent: str | None = Query(None),
-    max_secs: float | None = Query(None, alias="max"),
-    studio_agent: str | None = Query(None),
-):
-    if not authorized(token):
+async def stream(websocket: WebSocket, stream: str | None = Query(None)):
+    # Only a token /answer issued, once, within STREAM_TOKEN_SECS. The call's
+    # settings come from what /answer decided, never from this URL.
+    call = claim_stream(stream)
+    if call is None:
         await websocket.close(code=1008)
         return
+    caller, agent = call["caller"], call["agent"]
+    max_secs, studio_agent = call["max_secs"], call["studio_agent"]
     ip = client_ip(websocket)
     if reason := ws_limiter().try_accept(ip):
         # loguru's own line already carries a timestamp; name the IP and the
@@ -431,9 +458,22 @@ async def stream(
     if agent_config:
         limit = min(limit, agent_config["max_secs"])
     try:
-        await _run_call(websocket, token, caller, persona_path, limit, agent_config=agent_config)
+        await _run_call(websocket, env("WEBHOOK_SECRET"), caller, persona_path, limit,
+                        agent_config=agent_config)
     finally:
         ws_limiter().release()
+
+
+# The recording notice, synthesised at startup (warm_up) and sent the instant a
+# call's stream opens; see notice_audio.py. None: calls speak it the normal way.
+_prespoken_notice: notice_audio.PrespokenNotice | None = None
+NOTICE_SYNTH_TIMEOUT_SECS = 20.0
+
+
+def prespoken_for_call() -> notice_audio.PrespokenNotice | None:
+    """The cached notice, only if it is still the words this call should hear."""
+    notice = _prespoken_notice
+    return notice if notice and notice.text == recording_notice_text() else None
 
 
 def persona_text_for_call(agent_config: dict | None = None) -> str | None:
@@ -471,6 +511,14 @@ async def _run_call(
 
     start = await read_start(websocket)
     stream_id, call_id = start.get("streamId"), start.get("callId")
+    # The first thing on the line, before any provider has connected: the caller
+    # hears the agent within ~0.5s of picking up instead of ~1.8s.
+    notice_prespoken = None
+    if notice := prespoken_for_call():
+        for message in notice.messages(stream_id):
+            await websocket.send_text(message)
+        notice_prespoken = (notice, time.monotonic())
+        logger.info(f"Call {call_id}: recording notice sent ({notice.duration_secs:.2f}s)")
     logger.info(f"Call {call_id} connected on stream {stream_id}")
 
     auth_id, auth_token = plivo_auth()
@@ -511,6 +559,7 @@ async def _run_call(
         persona_text=persona_text_for_call(agent_config),
         tool_names=agent_config["tools"] if agent_config else None,
         opening_line=agent_config["opening_line"] if agent_config else None,
+        notice_prespoken=notice_prespoken,
     )
     if agent_config:
         worker.transcript.event("call_agent", agent_id=agent_config["agent_id"])
@@ -575,11 +624,22 @@ async def warm_up() -> None:
     Each call still opens its own provider connections (Pipecat owns those); this
     does not pool them. A failure is logged, never fatal: the server is still useful.
     """
-    import time
-
     from main import build_turn_strategies, build_vad
 
     started = time.perf_counter()
+    global _prespoken_notice
+    if text := recording_notice_text():
+        # Bounded as a whole: a voice that hangs must never keep the server from
+        # answering calls. Without the cache, calls speak the notice the old way.
+        try:
+            _prespoken_notice = await asyncio.wait_for(
+                notice_audio.synthesise(text, build_tts(), 24000), NOTICE_SYNTH_TIMEOUT_SECS)
+        except TimeoutError:
+            logger.warning("Caching the recording notice timed out; calls will speak it")
+            _prespoken_notice = None
+        if _prespoken_notice:
+            logger.info(f"Recording notice cached: {_prespoken_notice.duration_secs:.2f}s, "
+                        "sent the moment each call opens")
     build_vad()
     build_turn_strategies().stop  # noqa: B018 - constructs the turn-analysis model
     key = env("GROQ_API_KEY")

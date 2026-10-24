@@ -532,3 +532,121 @@ async def test_if_what_follows_the_speech_fails_the_deadline_watches_the_silence
     await asyncio.sleep(0.2)
     assert h.health.failed and h.health.failed.startswith("response:")
     h.health.finished()
+
+
+# --- a voice that refuses requests hands over to the backup at once -----------------
+
+
+class RetryHarness(Harness):
+    def __init__(self, **kw):
+        self.retries = []
+
+        async def retry():
+            self.retries.append(1)
+
+        super().__init__(retry_reply=retry, retry_after_secs=0.02, **kw)
+
+
+async def test_one_voice_error_with_a_backup_switches_at_once():
+    primary, backup = Svc("a"), Svc("b")
+    h = RetryHarness(tts=[primary, backup])
+    await h.error(primary)
+    assert h.switches == [backup] and h.health.failed is None
+    assert ("provider_failover", {"role": "tts", "cause": "tts error"}) in h.events
+
+
+async def test_the_voice_that_failed_is_not_switched_back_to():
+    primary, backup = Svc("a"), Svc("b")
+    h = RetryHarness(tts=[primary, backup])
+    await h.error(primary)
+    for _ in range(3):
+        await h.error(backup)
+    assert h.switches == [backup]  # never back to the one refusing requests
+    assert h.health.failed and "tts" in h.health.failed
+    h.health.finished()
+
+
+async def test_llm_errors_still_need_a_burst():
+    h = RetryHarness()
+    await h.error(h.llm)
+    assert h.health.failed is None and h.switches == []
+
+
+async def test_a_reply_still_owed_after_a_switch_is_asked_for_again_once():
+    h = RetryHarness(tts=[Svc("a"), Svc("b")])
+    h.health.arm()
+    await h.health.on_switched(h.tts[1])
+    await asyncio.sleep(0.06)
+    assert h.retries == [1]
+    assert ("reply_retried", {}) in h.events
+    h.health.finished()
+
+
+async def test_no_retry_when_the_backup_already_spoke():
+    h = RetryHarness(tts=[Svc("a"), Svc("b")])
+    h.health.arm()
+    await h.health.on_switched(h.tts[1])
+    h.health.bot_started()
+    await asyncio.sleep(0.06)
+    assert h.retries == []
+    h.health.finished()
+
+
+async def test_no_retry_when_no_reply_was_owed():
+    h = RetryHarness(tts=[Svc("a"), Svc("b")])
+    await h.health.on_switched(h.tts[1])
+    await asyncio.sleep(0.06)
+    assert h.retries == []
+
+
+# --- the caller kept talking: no filler, no missed reply ----------------------------
+
+
+async def test_no_filler_while_the_caller_is_still_talking():
+    # Seen live: "One moment." played over a caller who had paused mid-sentence.
+    h, spoken = filler_harness()
+    h.health.arm()  # their turn looked finished...
+    await asyncio.sleep(0.02)
+    h.health.caller_resumed()  # ...but they carried on
+    await asyncio.sleep(0.4)  # past the filler and the whole deadline
+    assert spoken == [] and h.health.failed is None
+    assert ("filler_spoken", {"after_secs": 0.05}) not in h.events
+    h.health.finished()
+
+
+async def test_a_caller_who_resumes_then_stops_is_owed_a_reply_again():
+    h, spoken = filler_harness()
+    h.health.arm()
+    h.health.caller_resumed()
+    h.health.arm()
+    await asyncio.sleep(0.15)
+    assert spoken == ["One moment."]
+    h.health.finished()
+
+
+async def test_the_caller_talking_does_not_wipe_out_earlier_misses():
+    h, _ = filler_harness(max_missed_responses=2)
+    h.health.arm()
+    await asyncio.sleep(0.35)  # one missed reply
+    h.health.caller_resumed()
+    h.health.arm()
+    await asyncio.sleep(0.35)  # a second one in a row
+    assert h.health.failed and "no reply" in h.health.failed
+    h.health.finished()
+
+
+# --- the filler speaks the caller's language ----------------------------------------
+
+
+async def test_the_filler_line_can_follow_the_caller():
+    spoken = []
+
+    async def say(text):
+        spoken.append(text)
+
+    h = Harness(response_deadline_secs=0.3, say=say, filler="One moment.",
+                filler_after_secs=0.05, filler_for=lambda: "एक सेकंड।")
+    h.health.arm()
+    await asyncio.sleep(0.15)
+    assert spoken == ["एक सेकंड।"]
+    h.health.finished()

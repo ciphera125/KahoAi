@@ -33,13 +33,19 @@ def base_string(method: str, url: str, body: dict) -> str:
     return f"{bare}?{query}" + ("." if query else "") + _fields(body)
 
 
+def sign(method: str, url: str, body: dict, nonce: str, auth_token: str) -> str:
+    """The signature Plivo would send; used by our own preflight request, which
+    must pass the same check as Plivo's."""
+    message = f"{base_string(method, url, body or {})}.{nonce}".encode("utf-8")
+    return base64.b64encode(
+        hmac.new(auth_token.encode("utf-8"), message, hashlib.sha256).digest()).decode()
+
+
 def valid(method: str, url: str, body: dict, nonce: str | None, signature: str | None,
           auth_token: str | None) -> bool:
     """Whether `signature` is Plivo's for this request. `body` is the parsed form,
     as parse_qs gives it (a list per key)."""
     if not (nonce and signature and auth_token):
         return False
-    message = f"{base_string(method, url, body or {})}.{nonce}".encode("utf-8")
-    expected = base64.b64encode(
-        hmac.new(auth_token.encode("utf-8"), message, hashlib.sha256).digest()).decode()
+    expected = sign(method, url, body, nonce, auth_token)
     return any(hmac.compare_digest(expected, s.strip()) for s in signature.split(","))

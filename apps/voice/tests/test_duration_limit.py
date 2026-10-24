@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import threading
 from types import SimpleNamespace
 
@@ -12,6 +13,17 @@ from loguru import logger
 from starlette.websockets import WebSocketDisconnect
 from transcript import CallTranscript
 
+
+def stream_url(**call) -> str:
+    """A /ws URL with a token as /answer would issue it for this call."""
+    base = {"caller": None, "agent": None, "max_secs": None, "studio_agent": None}
+    return f"/ws?stream={server.issue_stream({**base, **call})}"
+
+
+def answered(resp) -> dict:
+    """What /answer decided for the call, as /ws will receive it."""
+    token = re.search(r"stream=([A-Za-z0-9_-]+)", resp.text).group(1)
+    return server._streams[token][1]
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
@@ -227,7 +239,7 @@ def wait_for_server_to_close(client, url, timeout=5.0):
 
 def test_the_real_call_handler_hangs_up_when_the_maximum_duration_passes(call_env):
     client = TestClient(server.app)
-    outcome, finished = wait_for_server_to_close(client, "/ws?token=s3cret&max=0.3")
+    outcome, finished = wait_for_server_to_close(client, stream_url(max_secs=0.3))
     assert finished, "the call was still running long after its maximum duration"
     assert "closed" in outcome, outcome
     assert call_env.hangups == ["FailOpenPlivoSerializer"]  # Plivo was told to hang up
@@ -241,14 +253,14 @@ def test_the_real_call_handler_hangs_up_when_the_maximum_duration_passes(call_en
 def test_the_server_ceiling_applies_when_the_stream_asks_for_more(call_env, monkeypatch):
     monkeypatch.setenv("MAX_CALL_DURATION_SECS", "0.3")
     client = TestClient(server.app)
-    _, finished = wait_for_server_to_close(client, "/ws?token=s3cret&max=9999")
+    _, finished = wait_for_server_to_close(client, stream_url(max_secs=9999))
     assert finished and call_env.hangups
 
 
 def test_the_default_ceiling_applies_to_a_call_that_names_no_limit(call_env, monkeypatch):
     monkeypatch.setenv("MAX_CALL_DURATION_SECS", "0.3")
     client = TestClient(server.app)
-    _, finished = wait_for_server_to_close(client, "/ws?token=s3cret")
+    _, finished = wait_for_server_to_close(client, stream_url())
     assert finished and call_env.hangups
 
 
@@ -259,7 +271,7 @@ def test_a_call_that_ends_by_itself_is_not_hung_up_again(call_env, monkeypatch):
 
     monkeypatch.setattr(server, "WorkerRunner", QuickRunner)
     client = TestClient(server.app)
-    with client.websocket_connect("/ws?token=s3cret&max=0.2") as ws:
+    with client.websocket_connect(stream_url(max_secs=0.2)) as ws:
         ws.send_text(json.dumps({"event": "start", "start": {"streamId": "S", "callId": "C2"}}))
         threading.Event().wait(0.5)  # well past the limit
     assert call_env.hangups == []
@@ -393,7 +405,8 @@ def client(monkeypatch):
 def test_an_outbound_answer_carries_agent_peer_and_max(client):
     resp = client.post("/answer?token=s3cret&agent=sales&peer=%2B919876543210&max=120")
     assert resp.status_code == 200
-    assert "from=%2B919876543210&amp;agent=sales&amp;max=120</Stream>" in resp.text
+    assert answered(resp) == {"caller": "+919876543210", "agent": "sales", "max_secs": 120,
+                              "studio_agent": None}
 
 
 def test_the_callee_is_the_number_the_tools_use_for_an_outbound_call(client):
@@ -402,7 +415,7 @@ def test_the_callee_is_the_number_the_tools_use_for_an_outbound_call(client):
         content="From=%2B912200000000&To=%2B919876543210",
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
-    assert "from=%2B919876543210" in resp.text and "912200000000" not in resp.text
+    assert answered(resp)["caller"] == "+919876543210"
 
 
 def test_an_unknown_agent_is_refused_without_touching_the_server(client):
@@ -413,8 +426,8 @@ def test_an_unknown_agent_is_refused_without_touching_the_server(client):
 
 def test_the_answer_clamps_a_requested_duration_to_the_ceiling(client, monkeypatch):
     monkeypatch.setenv("MAX_CALL_DURATION_SECS", "200")
-    assert "max=200</Stream>" in client.post("/answer?token=s3cret&max=5000").text
-    assert "max=60</Stream>" in client.post("/answer?token=s3cret&max=60").text
+    assert answered(client.post("/answer?token=s3cret&max=5000"))["max_secs"] == 200
+    assert answered(client.post("/answer?token=s3cret&max=60"))["max_secs"] == 60
 
 
 def test_a_garbage_duration_is_refused(client):
@@ -423,6 +436,6 @@ def test_a_garbage_duration_is_refused(client):
 
 def test_a_stream_with_an_unknown_agent_is_closed_and_the_server_survives(client):
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/ws?token=s3cret&agent=nope") as ws:
+        with client.websocket_connect(stream_url(agent="nope")) as ws:
             ws.receive_text()
     assert client.post("/answer?token=s3cret").status_code == 200

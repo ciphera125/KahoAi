@@ -36,7 +36,7 @@ class Net:
     """Records every network call the script makes, and returns scripted results."""
 
     def __init__(self, monkeypatch, get=None, post=None):
-        self.gets, self.posts = [], []
+        self.gets, self.posts, self.get_kwargs = [], [], []
         self._get, self._post = get, post
         monkeypatch.setattr(call, "_get", self.get)
         monkeypatch.setattr(call, "_post", self.post)
@@ -46,8 +46,9 @@ class Net:
             raise scripted
         return scripted
 
-    def get(self, url):
+    def get(self, url, **kw):
         self.gets.append(url)
+        self.get_kwargs.append(kw)
         return self._result(self._get or resp(200, "<Response><Stream/></Response>"))
 
     def post(self, url, **kw):
@@ -181,7 +182,8 @@ def test_a_server_that_is_not_ready_stops_the_call_before_it_is_dialled(
 
 def test_the_preflight_happens_before_the_dial(monkeypatch):
     order = []
-    monkeypatch.setattr(call, "_get", lambda url: order.append("preflight") or resp(200, "<Stream"))
+    monkeypatch.setattr(call, "_get",
+                        lambda url, **kw: order.append("preflight") or resp(200, "<Stream"))
     monkeypatch.setattr(
         call, "_post", lambda url, **kw: order.append("dial") or resp(201, json={})
     )
@@ -298,3 +300,13 @@ def test_a_do_not_call_contact_is_refused_before_anything_is_sent(monkeypatch, t
     net = Net(monkeypatch)
     assert cli() == 2
     assert net.gets == [] and net.posts == []
+
+
+def test_the_preflight_signs_its_request_the_way_plivo_does(monkeypatch):
+    import plivo_signature
+
+    net = Net(monkeypatch)
+    assert cli() == 0
+    url, h = net.gets[0], net.get_kwargs[0]["headers"]
+    assert plivo_signature.valid("GET", url, {}, h["X-Plivo-Signature-V3-Nonce"],
+                                 h["X-Plivo-Signature-V3"], "tok-secret")

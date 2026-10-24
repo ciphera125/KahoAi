@@ -10,7 +10,13 @@ turn every way a call can go quiet into something defined:
    apology if TTS still works, otherwise the line is handed to Plivo's own
    text-to-speech (see server.py), so the caller hears something either way.
 3. Errors that never mark a service unusable are caught by a rate check: too
-   many in a short window counts as failure.
+   many in a short window counts as failure. The voice is the exception: a TTS
+   that refuses a request (a 402, a spent quota) still calls itself usable, so
+   Pipecat's switcher never moves off it, and the caller would hear nothing for
+   the whole response deadline. One such error moves the call to the backup
+   voice at once, and the voice that failed is not switched back to.
+   After any voice switch, a reply the caller is still owed (nothing has been
+   spoken since their turn) is asked for again, so the backup says it.
 4. Failures that raise no error at all, such as a hung request, are caught by a
    response deadline: after the caller finishes speaking, the bot must start
    talking within RESPONSE_DEADLINE_SECS, and missing it twice in a row ends the
@@ -41,6 +47,8 @@ from pipecat.utils.errors import ErrorCategory
 DEFAULT_FILLER = "One moment."
 # Speak the filler if the reply is this slow, well before the deadline gives up.
 FILLER_AFTER_SECS = 3.0
+# After a voice switch, how long to wait for the new voice before asking again.
+RETRY_AFTER_SECS = 1.0
 
 DEFAULT_APOLOGY = "Sorry, we're having a technical problem. Please call back in a few minutes."
 
@@ -92,7 +100,10 @@ class CallHealth:
         abort: Callable[[bool], Awaitable[None]],
         switch_to: Callable[[object], Awaitable[None]] | None = None,
         say: Callable[[str], Awaitable[None]] | None = None,
+        retry_reply: Callable[[], Awaitable[None]] | None = None,
+        retry_after_secs: float = RETRY_AFTER_SECS,
         filler: str = DEFAULT_FILLER,
+        filler_for: Callable[[], str] | None = None,
         filler_after_secs: float = FILLER_AFTER_SECS,
         wrappers: dict[str, list] | None = None,
         apology: str = DEFAULT_APOLOGY,
@@ -111,7 +122,13 @@ class CallHealth:
         self._abort = abort
         self._switch_to = switch_to
         self._say = say
+        self._retry_reply = retry_reply
+        self._retry_after = retry_after_secs
+        # Voices moved off after refusing a request; never switched back to.
+        self._abandoned: set[int] = set()
         self._filler = filler
+        # Chooses the line at the moment it is said, so it can follow the caller.
+        self._filler_for = filler_for
         self._filler_after = filler_after_secs
         # True from the moment the filler is queued until its own audio starts, so
         # that audio is not mistaken for the reply and does not disarm the deadline.
@@ -154,7 +171,7 @@ class CallHealth:
 
     def _other_usable(self, role: str, processor):
         for s in self._roles.get(role, []):
-            if s is not processor and s.is_usable:
+            if s is not processor and s.is_usable and id(s) not in self._abandoned:
                 return s
         return None
 
@@ -190,6 +207,17 @@ class CallHealth:
             self._record("provider_failover", role=role)
             return
 
+        if id(processor) in self._abandoned:
+            return  # already moved off it; what it says now changes nothing
+        if role == "tts" and self._switch_to is not None:
+            backup = self._other_usable(role, processor)
+            if backup is not None:
+                logger.error(f"The voice refused a request ({why}); switching to the backup")
+                self._abandoned.add(id(processor))
+                self._record("provider_failover", role="tts", cause="tts error")
+                await self._switch_to(backup)
+                return
+
         # Transient errors: one or two are normal, a burst is a dead provider.
         now = self._clock()
         recent = self._errors[role]
@@ -207,6 +235,35 @@ class CallHealth:
         else:
             await self.fail(role, f"{self._threshold} {role} errors within {self._window:g}s")
 
+    async def on_switched(self, service) -> None:
+        """The voice switcher moved to `service` (on its own or because we asked).
+        If the caller is still owed a reply, ask for it again once the switch has
+        settled, unless the new voice has started speaking by then."""
+        if self.failed or self._closed or self._retry_reply is None or not self.reply_due:
+            return
+        task = asyncio.create_task(self._retry_if_still_owed())
+        self._rechecks.add(task)
+        task.add_done_callback(self._rechecks.discard)
+
+    @property
+    def reply_due(self) -> bool:
+        """The caller's turn (or the call's start) is waiting for the bot to speak."""
+        return self._watch_task is not None
+
+    async def _retry_if_still_owed(self) -> None:
+        try:
+            await asyncio.sleep(self._retry_after)
+        except asyncio.CancelledError:
+            return
+        if self.failed or self._closed or not self.reply_due:
+            return
+        logger.warning("The reply was lost with the old voice; asking for it again")
+        self._record("reply_retried")
+        try:
+            await self._retry_reply()
+        except Exception as e:
+            logger.error(f"Could not ask for the reply again: {safe_reason(e)}")
+
     async def _recheck(self, role: str, why: str) -> None:
         try:
             await asyncio.sleep(self._recheck_secs)
@@ -223,6 +280,17 @@ class CallHealth:
             return
         self.disarm(reset_misses=False)
         self._watch_task = asyncio.create_task(self._watch())
+
+    def caller_resumed(self) -> None:
+        """The caller started talking again. Whatever reply was due waits for the
+        end of this turn instead, so no filler or missed reply is counted against
+        a caller who only paused mid-sentence (seen live: "One moment." played
+        over them). Earlier misses still count."""
+        if self._filler_pending:
+            return  # the filler is already on its way; its own audio ends that
+        if self._watch_task:
+            self._watch_task.cancel()
+            self._watch_task = None
 
     def after_next_speech(self, then: Callable[[], Awaitable[None]]) -> None:
         """Run `then` once the bot's next speech has started and finished (the
@@ -298,7 +366,7 @@ class CallHealth:
         self._record("filler_spoken", after_secs=self._filler_after)
         self._filler_pending = True
         try:
-            await self._say(self._filler)
+            await self._say(self._filler_for() if self._filler_for else self._filler)
         except Exception as e:
             # The deadline still runs, so a filler that cannot be spoken costs nothing.
             self._filler_pending = False

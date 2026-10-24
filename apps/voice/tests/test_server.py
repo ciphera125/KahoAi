@@ -1,7 +1,21 @@
+import re
+
 import pytest
 import server
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
+
+
+def stream_url(**call) -> str:
+    """A /ws URL with a token as /answer would issue it for this call."""
+    base = {"caller": None, "agent": None, "max_secs": None, "studio_agent": None}
+    return f"/ws?stream={server.issue_stream({**base, **call})}"
+
+
+def answered(resp) -> dict:
+    """What /answer decided for the call, as /ws will receive it."""
+    token = re.search(r"stream=([A-Za-z0-9_-]+)", resp.text).group(1)
+    return server._streams[token][1]
 
 
 @pytest.fixture
@@ -28,7 +42,9 @@ def test_answer_streams_call_audio_to_our_websocket(client):
     assert resp.headers["content-type"].startswith("text/xml")
     assert 'bidirectional="true"' in resp.text
     assert 'contentType="audio/x-mulaw;rate=8000"' in resp.text
-    assert "/ws?token=s3cret&amp;from=%2B919999999999&amp;max=600</Stream>" in resp.text
+    assert ">wss://kaho.example.com/ws?stream=" in resp.text and "s3cret" not in resp.text
+    assert answered(resp) == {"caller": "+919999999999", "agent": None, "max_secs": 600,
+                              "studio_agent": None}
 
 
 def test_answer_works_for_get_too(client):
@@ -43,7 +59,7 @@ def test_no_secret_configured_rejects_everything(client, monkeypatch):
 
 def test_websocket_rejects_bad_token(client):
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/ws?token=wrong"):
+        with client.websocket_connect("/ws?stream=wrong"):
             pass
 
 
@@ -54,13 +70,11 @@ def test_callers_number_from_the_post_form_rides_on_the_stream_url(client):
         content="From=%2B919876543210&To=%2B918000000000&CallUUID=abc",
         headers={"content-type": "application/x-www-form-urlencoded"},
     )
-    assert "/ws?token=s3cret&amp;from=%2B919876543210&amp;max=600</Stream>" in resp.text
+    assert answered(resp)["caller"] == "+919876543210"
 
 
 def test_no_caller_number_means_no_from_param(client):
-    assert ">wss://kaho.example.com/ws?token=s3cret&amp;max=600</Stream>" in client.post(
-        "/answer?token=s3cret"
-    ).text
+    assert answered(client.post("/answer?token=s3cret"))["caller"] is None
 
 
 def test_hostile_caller_value_is_reduced_to_digits():
@@ -123,7 +137,7 @@ def _stub_run_call(monkeypatch, on_accept=None):
 def test_a_normal_connection_passes_the_rate_limiter_and_is_handled(client, monkeypatch):
     accepted = []
     _stub_run_call(monkeypatch, on_accept=lambda: accepted.append(1))
-    with client.websocket_connect("/ws?token=s3cret"):
+    with client.websocket_connect(stream_url()):
         pass
     assert accepted == [1]
 
@@ -133,12 +147,12 @@ def test_a_connection_over_the_per_ip_limit_is_rejected(client, monkeypatch):
     monkeypatch.setenv("WS_MAX_CONCURRENT_CALLS", "100")
     _stub_run_call(monkeypatch)
 
-    with client.websocket_connect("/ws?token=s3cret"):
+    with client.websocket_connect(stream_url()):
         pass
-    with client.websocket_connect("/ws?token=s3cret"):
+    with client.websocket_connect(stream_url()):
         pass
     with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect("/ws?token=s3cret"):
+        with client.websocket_connect(stream_url()):
             pass
     assert exc.value.code == 1013
 
@@ -150,10 +164,10 @@ def test_a_rejection_is_logged_with_the_ip_and_the_limit(client, monkeypatch):
     warnings = []
     monkeypatch.setattr(server.logger, "warning", lambda msg: warnings.append(msg))
 
-    with client.websocket_connect("/ws?token=s3cret"):
+    with client.websocket_connect(stream_url()):
         pass
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/ws?token=s3cret"):
+        with client.websocket_connect(stream_url()):
             pass
 
     assert len(warnings) == 1
@@ -176,7 +190,7 @@ def test_a_connection_over_the_global_concurrent_cap_is_rejected(client, monkeyp
     assert server.ws_limiter().try_accept("9.9.9.9") is None
 
     with pytest.raises(WebSocketDisconnect) as exc:
-        with client.websocket_connect("/ws?token=s3cret"):
+        with client.websocket_connect(stream_url()):
             pass
     assert exc.value.code == 1013
 
@@ -189,9 +203,9 @@ def test_rejected_attempts_do_not_hold_the_global_slot_open(client, monkeypatch)
     accepted = []
     _stub_run_call(monkeypatch, on_accept=lambda: accepted.append(1))
 
-    with client.websocket_connect("/ws?token=s3cret"):
+    with client.websocket_connect(stream_url()):
         pass
     with pytest.raises(WebSocketDisconnect):
-        with client.websocket_connect("/ws?token=s3cret"):
+        with client.websocket_connect(stream_url()):
             pass
     assert accepted == [1]

@@ -20,6 +20,12 @@ def client(monkeypatch, tmp_path):
     return TestClient(server.app)
 
 
+def stream_token(xml: str) -> str:
+    import re
+
+    return re.search(r"stream=([A-Za-z0-9_-]+)", xml).group(1)
+
+
 @pytest.fixture
 def agent():
     store = agents_store.default_store()
@@ -31,15 +37,17 @@ def agent():
 
 def test_an_outbound_studio_agent_rides_on_to_the_stream(client, agent):
     r = client.post(f"/answer?token=s3cret&studio_agent={agent['id']}&peer=%2B919876543210")
-    assert r.status_code == 200 and f"studio_agent={agent['id']}" in r.text
-    assert "max=120" in r.text  # the agent's own limit, under the server ceiling
+    assert r.status_code == 200
+    call = server._streams[stream_token(r.text)][1]
+    assert call["studio_agent"] == agent["id"]
+    assert call["max_secs"] == 120  # the agent's own limit, under the server ceiling
 
 
 def test_an_inbound_call_gets_the_agent_its_number_routes_to(client, agent):
     agents_store.default_store().route_number(OURS, agent["id"])
     r = client.post("/answer?token=s3cret", content=f"From=%2B919876543210&To={OURS[1:]}",
                     headers={"content-type": "application/x-www-form-urlencoded"})
-    assert f"studio_agent={agent['id']}" in r.text
+    assert server._streams[stream_token(r.text)][1]["studio_agent"] == agent["id"]
 
 
 @pytest.mark.parametrize("bad", ["ag_000000000000", "..%2F..%2F.env", "x" * 200])
@@ -57,7 +65,8 @@ def test_the_stream_hands_the_agents_config_to_the_call(client, agent, monkeypat
         await websocket.close()
 
     monkeypatch.setattr(server, "_run_call", fake)
-    with client.websocket_connect(f"/ws?token=s3cret&studio_agent={agent['id']}&max=600"):
+    token = stream_token(client.post(f"/answer?token=s3cret&studio_agent={agent['id']}").text)
+    with client.websocket_connect(f"/ws?stream={token}"):
         pass
     assert seen["config"]["prompt"] == "You are Riya, reminding about EMIs."
     assert seen["config"]["tools"] == ["end_call"]
@@ -73,8 +82,9 @@ def test_an_agent_deleted_mid_ring_falls_back_instead_of_failing(client, agent, 
         await websocket.close()
 
     monkeypatch.setattr(server, "_run_call", fake)
+    token = stream_token(client.post(f"/answer?token=s3cret&studio_agent={agent['id']}").text)
     agents_store.default_store().delete_agent(agent["id"])
-    with client.websocket_connect(f"/ws?token=s3cret&studio_agent={agent['id']}"):
+    with client.websocket_connect(f"/ws?stream={token}"):
         pass
     assert seen["config"] is None
 
@@ -176,3 +186,82 @@ def test_a_hangup_with_the_secret_but_no_valid_signature_is_refused(signed, head
 def test_signatures_are_checked_unless_switched_off(monkeypatch):
     monkeypatch.delenv("PLIVO_VERIFY_SIGNATURE", raising=False)
     assert server.verify_signatures() is True
+
+
+# --- /answer must be Plivo's, and /ws needs the single-use token it hands out --------
+
+
+def test_an_unsigned_answer_is_refused_even_with_the_secret(signed):
+    assert signed.post("/answer?token=s3cret").status_code == 403
+
+
+def test_a_signed_answer_gets_a_stream_url_with_no_secret_in_it(signed):
+    base = "https://kaho.example.com/answer?token=s3cret.From+919876543210"
+    r = signed.post("/answer?token=s3cret", content="From=%2B919876543210",
+                    headers={"content-type": "application/x-www-form-urlencoded",
+                             "X-Plivo-Signature-V3": plivo_sign(base),
+                             "X-Plivo-Signature-V3-Nonce": "n1"})
+    assert r.status_code == 200
+    assert "s3cret" not in r.text and "stream=" in r.text
+
+
+def test_a_stream_token_works_once(client, monkeypatch):
+    seen = []
+
+    async def fake(websocket, token, caller, persona_path, limit, agent_config=None):
+        seen.append(caller)
+        await websocket.accept()
+        await websocket.close()
+
+    monkeypatch.setattr(server, "_run_call", fake)
+    token = stream_token(client.post("/answer?token=s3cret&peer=%2B919876543210").text)
+    with client.websocket_connect(f"/ws?stream={token}"):
+        pass
+    assert seen == ["+919876543210"]
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/ws?stream={token}") as ws:
+            ws.receive_text()
+    assert seen == ["+919876543210"]
+
+
+@pytest.mark.parametrize("query", ["token=s3cret", "stream=made-up", "stream=",
+                                   "token=s3cret&from=%2B910000000000"])
+def test_the_stream_refuses_anything_but_a_live_token(client, query):
+    from starlette.websockets import WebSocketDisconnect
+
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/ws?{query}") as ws:
+            ws.receive_text()
+
+
+def test_a_stream_token_expires(client, monkeypatch):
+    from starlette.websockets import WebSocketDisconnect
+
+    token = stream_token(client.post("/answer?token=s3cret").text)
+    later = server.time.monotonic() + server.STREAM_TOKEN_SECS + 1
+    monkeypatch.setattr(server.time, "monotonic", lambda: later)
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(f"/ws?stream={token}") as ws:
+            ws.receive_text()
+
+
+def test_the_url_cannot_change_what_the_answer_decided(client, monkeypatch):
+    seen = {}
+
+    async def fake(websocket, token, caller, persona_path, limit, agent_config=None):
+        seen.update(caller=caller, limit=limit)
+        await websocket.accept()
+        await websocket.close()
+
+    monkeypatch.setattr(server, "_run_call", fake)
+    token = stream_token(client.post("/answer?token=s3cret&peer=%2B919876543210&max=60").text)
+    with client.websocket_connect(f"/ws?stream={token}&from=%2B910000000000&max=600"):
+        pass
+    assert seen == {"caller": "+919876543210", "limit": 60}
+
+
+def test_an_unsigned_transfer_is_refused(signed, monkeypatch):
+    monkeypatch.setenv("TRANSFER_NUMBER", "+919000000001")
+    assert signed.post("/transfer?token=s3cret").status_code == 403

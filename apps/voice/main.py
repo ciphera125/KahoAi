@@ -1,7 +1,7 @@
 """Kaho AI voice agent entrypoint.
 
 A terminal-only pipeline: your mic/speakers -> Deepgram (STT) -> Groq (LLM)
--> Deepgram, ElevenLabs, Sarvam, Smallest, Cartesia or Google (TTS), with Silero VAD
+-> Deepgram, ElevenLabs, Sarvam, Smallest or Cartesia (TTS), with Silero VAD
 driving turn-taking. No web server, no browser — run it with `python main.py`
 (or `./scripts/run_agent.sh`) and talk.
 
@@ -11,6 +11,7 @@ voices are English-only. Switch to ElevenLabs for Hindi and the other Indian
 languages.
 """
 
+import array
 import asyncio
 import json
 import os
@@ -37,7 +38,9 @@ from pipecat.frames.frames import (
     Frame,
     InterimTranscriptionFrame,
     InterruptionFrame,
+    LLMFullResponseStartFrame,
     LLMRunFrame,
+    LLMTextFrame,
     ManuallySwitchServiceFrame,
     MetricsFrame,
     TranscriptionFrame,
@@ -69,7 +72,7 @@ from pipecat.services.smallest.tts import SmallestTTSService
 from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
-from pipecat.turns.user_mute import MuteUntilFirstBotCompleteUserMuteStrategy
+from pipecat.turns.user_mute import BaseUserMuteStrategy, MuteUntilFirstBotCompleteUserMuteStrategy
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.utils.http import connection_limits
 from pipecat.utils.text.base_text_filter import BaseTextFilter
@@ -136,10 +139,10 @@ guess at a name or a number.
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
 SUPPORTED_LLM_PROVIDERS = ("groq",)
-SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam", "smallest", "cartesia", "google")
+SUPPORTED_TTS_PROVIDERS = ("deepgram", "elevenlabs", "sarvam", "smallest", "cartesia")
 # Voices that speak more than one language, so worth retuning to the caller's.
 # Aura is English-only.
-MULTILINGUAL_TTS_PROVIDERS = ("sarvam", "smallest", "elevenlabs", "cartesia", "google")
+MULTILINGUAL_TTS_PROVIDERS = ("sarvam", "smallest", "elevenlabs", "cartesia")
 
 
 def ensure_ca_bundle() -> None:
@@ -593,6 +596,143 @@ def build_llm(
     )
 
 
+# The brand as speech-to-text mishears it, only when "AI" follows, so the Hindi
+# word कहो ("say") and the city Cairo on their own are left alone.
+_BRAND = re.compile(
+    r"(?<!\w)(?:cairo|kairo|kaho+|caho+|cahu|kahu|कैरो|काहो|कहो)\s*"
+    r"(?:a\.?\s?i\.?|एआई|ए\s?आई)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def normalize_transcript(text: str) -> str:
+    """Fix what nova-3 predictably gets wrong before the model reads it: the brand
+    name, and Bengali letters for Hindi words (its multilingual mode has no
+    Bengali, so they are always a mis-script; the two blocks share a layout)."""
+    text = "".join(chr(ord(c) - 0x80) if "\u0981" <= c <= "\u09ff" else c for c in text)
+    return _BRAND.sub("Kaho AI", text)
+
+
+class NormalizeTranscripts(FrameProcessor):
+    """Applies normalize_transcript to every transcript, final and interim."""
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, TranscriptionFrame | InterimTranscriptionFrame):
+            frame.text = normalize_transcript(frame.text)
+        await self.push_frame(frame, direction)
+
+
+DEFAULT_REPLY_MAX_SENTENCES = 3
+
+
+def reply_max_sentences() -> int:
+    """REPLY_MAX_SENTENCES: how many sentences of a reply are spoken (0 = no cap)."""
+    raw = (env("REPLY_MAX_SENTENCES") or "").strip()
+    if not raw:
+        return DEFAULT_REPLY_MAX_SENTENCES
+    try:
+        value = int(raw)
+    except ValueError:
+        value = -1
+    if value < 0:
+        logger.warning(f"REPLY_MAX_SENTENCES={raw!r} is not a count; using "
+                       f"{DEFAULT_REPLY_MAX_SENTENCES}")
+        return DEFAULT_REPLY_MAX_SENTENCES
+    return value
+
+
+class CapReplyLength(FrameProcessor):
+    """Speak at most `max_sentences` sentences of each reply; drop the rest.
+
+    The prompt asks for one or two sentences and the model still ran long on a
+    real call (the caller cut it off 11 times). Sits between the LLM and the
+    voice, so what is dropped is never spoken and never enters the context. A
+    sentence ends at . ! ? or । followed by a space; a decimal ("5.5") has no
+    space, and a short abbreviation ("Rs.", "Dr.") or a single letter is not an
+    end. Spoken lines (TTSSpeakFrame) are never cut.
+    """
+
+    _END = re.compile(r"(\S*?)([.!?।]+)(?=\s)")
+    _ABBREVIATIONS = {"rs", "dr", "mr", "mrs", "ms", "no", "st", "sr", "jr", "vs", "etc",
+                      "approx", "dept", "govt", "ltd", "pvt", "co", "inc", "a.m", "p.m"}
+
+    def __init__(self, max_sentences: int):
+        super().__init__()
+        self._max = max_sentences
+        self._reset()
+
+    def _reset(self) -> None:
+        self._text, self._passed, self._done = "", 0, False
+
+    def _cut(self) -> int | None:
+        """Where the reply's last allowed sentence ends, once it has."""
+        count = 0
+        for m in self._END.finditer(self._text):
+            word = m.group(1).lstrip("(\"'").lower()
+            if m.group(2) == "." and (word in self._ABBREVIATIONS
+                                      or (len(word) == 1 and word.isalpha())):
+                continue
+            count += 1
+            if count == self._max:
+                return m.end()
+        return None
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, LLMFullResponseStartFrame | InterruptionFrame):
+            self._reset()
+        elif isinstance(frame, LLMTextFrame) and self._max > 0:
+            if self._done:
+                return
+            start = len(self._text)
+            self._text += frame.text
+            cut = self._cut()
+            if cut is not None:
+                self._done = True
+                logger.info(f"Reply cut at {self._max} sentence(s) (REPLY_MAX_SENTENCES)")
+                frame.text = self._text[start:cut]
+                if not frame.text:
+                    return
+        await self.push_frame(frame, direction)
+
+
+DEFAULT_FILLER_HI = "एक सेकंड।"
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+
+
+def filler_line(caller_turns: list[str]) -> str:
+    """The "one moment" line in the language of the caller's latest turn: an
+    English filler to a caller speaking Hindi was heard on a real call."""
+    if caller_turns and _DEVANAGARI.search(caller_turns[-1]):
+        return env("FILLER_MESSAGE_HI") or DEFAULT_FILLER_HI
+    return env("FILLER_MESSAGE") or DEFAULT_FILLER
+
+
+def recording_notice_text() -> str | None:
+    """The notice a call opens with, or None if calls are not recorded or the
+    notice is off. build_worker decides the same way."""
+    recorded = (env("RECORDING_ENABLED") or "true").strip().lower() == "true"
+    notice_on = (env("RECORDING_NOTICE_ENABLED") or "true").strip().lower() == "true"
+    return (env("RECORDING_NOTICE") or DEFAULT_NOTICE) if recorded and notice_on else None
+
+
+DEFAULT_GREETING_LEAD_SECS = 0.8  # Groq TTFAT ~0.46s + voice TTFA ~0.27s on ddedb4fd
+
+
+class MuteUntil(BaseUserMuteStrategy):
+    """Mutes the caller until a moment on the monotonic clock: the end of a
+    recording notice that plays outside the pipeline, which the caller must not
+    talk over."""
+
+    def __init__(self, until: float):
+        super().__init__()
+        self._until = until
+
+    async def process_frame(self, frame) -> bool:
+        return time.monotonic() < self._until
+
+
 class SpokenPunctuationFilter(BaseTextFilter):
     """Normalise punctuation that reads badly when spoken.
 
@@ -620,9 +760,55 @@ class SpokenPunctuationFilter(BaseTextFilter):
         """Nothing is buffered between calls, so an interruption needs no reset."""
 
 
+class BrandNameFilter(BaseTextFilter):
+    """Speak the brand from the one spelling the owner chose by ear: "KahoAI"
+    (2026-10-24, sample b_KahoAI_hi_sentence). The model writes it many ways, and
+    each one is pronounced differently ("Kahoo", "Cahu" were heard)."""
+
+    _BRAND = re.compile(
+        r"(?<!\w)(?:kaho\s*[-]?\s*a\.?\s?i\.?|कहो\s*(?:ai|एआई|ए\s?आई)|काहो\s*(?:ai|एआई|ए\s?आई))"
+        r"(?!\w)",
+        re.IGNORECASE,
+    )
+
+    async def filter(self, text: str) -> str:
+        return self._BRAND.sub("KahoAI", text)
+
+    async def handle_interruption(self):
+        """Stateless."""
+
+
+class RepeatedSentenceFilter(BaseTextFilter):
+    """Say a sentence once when the model writes it twice in a row (seen live:
+    "मेरा नाम आयुशी है…" back to back). Compared without case, spacing or
+    punctuation. Only meaningful when text arrives a sentence at a time."""
+
+    _NOISE = re.compile(r"[\W_]+", re.UNICODE)
+
+    def __init__(self):
+        self._last: str | None = None
+
+    async def filter(self, text: str) -> str:
+        key = self._NOISE.sub("", text).casefold()
+        if not key:
+            return text
+        if key == self._last:
+            return ""
+        self._last = key
+        return text
+
+    async def handle_interruption(self):
+        self._last = None
+
+
 def speech_text_filters() -> list[BaseTextFilter]:
-    """Strip markdown, then fix punctuation, before any text reaches the voice."""
-    return [MarkdownTextFilter(), SpokenPunctuationFilter()]
+    """Strip markdown, then fix punctuation, before any text reaches the voice;
+    when text goes by sentence, also drop a sentence repeated back to back."""
+    filters: list[BaseTextFilter] = [MarkdownTextFilter(), SpokenPunctuationFilter(),
+                                     BrandNameFilter()]
+    if text_aggregation_mode() == TextAggregationMode.SENTENCE:
+        filters.append(RepeatedSentenceFilter())
+    return filters
 
 
 class FollowCallerLanguage(FrameProcessor):
@@ -807,23 +993,6 @@ def build_tts(
             text_aggregation_mode=text_aggregation_mode(),
         )
 
-    if provider == "google":
-        require_env("GOOGLE_TTS_API_KEY", "GOOGLE_TTS_VOICE")
-        # Imported here so the gRPC stack loads only when Google is the voice.
-        from google_tts import LOCALES, GoogleChirpTTSService
-
-        language = (env("GOOGLE_TTS_LANGUAGE") or "en").lower()
-        if language not in LOCALES:
-            logger.error(f"GOOGLE_TTS_LANGUAGE={language!r} must be one of {', '.join(LOCALES)}.")
-            sys.exit(1)
-        return GoogleChirpTTSService(
-            api_key=env("GOOGLE_TTS_API_KEY"),
-            voice=env("GOOGLE_TTS_VOICE"),
-            language=language,
-            text_filters=speech_text_filters(),
-            text_aggregation_mode=text_aggregation_mode(),
-        )
-
     if provider == "elevenlabs":
         require_env("ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID")
         return ElevenLabsTTSService(
@@ -857,6 +1026,7 @@ def build_worker(
     persona_text: str | None = None,
     tool_names: list[str] | None = None,
     opening_line: str | None = None,
+    notice_prespoken: tuple | None = None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -872,7 +1042,9 @@ def build_worker(
     recording_sample_rate is the rate the call's recording is saved at; the phone
     server passes the phone line's 8kHz, since anything higher stores no more sound.
     tool_names and opening_line come from a Studio agent: its tools replace
-    TOOLS_ENABLED, and the greeting opens with its line.
+    TOOLS_ENABLED, and the greeting opens with its line. notice_prespoken is
+    (PrespokenNotice, monotonic time it was sent): the phone server already sent
+    the recording notice to the caller, so the pipeline must not say it again.
     """
     require_env("DEEPGRAM_API_KEY")
 
@@ -931,6 +1103,18 @@ def build_worker(
     notice_on = (env("RECORDING_NOTICE_ENABLED") or "true").strip().lower() == "true"
     if recorder is not None and notice_on:
         notice = env("RECORDING_NOTICE") or DEFAULT_NOTICE
+    # The server sends the notice itself the moment the call opens (notice_audio.py);
+    # used only if it is these exact words.
+    prespoken, notice_ends_at = None, None
+    if notice and notice_prespoken and notice_prespoken[0].text == notice:
+        prespoken = notice_prespoken[0]
+        notice_ends_at = notice_prespoken[1] + prespoken.duration_secs
+        if recording_sample_rate == 8000:
+            # Caller on the left, bot on the right, as the recorder's own buffer has it.
+            bot = array.array("h", prespoken.pcm_8k)
+            stereo = array.array("h", [0] * (2 * len(bot)))
+            stereo[1::2] = bot
+            recorder.write(stereo.tobytes(), 8000, 2)
 
     # Tools are opt-in per deployment through TOOLS_ENABLED (default: end_call).
     call = CallContext(call_id=call_id, transcript=transcript, caller_number=caller_number)
@@ -954,7 +1138,9 @@ def build_worker(
             user_turn_strategies=build_turn_strategies(),
             # The caller can neither talk over the notice nor, with an early "hello?",
             # cancel it before it starts. Released once it has played, or if it fails.
-            user_mute_strategies=[MuteUntilFirstBotCompleteUserMuteStrategy()] if notice else [],
+            user_mute_strategies=(
+                [MuteUntil(notice_ends_at)] if prespoken
+                else [MuteUntilFirstBotCompleteUserMuteStrategy()] if notice else []),
         ),
     )
 
@@ -964,9 +1150,11 @@ def build_worker(
         [
             transport.input(),
             stt,
+            NormalizeTranscripts(),
             *([follow_proc] if follow_proc else []),
             user_aggregator,
             llm,
+            *([CapReplyLength(reply_max_sentences())] if reply_max_sentences() else []),
             tts,
             transport.output(),
             # After the output, so it records what was actually sent to the caller.
@@ -1001,6 +1189,11 @@ def build_worker(
     async def switch_to(service) -> None:
         await llm.push_frame(ManuallySwitchServiceFrame(service=service))
 
+    async def retry_reply() -> None:
+        # The lost reply was never spoken, so it never reached the context: running
+        # the LLM again answers the caller's last turn, this time in the new voice.
+        await worker.queue_frames([LLMRunFrame()])
+
     health = CallHealth(
         {"stt": [stt], "llm": [llm], "tts": tts_services},
         record=transcript.event,
@@ -1008,7 +1201,9 @@ def build_worker(
         abort=abort,
         switch_to=switch_to if switcher else None,
         say=say,
+        retry_reply=retry_reply if switcher else None,
         filler=env("FILLER_MESSAGE") or DEFAULT_FILLER,
+        filler_for=lambda: filler_line(transcript.caller_text),
         filler_after_secs=env_float("FILLER_AFTER_SECS", FILLER_AFTER_SECS),
         wrappers={"tts": [switcher]} if switcher else None,
         apology=env("FAILURE_MESSAGE") or DEFAULT_APOLOGY,
@@ -1020,6 +1215,12 @@ def build_worker(
         observers=[TurnTimingLogger(timings), BotSpeechObserver(health), LiveCaptions(transcript)],
     )
     worker.health = health
+    if switcher is not None:
+
+        @switcher.strategy.event_handler("on_service_switched")
+        async def voice_switched(strategy, service):
+            await health.on_switched(service)
+
     worker.transcript = transcript
     worker.recorder = recorder
     logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
@@ -1029,6 +1230,10 @@ def build_worker(
     @worker.event_handler("on_pipeline_error")
     async def provider_error(worker, frame):
         await health.on_error(frame)
+
+    @user_aggregator.event_handler("on_user_turn_started")
+    async def caller_is_talking(aggregator, strategy):
+        health.caller_resumed()
 
     @user_aggregator.event_handler("on_user_turn_stopped")
     async def reply_is_due(aggregator, strategy, message):
@@ -1105,6 +1310,17 @@ def build_worker(
         # trailing assistant line can be taken as one to continue); the instruction
         # tells the model instead.
         instruction += f' The caller has just heard "{notice}"; do not repeat it.'
+
+        if prespoken:
+            # Already playing on the line. Ask for the greeting GREETING_LEAD_SECS
+            # before the notice ends, about what the LLM and voice take, so it
+            # follows without a gap; Plivo plays the two in order, never over
+            # each other, and the caller is muted until the notice is over.
+            lead = env_float("GREETING_LEAD_SECS", DEFAULT_GREETING_LEAD_SECS)
+            await asyncio.sleep(max(0.0, notice_ends_at - lead - time.monotonic()))
+            transcript.event("recording_notice_played", notice=notice, prespoken=True)
+            await ask_for_the_greeting()
+            return
 
         async def after_the_notice():
             transcript.event("recording_notice_played", notice=notice)

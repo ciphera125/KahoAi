@@ -28,6 +28,7 @@ ready (nothing dialled), 4 the dial failed or its outcome is unknown.
 import argparse
 import os
 import re
+import secrets
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -39,6 +40,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "apps" / "voice"))
 
 import personas  # noqa: E402
+import plivo_signature  # noqa: E402
 from contacts_store import default_store as contact_store  # noqa: E402
 
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
@@ -129,8 +131,8 @@ def redact(url: str, cfg: dict) -> str:
     return url.replace(quote(cfg["WEBHOOK_SECRET"]), "***")
 
 
-def _get(url: str) -> httpx.Response:
-    return httpx.get(url, timeout=PREFLIGHT_TIMEOUT, follow_redirects=False)
+def _get(url: str, **kwargs) -> httpx.Response:
+    return httpx.get(url, timeout=PREFLIGHT_TIMEOUT, follow_redirects=False, **kwargs)
 
 
 def _post(url: str, **kwargs) -> httpx.Response:
@@ -141,7 +143,13 @@ def preflight(answer_url: str, cfg: dict) -> None:
     """Fetch the answer URL as Plivo will. If that works, an answered call will be handled."""
     shown = f"https://{cfg['PUBLIC_HOST']}"
     try:
-        resp = _get(answer_url)
+        # Signed the way Plivo signs, with the same auth token: the server refuses
+        # an unsigned /answer, and this request must pass the check Plivo's will.
+        nonce = secrets.token_hex(8)
+        resp = _get(answer_url, headers={
+            "X-Plivo-Signature-V3": plivo_signature.sign(
+                "GET", answer_url, {}, nonce, cfg["PLIVO_AUTH_TOKEN"]),
+            "X-Plivo-Signature-V3-Nonce": nonce})
     except httpx.HTTPError as e:
         raise CallError(
             f"Cannot reach {shown} ({type(e).__name__}). Start the server "
