@@ -12,29 +12,32 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-24 (final, later). **The voice is Smallest `meher` again (owner's decision), backed up by Google Chirp 3 HD
-Despina**. Google (Leda, then Despina) sounded robotic to the owner on two calls; before that,
-the default had briefly been Google, backed up by Smallest, because Cartesia's free credits ran out (172 of 20K left, most of it spent
-on Claude's own testing). Built test-first (`google_tts.py`, 17 tests), live-checked, server
-restarted on it, **not yet heard on a call and not committed**. LLM is `openai/gpt-oss-20b`,
-effort medium, fallback off, GPT-OSS only, no qwen; the owner will say when to use 120b.
-Before that, the LLM had briefly been `openai/gpt-oss-120b` (effort low), fallback
-`openai/gpt-oss-20b` (owner's decision). The Cartesia name problem was
-traced to Hindi mode, not the voice: `CARTESIA_LANGUAGE` is now `en`, so the greeting says "Kaho
-AI" cleanly; Hindi sentences still mangle it (open). A one-line `VOICE_RULES` addition fixes the
-Indian-English "100 into 4,000" misreading behind the wrong answer on `4f6452c9`. Server
-restarted on these settings; **no call has been made on them yet**. Earlier today: Cartesia Neha
-became the default after a real call the owner called "perfect" (`ad57ba2c`, caller wait 974ms
-avg); two calls to Ayushi (co-founder) exposed `end_call` hanging up on "Sorry to interrupt
-you." and "1 more time.", and junk `capture_lead` saves on all three calls. Nothing committed.
+Last updated: 2026-10-25. **Everything is committed and pushed; CI green on `6f55232`.**
+The voice is Smallest **`suri`** in English (`SMALLEST_LANGUAGE=en`), backed up by ElevenLabs
+(`EXAVITQu4vr4xnSDxMaL`); Google TTS removed, Cartesia on hold. LLM `openai/gpt-oss-20b`, effort
+medium, fallback off, GPT-OSS only, no qwen. The recording notice is cached at startup and sent
+the instant a call opens (pickup -> voice 340ms, -> greeting 2.2s on call 831f85db). Webhooks
+need Plivo's V3 signature; `/ws` needs a single-use stream token. The Studio (127.0.0.1:8001)
+has sign-in, dashboard, agents, prompts, contacts, numbers, notifications and a tour, redesigned
+in IBM Plex.
 
-Two new owner rules (in `CLAUDE.md`, "How we build"): every change is test-first, and after
-building, and always before a push, Claude attacks the change as a pen tester and reports the
-bugs as plain bullets **without fixing them**; the owner decides what gets fixed.
+**Running right now (2026-10-25):** the phone server on **port 8010**, not 8000, because the
+owner's other project, PayTrace (`~/PayTrace/backend`, `uvicorn app.main:app --port 8000`), took
+`127.0.0.1:8000`. The owner's ngrok agent was repointed through its local API
+(`127.0.0.1:4040/api/tunnels`) so `open-buckskin-wolverine.ngrok-free.dev` -> `localhost:8010`;
+PayTrace has no public address while this holds. `.env` still says `PORT=8000`: start the phone
+server with `PORT=8010` while PayTrace is up, and check `GET /` on the public URL before calling
+(PayTrace answers with `{"service":"PayTrace API",...}`).
 
-**Security, open:** the working copy of `.env.example` (tracked) holds real Deepgram, Groq and
-ElevenLabs keys and has lost ~220 lines of notes. Not committed, not in history. Never stage it;
-the owner restores it (`git restore .env.example`) once the keys are in `.env`.
+**Owner actions open:** rotate the keys leaked into an earlier session log (Deepgram, Smallest,
+ElevenLabs, Cartesia, Google) and delete the Google key; fill the persona's placeholders ("NBFC
+Name", "[LOAN ID PLACEHOLDER]"), which the agent reads aloud. `backend/` (an untracked Node
+project, not ours) is deliberately not committed.
+
+**Next technical lever:** pre-connect Deepgram so the ~0.65s gap after the notice goes.
+
+Owner rules (in `CLAUDE.md`, "How we build"): test-first with the red run shown; pen-test before
+every push and report findings without fixing them; don't ask permission, list it at the end.
 
 ---
 
@@ -158,7 +161,15 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
-| (uncommitted, 2026-10-24) | Cartesia TTS provider + `check_cartesia`, 19 new tests; `CLAUDE.md` rules and corrections; this update. `.env.example` is also modified but must **not** be committed (real keys) |
+| `6f55232` | Caching the notice can never stop the server from starting (warm-up catches SystemExit; CI was red without keys) |
+| `ce6bbd3` | Docs: voice Suri, "KahoAI", fast opening, webhooks, pins |
+| `6d0e90e` | Calls: fast opening (`notice_audio.py`), voice failover in `CallHealth`, Plivo V3 signatures, stream tokens, conversation filters |
+| `e84891f` | Studio redesign: IBM Plex, light/dark tokens, Operate/Configure sidebar |
+| `55c834f` | `.env.example` restored as a template; `test_env_example.py` fails on a real-looking key |
+| `a0fb8e0` | Google TTS removed; ElevenLabs is the backup voice; Cartesia on hold |
+| `bb555a4` | Dependencies pinned in `constraints.txt` (pipecat-ai 1.12.0, openai 3.19.2); CI green again |
+| `823d491`..`abc9374` | Kaho AI Studio, then the medium and low pen-test fixes and their docs |
+| `6304f5c`..`2a2a967` | Cartesia provider, "into" as multiplication, rules, Google Chirp (since removed), safer tools, live captions |
 | `6b3b150` | CLEANROOM rows + handoff update after the first real phone calls |
 | `bed7be2` | `LLM_FALLBACK_MODEL_ID` back to `qwen/qwen3.8-27b` (owner's decision); docs only, the mechanism was untouched |
 | `fa1c7fa` | Persona identity: the agent is Aayushi, calling from Kaho AI; "not a business" reframed as sourcing |
@@ -704,6 +715,11 @@ signature validation below (`eeef867`). Remaining:
 
 ## 7. Gotchas that cost time
 
+- **Port 8000 is shared with the owner's PayTrace API.** It binds `127.0.0.1:8000`, which wins
+  over our `0.0.0.0:8000` for `localhost`, so ngrok silently forwards to PayTrace and the Studio's
+  pre-dial check gets a 404 ("server not started"). Run ours on `PORT=8010` and point the tunnel
+  there (ngrok local API, or `ngrok http 8010 --url open-buckskin-wolverine.ngrok-free.dev`).
+- **zsh treats a word starting with `=` as a command lookup**: `echo =====` fails. Quote it.
 - **CI was red because of `pyaudio`.** The `local` extra needs PortAudio headers on
   Linux; CI now installs `portaudio19-dev`. It was red before this work too. It
   was not a Python-version or test problem.
@@ -1337,3 +1353,11 @@ and a full Hindi call untested, DPDP question with the CA.
   not). Every step is now bounded, warm-up caps it at 20s, and tests use a voice that never
   shuts down. The server never started in that state; no call was affected.
 - 723 tests, ruff clean. Committed by concern and pushed; CI checked after the push.
+
+**2026-10-25 (owner: start the server; calls returned 404).**
+- The owner's PayTrace API had taken `127.0.0.1:8000`, so the public tunnel reached PayTrace and
+  the Studio's pre-dial check got a 404. Started the phone server on `PORT=8010` (notice cached,
+  1.76s), stopped the old copy on 8000, and repointed the owner's running ngrok tunnel to 8010
+  through its local API. Public `/answer` now reaches Kaho AI (403 unsigned, as it should).
+- PayTrace keeps running locally but has no public URL until the tunnel is pointed back.
+- No code changed. Handoff updated and pushed.
