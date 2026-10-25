@@ -5,9 +5,9 @@ import { migrate } from "../src/db/migrate.js";
 import { resetRateLimits } from "../src/middleware/rateLimit.js";
 
 export const ORIGIN = "http://localhost:5173";
-const TABLES = ["meta", "call_events", "calls", "activity", "contact_number_tags", "contact_tags",
+const TABLES = ["bulk_items", "bulk_runs", "meta", "call_events", "calls", "activity", "contact_number_tags", "contact_tags",
   "contact_numbers", "contacts", "tags", "phone_numbers", "routes", "prompt_versions",
-  "prompts", "agents", "login_failures", "devices", "sessions", "invites", "users", "organizations"];
+  "prompts", "agents", "login_failures", "devices", "sessions", "invites", "memberships", "users", "organizations"];
 
 /** The database owner's connection: sees every row (tests set up and inspect with it). */
 export const db = ownerPool();

@@ -4,7 +4,7 @@ import { cookieOptions, DEVICE_COOKIE, SESSION_COOKIE } from "../middleware/auth
 import { note } from "./notify.js";
 
 async function signedIn(req, res, user) {
-  res.cookie(SESSION_COOKIE, await User.startSession(user.id), cookieOptions(User.SESSION_SECS));
+  res.cookie(SESSION_COOKIE, await User.startSession(user.id, user.org_id), cookieOptions(User.SESSION_SECS));
   if (!(await User.knowsDevice(user.id, req.cookies?.[DEVICE_COOKIE]))) {
     res.cookie(DEVICE_COOKIE, await User.issueDevice(user.id), cookieOptions(User.DEVICE_SECS));
   }

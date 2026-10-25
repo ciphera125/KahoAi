@@ -8,6 +8,6 @@ export async function counts(orgId) {
     (SELECT count(*) FROM prompts WHERE org_id = $1)::int AS prompts,
     (SELECT count(*) FROM contacts WHERE org_id = $1)::int AS contacts,
     (SELECT count(*) FROM calls WHERE org_id = $1)::int AS calls,
-    (SELECT count(*) FROM users WHERE org_id = $1)::int AS members`, [orgId]));
+    (SELECT count(*) FROM memberships WHERE org_id = $1)::int AS members`, [orgId]));
   return c;
 }

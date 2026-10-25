@@ -1,6 +1,8 @@
 import { Router } from "express";
 import * as ws from "../controllers/workspaceController.js";
 import * as auth from "../controllers/authController.js";
+import * as orgs from "../controllers/orgController.js";
+import { authLimiter } from "../middleware/rateLimit.js";
 import { requireAdmin } from "../middleware/auth.js";
 
 const router = Router();
@@ -10,6 +12,10 @@ router.get("/tools", ws.tools);
 router.get("/providers", ws.providers);
 router.get("/notifications", ws.notifications);
 router.post("/notifications/seen", ws.notificationsSeen);
+router.get("/orgs", orgs.list);
+router.post("/orgs", orgs.create);
+router.post("/orgs/join", authLimiter, orgs.join);
+router.post("/orgs/:orgId/switch", orgs.switchTo);
 router.get("/team", auth.team);
 router.patch("/team/:userId", auth.changeRole);
 router.delete("/team/:userId", requireAdmin, auth.removeMember);
