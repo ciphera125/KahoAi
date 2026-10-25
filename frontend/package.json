@@ -1,0 +1,26 @@
+{
+  "name": "kaho-studio-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Kaho AI Studio: the React single-page app (real URLs, not hash routes)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-router-dom": "7.9.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "5.0.4",
+    "@eslint/js": "10.0.1",
+    "eslint": "10.0.1",
+    "eslint-plugin-react-hooks": "7.1.0",
+    "globals": "17.3.0",
+    "vite": "7.1.12"
+  }
+}
