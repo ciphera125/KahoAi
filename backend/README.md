@@ -1,0 +1,62 @@
+# Kaho AI Studio — backend
+
+The Studio's API: Node + Express (MVC), PostgreSQL, one organization per customer
+with strict tenant isolation. It replaces the old single-process `apps/voice/admin.py`.
+The voice pipeline (`apps/voice`) is unchanged and still runs on its own.
+
+## Layout (MVC)
+
+```
+src/
+  config/env.js        every setting, validated once at start-up
+  db/
+    pool.js            connection pools; inOrg()/asSystem() scope every query
+    migrate.js         applies db/migrations/*.sql once each, in order
+    migrations/        001 schema, 002 organizations + row-level security
+  models/              SQL only, one file per table-group; each takes org_id first
+  controllers/         request -> model -> response; no SQL here
+  routes/              URL -> controller, with the role each route needs
+  middleware/          security (host/origin/CSRF), auth, rate limits, errors
+  services/            dialer, Plivo signature + sync, live events, start-up checks
+  app.js               the public app and the separate internal (voice) app
+  server.js            cluster of workers, graceful shutdown, migrate on boot
+tests/                 vitest + supertest against a real PostgreSQL test DB
+```
+
+## Run
+
+```bash
+cp .env.example .env            # fill SECRETS_KEY and INTERNAL_API_TOKEN (openssl rand -hex 32)
+createdb kaho_studio
+npm install
+npm run migrate                 # also runs automatically on npm start
+npm run import:legacy           # one-off: copy data/ and logs/calls into Postgres
+npm start                       # public API :8020, voice-service API :8021 (127.0.0.1)
+npm test                        # 108 tests
+npm run lint
+```
+
+## Tenant isolation (how one team never sees another's data)
+
+Every customer row carries `org_id`. Models filter by it, and PostgreSQL
+row-level security enforces it again underneath: a query that forgets the filter
+sees nothing, never another team. All customer-data access goes through
+`inOrg(orgId, fn)`, a transaction that drops to the restricted role `kaho_app`
+and sets `app.org_id`. `asSystem(fn)` is the few cross-org paths (sign-in, the
+voice service, imports). A plain connection sees no customer rows at all.
+
+Roles: **owner** (one per org) → **admin** → **member**. The owner sets roles and
+removes anyone; admins run numbers, bulk deletes, Plivo sync, invites and remove
+members; members do the daily work.
+
+## Before production
+
+- **DATABASE_URL** should point at a restricted role (its own login), so RLS
+  applies without relying on `SET LOCAL ROLE`. The managed database (Supabase)
+  provides this; keep `DB_APP_ROLE=kaho_app` only for a privileged local login.
+- **SECRETS_KEY** encrypts provider credentials at rest. Losing it makes saved
+  tokens unreadable; start-up refuses to run with the wrong key.
+- **REDIS_URL** shares rate-limit counts across workers and servers.
+- **TRUST_PROXY=true** only behind a load balancer you control (it decides the
+  client address the limits use).
+- Put the voice-service API (:8021) on a private network; never expose it.
