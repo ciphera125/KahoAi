@@ -3,11 +3,11 @@ import * as Agent from "../models/Agent.js";
 import * as Call from "../models/Call.js";
 import * as Contact from "../models/Contact.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
-import * as dialer from "../services/dialer.js";
+import { OutsideWindowError, placeCall } from "../services/calling.js";
 import { syncFromPlivo } from "../services/plivoSync.js";
 import { subscribe } from "../services/liveEvents.js";
 import { HttpError, NotFoundError, ValidationError } from "../utils/errors.js";
-import { CALL_ID, normalizeNumber } from "../utils/phone.js";
+import { CALL_ID } from "../utils/phone.js";
 import { note } from "./notify.js";
 
 async function named(orgId, calls) {
@@ -20,43 +20,17 @@ export async function place(req, res) {
   const org = req.user.org_id;
   const body = req.body ?? {};
   if (body.consent !== true) throw new ValidationError("confirm that this person has agreed to be called");
-  const rows = await PhoneNumber.listPublic(org);
-  const row = body.from_id ? rows.find((r) => r.id === body.from_id) : rows.find((r) => r.is_default);
-  if (!row) throw new ValidationError("choose a number to call from");
-  if (row.status === "not_connected") {
-    throw new ValidationError(`${row.provider_label} numbers are not connected yet; only Plivo can place calls today`);
+  let placed;
+  try {
+    placed = await placeCall(org, { fromId: body.from_id, to: body.to, agentId: body.agent_id });
+  } catch (err) {
+    if (err instanceof OutsideWindowError) return res.status(400).json({ error: err.message, code: err.code, call_window: err.window });
+    throw err;
   }
-  if (row.status !== "active") throw new ValidationError(`${row.number} is missing credentials; edit it on Numbers`);
-  const to = dialer.checkNumber(normalizeNumber(String(body.to ?? "")), "The number");
-  // TRAI: a person who asked not to be called is never dialled, until someone clears it on purpose.
-  if (await Contact.isDnc(org, to)) throw new ValidationError(`${to} is marked Do not call in Contacts`);
-  let agent = null;
-  if (body.agent_id) {
-    agent = await Agent.callConfig(body.agent_id);
-    if (!agent || agent.org_id !== org) throw new ValidationError("choose an agent that exists");
-    if (!Agent.inCallWindow(agent.call_window)) {
-      const w = agent.call_window;
-      return res.status(400).json({ error: Agent.OUTSIDE_WINDOW, code: "outside_call_window",
-        call_window: { start: w.start, end: w.end, timezone: w.timezone } });
-    }
-  }
-  const missing = ["PUBLIC_HOST", "WEBHOOK_SECRET"].filter((k) => !config[k]);
-  if (missing.length) throw new ValidationError(`missing in the server settings: ${missing.join(", ")}`);
-  const creds = await PhoneNumber.credentials(org, row.id);
-  const maxSecs = dialer.resolveMaxDuration(agent ? agent.max_secs : null);
-  const answer = dialer.answerUrl({ to, maxSecs, studioAgent: agent?.agent_id });
-  await dialer.preflight(answer, creds.auth_token);
-  const result = await dialer.dial({ authId: creds.auth_id, authToken: creds.auth_token, from: row.number, to, answer,
-    hangup: dialer.hangupUrl({ to, studioAgent: agent?.agent_id }), maxSecs,
-    ringSecs: agent ? agent.ring_secs : dialer.DEFAULT_RING_TIMEOUT_SECS });
-  const requestUuid = typeof result.request_uuid === "string" ? result.request_uuid : null;
-  if (requestUuid && CALL_ID.test(requestUuid)) {
-    await Call.recordOutcome(requestUuid, { status: "ringing", peer: to, ours: row.number, direction: "outbound",
-      agent_id: agent?.agent_id, at: new Date().toISOString(), request_uuid: requestUuid }, { orgId: org });
-  }
+  const { to, from, request_uuid: requestUuid, agent } = placed;
   const who = (await Contact.namesFor(org, [to]))[to] ?? to;
   await note(req, "call", `Called ${who}${agent ? ` with ${agent.name}` : ""}`, "calls", requestUuid);
-  res.json({ to, from: row.number, request_uuid: requestUuid, agent_name: agent?.name ?? null });
+  res.json({ to, from, request_uuid: requestUuid, agent_name: agent?.name ?? null });
 }
 
 export async function list(req, res) {

@@ -31,8 +31,11 @@ export function createApp() {
     }
   });
 
+  // A bulk call's list (up to 5000 rows) is the one large body.
+  const small = express.json({ limit: "64kb" }), large = express.json({ limit: "1mb" });
+  const json = (req, res, next) => (req.method === "POST" && req.path === "/bulk-calls" ? large : small)(req, res, next);
   app.use("/api", apiHeaders, hostCheck, originCheck, ipLimiter, sessionLimiter, jsonOnly,
-    express.json({ limit: "64kb" }), cookieParser(), apiRouter);
+    json, cookieParser(), apiRouter);
 
   app.use(notFound);
   app.use(errorHandler);

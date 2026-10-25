@@ -20,8 +20,9 @@ export async function startFakes() {
       return res.end(JSON.stringify({ objects: plivo.cdrs, meta: { next: null } }));
     }
     if (plivo.reply.hang) return; // never answers
-    res.writeHead(plivo.reply.status, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(plivo.reply.body));
+    const reply = typeof plivo.reply === "function" ? plivo.reply(JSON.parse(body || "null")) : plivo.reply;
+    res.writeHead(reply.status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(reply.body));
   });
   const v = await server(18766, (req, res) => {
     voice.requests.push({ method: req.method, url: req.url, headers: req.headers });

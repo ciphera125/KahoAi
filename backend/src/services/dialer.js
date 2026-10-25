@@ -18,6 +18,8 @@ const PLIVO_LIMIT_GRACE_SECS = 15;
 const E164 = /^\+[1-9]\d{7,14}$/;
 
 const failed = (message) => new HttpError(502, message);
+// The voice server's check failed: nothing was dialled, and nothing will be until it is back.
+const notReady = (message) => Object.assign(failed(message), { stage: "preflight" });
 
 export function checkNumber(raw, label) {
   const number = String(raw ?? "").replace(/[ \-()]/g, "");
@@ -66,16 +68,17 @@ export async function preflight(url, authToken) {
       headers: { "X-Plivo-Signature-V3": sign("GET", url, {}, nonce, authToken), "X-Plivo-Signature-V3-Nonce": nonce } });
     text = await res.text();
   } catch (err) {
-    throw failed(`Cannot reach ${base()} (${err.name}). Start the voice server and your tunnel, and check `
+    throw notReady(`Cannot reach ${base()} (${err.name}). Start the voice server and your tunnel, and check `
       + "PUBLIC_HOST. Nothing was dialled.");
   }
   if (res.status === 403) {
-    throw failed("The voice server rejected the token: WEBHOOK_SECRET here does not match the one it was "
-      + "started with. Restart it after editing .env. Nothing was dialled.");
+    throw notReady("The voice server refused the request (403): either WEBHOOK_SECRET here differs from the one it "
+      + "was started with (restart it after editing .env), or this number's Plivo auth token is not the one it "
+      + "checks Plivo's signature with. Nothing was dialled.");
   }
-  if (res.status === 400) throw failed(`The voice server refused the call: ${text.trim().slice(0, 200)}`);
+  if (res.status === 400) throw notReady(`The voice server refused the call: ${text.trim().slice(0, 200)}`);
   if (res.status !== 200 || !text.includes("<Stream")) {
-    throw failed(`The voice server answered ${res.status} and not the expected stream XML. Nothing was dialled.`);
+    throw notReady(`The voice server answered ${res.status} and not the expected stream XML. Nothing was dialled.`);
   }
 }
 
