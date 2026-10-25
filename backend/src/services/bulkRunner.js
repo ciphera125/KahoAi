@@ -5,7 +5,13 @@
 //
 // - Each row is dialled at most once (placing a call is never retried).
 // - A Do not call number is skipped, not dialled.
-// - Outside the agent's calling window nothing is dialled; the run waits.
+// - Outside the agent's calling window nothing is dialled; the run waits. With
+//   the agent's window switched off, bulk calls still keep to 09:00-21:00 India
+//   time (TRAI's hours for commercial calls).
+// - Nobody this organization called in the last BULK_REPEAT_HOURS (by any bulk
+//   call or by hand) is called again; two lists with the same person ring once.
+// - Organizations share BULK_MAX_CONCURRENT fairly: with N of them dialling,
+//   none takes more than its 1/N share.
 // - If the voice server cannot be reached, nothing was dialled: the run pauses
 //   with the reason rather than failing every row.
 // - Only one runner works at a time (an advisory lock), however many processes run.
@@ -24,9 +30,17 @@ function windowText(w) {
   return `Waiting for the agent's calling window (${w.start}–${w.end}, ${w.timezone}).`;
 }
 
-async function dialOne(run, item) {
+/** The hours a bulk call keeps to: the agent's window, or TRAI's when the agent has none switched on. */
+const bulkWindow = (agent) => (agent.call_window?.enabled ? agent.call_window : { ...Agent.DEFAULT_WINDOW, enabled: true });
+
+async function dialOne(run, item, now) {
+  if (await BulkCall.calledRecently(run.org_id, item.number, config.BULK_REPEAT_HOURS)) {
+    await BulkCall.mark(item.id, { status: "skipped", reason: `already called in the last ${config.BULK_REPEAT_HOURS} hours`,
+      finished_at: new Date() });
+    return null;
+  }
   try {
-    const placed = await placeCall(run.org_id, { fromId: run.from_id, to: item.number, agentId: run.agent_id });
+    const placed = await placeCall(run.org_id, { fromId: run.from_id, to: item.number, agentId: run.agent_id, now });
     if (!placed.request_uuid) {
       await BulkCall.mark(item.id, { status: "done", outcome: "unknown", reason: "Plivo gave no call id", finished_at: new Date() });
     } else {
@@ -52,9 +66,11 @@ async function dialOne(run, item) {
 }
 
 /** One pass over every bulk call. Safe to call at any time; tests call it directly. */
-export async function runOnce() {
+export async function runOnce({ now = new Date() } = {}) {
   const runs = await BulkCall.active();
   let open;
+  const dialling = new Set(runs.filter((r) => r.status === "running").map((r) => r.org_id));
+  const share = Math.max(1, Math.ceil(config.BULK_MAX_CONCURRENT / Math.max(1, dialling.size)));
   for (const run of runs) {
     const agent = run.agent_id ? await Agent.callConfig(run.agent_id) : null;
     const deadline = (agent?.max_secs ?? DEFAULT_MAX_SECS) + (agent?.ring_secs ?? 60) + DEADLINE_GRACE_SECS;
@@ -65,16 +81,19 @@ export async function runOnce() {
       await BulkCall.setRun(run.id, { status: "paused", waiting: "Its agent was deleted. Cancel this bulk call." });
       continue;
     }
-    if (!Agent.inCallWindow(agent.call_window)) {
-      await BulkCall.setRun(run.id, { waiting: windowText(agent.call_window) });
+    const hours = bulkWindow(agent);
+    if (!Agent.inCallWindow(hours, now)) {
+      await BulkCall.setRun(run.id, { waiting: agent.call_window?.enabled ? windowText(hours)
+        : `Bulk calls keep to ${hours.start}–${hours.end} (${hours.timezone}); waiting for those hours.` });
       continue;
     }
     const mine = (await BulkCall.openCounts())[run.id] ?? 0;
-    const slots = Math.min(run.parallel - mine, config.BULK_MAX_CONCURRENT - open);
+    const orgOpen = (await BulkCall.openByOrg())[run.org_id] ?? 0;
+    const slots = Math.min(run.parallel - mine, config.BULK_MAX_CONCURRENT - open, share - orgOpen);
     let waiting = slots <= 0 && mine === 0 ? "Waiting for other calls to finish." : null;
     const claimed = await BulkCall.claim(run.id, slots);
     for (const [i, item] of claimed.entries()) {
-      const outcome = await dialOne(run, item);
+      const outcome = await dialOne(run, item, now);
       if (outcome === "paused") {
         // The rest of this pass was taken but never dialled: back to waiting.
         for (const rest of claimed.slice(i + 1)) await BulkCall.mark(rest.id, { status: "queued", placed_at: null });

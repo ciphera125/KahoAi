@@ -6,6 +6,7 @@ import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { normalizeNumber } from "../utils/phone.js";
 import { cleanText } from "../utils/text.js";
 import { checkNumber } from "../services/dialer.js";
+import * as PhoneNumber from "./PhoneNumber.js";
 
 export const MAX_ROWS = 5000;
 export const MAX_PARALLEL = 10;
@@ -58,6 +59,10 @@ export async function create(orgId, { name, agentId, fromId, parallel, rows, cre
   const n = Number(parallel ?? 3);
   if (!Number.isInteger(n) || n < 1 || n > MAX_PARALLEL) throw new ValidationError(`calls at once must be between 1 and ${MAX_PARALLEL}`);
   const items = prepareRows(rows);
+  // Checked now, not at the first dial: a number of another organization, or one that cannot call, is refused.
+  const from = (await PhoneNumber.listPublic(orgId)).find((r) => r.id === String(fromId ?? ""));
+  if (!from) throw new ValidationError("choose a number to call from");
+  if (from.status !== "active") throw new ValidationError(`${from.number} cannot place calls yet; edit it on Numbers`);
   return inOrg(orgId, async (db) => {
     const agent = await db.query("SELECT 1 FROM agents WHERE id = $1 AND org_id = $2", [String(agentId ?? ""), orgId]);
     if (!agent.rowCount) throw new ValidationError("choose an agent that exists");
@@ -156,6 +161,21 @@ export async function settle(runId, deadlineSecs) {
     await db.query(`UPDATE bulk_items SET status = 'done', outcome = 'unknown', finished_at = now()
       WHERE run_id = $1 AND status = 'calling' AND placed_at < now() - make_interval(secs => $2)`, [runId, deadlineSecs]);
   });
+}
+
+/** Open calls (dialling or on the line) per organization, across its runs. */
+export async function openByOrg() {
+  const { rows } = await asSystem((db) => db.query(`SELECT org_id, count(*)::int AS n FROM bulk_items
+    WHERE status IN ('dialling', 'calling') GROUP BY org_id`));
+  return Object.fromEntries(rows.map((r) => [r.org_id, r.n]));
+}
+
+/** Whether this organization called the number, by any bulk call or by hand, within `hours`. */
+export async function calledRecently(orgId, number, hours) {
+  if (!hours) return false;
+  const { rows } = await asSystem((db) => db.query(`SELECT EXISTS (SELECT 1 FROM calls WHERE org_id = $1 AND peer = $2
+    AND started_at > now() - make_interval(hours => $3)) AS yes`, [orgId, number, hours]));
+  return rows[0].yes;
 }
 
 export async function openCounts() {

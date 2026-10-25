@@ -21,7 +21,7 @@ export class OutsideWindowError extends HttpError {
 /** Dial `to` once from one of the organization's numbers, through an agent if
  * given. Throws (ValidationError, OutsideWindowError, or the dialler's 502)
  * when the call is not placed; a dial is never retried. */
-export async function placeCall(org, { fromId, to: raw, agentId }) {
+export async function placeCall(org, { fromId, to: raw, agentId, now = new Date() }) {
   const rows = await PhoneNumber.listPublic(org);
   const row = fromId ? rows.find((r) => r.id === fromId) : rows.find((r) => r.is_default);
   if (!row) throw new ValidationError("choose a number to call from");
@@ -36,7 +36,7 @@ export async function placeCall(org, { fromId, to: raw, agentId }) {
   if (agentId) {
     agent = await Agent.callConfig(agentId);
     if (!agent || agent.org_id !== org) throw new ValidationError("choose an agent that exists");
-    if (!Agent.inCallWindow(agent.call_window)) throw new OutsideWindowError(agent.call_window);
+    if (!Agent.inCallWindow(agent.call_window, now)) throw new OutsideWindowError(agent.call_window);
   }
   const missing = ["PUBLIC_HOST", "WEBHOOK_SECRET"].filter((k) => !config[k]);
   if (missing.length) throw new ValidationError(`missing in the server settings: ${missing.join(", ")}`);

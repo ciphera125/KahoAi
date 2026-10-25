@@ -46,6 +46,7 @@ const schema = z.object({
   MAX_STREAMS_PER_USER: int(5, 1, 100),
   BULK_MAX_CONCURRENT: int(10, 1, 100),   // the voice server's WS_MAX_CONCURRENT_CALLS
   BULK_TICK_MS: int(2000, 200, 60000),
+  BULK_REPEAT_HOURS: int(24, 0, 720),     // nobody is called again by a bulk call within this; 0 turns it off
   PLIVO_FROM_NUMBER: z.string().optional(),
   PLIVO_AUTH_ID: z.string().optional(),
   PLIVO_AUTH_TOKEN: z.string().optional(),
