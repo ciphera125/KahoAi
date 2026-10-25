@@ -9,16 +9,21 @@
 import pg from "pg";
 import { config } from "../config/env.js";
 import { logger } from "../utils/logger.js";
+import { connectionOptions } from "./ssl.js";
 
 pg.types.setTypeParser(1700, (v) => (v === null ? null : Number(v))); // numeric -> number
 
 const common = {
-  connectionString: config.DATABASE_URL,
+  ...connectionOptions(config.DATABASE_URL, config),
   connectionTimeoutMillis: 5000,
   idleTimeoutMillis: 30000,
   statement_timeout: config.DB_STATEMENT_TIMEOUT_MS,
   query_timeout: config.DB_STATEMENT_TIMEOUT_MS + 1000,
 };
+
+if (common.ssl && !common.ssl.rejectUnauthorized) {
+  logger.warn("The database connection is encrypted but its certificate is not checked; set DATABASE_SSL_CA");
+}
 
 export const pool = new pg.Pool({ ...common, max: config.PGPOOL_MAX, application_name: "kaho-studio" });
 pool.on("error", (err) => logger.error({ err: err.message }, "idle database client failed"));

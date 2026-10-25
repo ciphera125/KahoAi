@@ -19,6 +19,8 @@ const schema = z.object({
   WEB_CONCURRENCY: int(1, 1, 64),
   LOG_LEVEL: z.string().default("info"),
   DATABASE_URL: z.string().min(1, "DATABASE_URL is required (postgres://...)"),
+  DATABASE_SSL: z.enum(["", "off", "require", "verify"]).optional(),
+  DATABASE_SSL_CA: z.string().optional(),
   PGPOOL_MAX: int(10, 1, 200),
   DB_APP_ROLE: z.string().regex(/^[a-z_][a-z0-9_]*$/).or(z.literal("")).default("kaho_app"),
   DB_STATEMENT_TIMEOUT_MS: int(5000, 100, 120000),
@@ -42,6 +44,8 @@ const schema = z.object({
   STREAM_WAIT_SECS: int(90, 1, 600),
   STREAM_MAX_SECS: int(3600, 10, 86400),
   MAX_STREAMS_PER_USER: int(5, 1, 100),
+  BULK_MAX_CONCURRENT: int(10, 1, 100),   // the voice server's WS_MAX_CONCURRENT_CALLS
+  BULK_TICK_MS: int(2000, 200, 60000),
   PLIVO_FROM_NUMBER: z.string().optional(),
   PLIVO_AUTH_ID: z.string().optional(),
   PLIVO_AUTH_TOKEN: z.string().optional(),
