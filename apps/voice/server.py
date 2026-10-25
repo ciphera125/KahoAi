@@ -17,8 +17,10 @@ STREAM_TOKEN_SECS, with the call's settings kept here rather than in its URL.
 
 import asyncio
 import base64
+import copy
 import hmac
 import json
+import logging
 import math
 import os
 import re
@@ -38,6 +40,7 @@ import plivo_signature
 import prompt_store
 import studio_link
 import uvicorn
+import uvicorn.config
 from dotenv import load_dotenv
 from duration_limit import configured_ceiling, enforce_max_duration, resolve_max_duration
 from fastapi import FastAPI, Query, Request, Response, WebSocket
@@ -718,6 +721,38 @@ def check_region() -> None:
         )
 
 
+_SECRET_IN_URL = re.compile(r"\b(token|stream|secret)=[^&\s\"']*")
+
+
+class MaskSecrets(logging.Filter):
+    """Masks token=, stream= and secret= in a log line. uvicorn's access log
+    writes each webhook's full URL, which carried WEBHOOK_SECRET (leaked twice
+    on 2026-10-25 through a grep of the log)."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        mask = lambda v: _SECRET_IN_URL.sub(r"\1=***", v) if isinstance(v, str) else v  # noqa: E731
+        if record.name == "uvicorn.access" and isinstance(record.args, tuple):
+            # Its formatter reads the pieces (client, method, path, ...): mask each.
+            record.args = tuple(mask(a) for a in record.args)
+            return True
+        # Anything else is formatted first: a secret can arrive after "token=%s".
+        try:
+            text = record.getMessage()
+        except (TypeError, ValueError):
+            text = f"{record.msg} {record.args}"
+        record.msg, record.args = mask(text), None
+        return True
+
+
+def uvicorn_log_config() -> dict:
+    """uvicorn's own logging, with every handler passing through MaskSecrets."""
+    config = copy.deepcopy(uvicorn.config.LOGGING_CONFIG)
+    config.setdefault("filters", {})["mask_secrets"] = {"()": MaskSecrets}
+    for handler in config["handlers"].values():
+        handler["filters"] = [*handler.get("filters", []), "mask_secrets"]
+    return config
+
+
 def main() -> None:
     load_dotenv()
     ensure_ca_bundle()
@@ -735,7 +770,8 @@ def main() -> None:
         asyncio.run(warm_up())
     except Exception as e:
         logger.warning(f"Warm-up failed: {type(e).__name__}")
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT") or 8000))
+    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT") or 8000),
+                log_config=uvicorn_log_config())
 
 
 if __name__ == "__main__":
