@@ -12,36 +12,43 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-25. **Everything is committed and pushed; CI green on `6f55232`.**
-The voice is Smallest **`suri`** in English (`SMALLEST_LANGUAGE=en`), backed up by ElevenLabs
-(`EXAVITQu4vr4xnSDxMaL`); Google TTS removed, Cartesia on hold. LLM `openai/gpt-oss-20b`, effort
-medium, fallback off, GPT-OSS only, no qwen. The recording notice is cached at startup and sent
-the instant a call opens (pickup -> voice 340ms, -> greeting 2.2s on call 831f85db). Webhooks
-need Plivo's V3 signature; `/ws` needs a single-use stream token. The Studio (127.0.0.1:8001)
-has sign-in, dashboard, agents, prompts, contacts, numbers, notifications and a tour, redesigned
-in IBM Plex.
+Last updated: 2026-10-25 (evening). **Everything is committed and pushed** (see section 2).
+The voice is Smallest **`suri`** in English, backed up by ElevenLabs; LLM `openai/gpt-oss-20b`,
+effort medium, fallback off, GPT-OSS only, no qwen. Webhooks need Plivo's V3 signature; `/ws`
+needs a single-use stream token.
 
-**Running right now (2026-10-25):** the phone server on **port 8765** (`.env` `PORT=8765`).
-Port 8000 is taken by the owner's PayTrace API (`~/PayTrace/backend`), and 8020 by the new
-Studio API in `backend/` (it held 8010 briefly on 2026-10-25, then moved); both bind `127.0.0.1`, which wins over our `0.0.0.0` for
-`localhost`, so ngrok silently reached them. The owner's ngrok agent was repointed through its
-local API (`127.0.0.1:4040/api/tunnels`, tunnel `kahoai`) to `localhost:8765`; PayTrace has no
-public address while this holds. Before calling, check the public URL reaches us: an unsigned
-`POST /answer` must give 403 *in our server log*. The Studio must be restarted after any change
-to `scripts/call.py`: it imports the dialler once (an unsigned pre-dial check from a Studio
-started before `6d0e90e` caused a misleading "WEBHOOK_SECRET does not match" error).
-`WEBHOOK_SECRET` was rotated 2026-10-25 after Claude printed it unmasked.
+**The Studio is now `backend/` (Node + Postgres, :8020, voice API :8021) + `frontend/` (React,
+Vite :5173).** The old Python Studio (`apps/voice/admin.py`, :8001) still runs but is superseded.
+The phone server reads each call's agent from the Studio (`studio_link.py`, `STUDIO_INTERNAL_URL`
+/ `STUDIO_INTERNAL_TOKEN` in `.env`) and sends outcomes and transcripts back; it falls back to
+`data/agents.json` if the Studio does not answer in 1.5s.
 
-**Owner actions open:** rotate the keys leaked into an earlier session log (Deepgram, Smallest,
-ElevenLabs, Cartesia, Google) and delete the Google key; fill the persona's placeholders ("NBFC
-Name", "[LOAN ID PLACEHOLDER]"), which the agent reads aloud. `backend/` (an untracked Node
-project, not ours) is deliberately not committed.
+**Running right now:** phone server on **:8765** (ngrok tunnel `kahoai` -> localhost:8765),
+Studio backend :8020/:8021 and the old Studio :8001 (both started by Claude this session), Vite
+:5173 (started by the other session). `WEBHOOK_SECRET` was rotated again 2026-10-25 (Claude
+printed it by grepping the server log unmasked: uvicorn's access lines carry `token=`); it is in
+`.env` and `backend/.env`. **Always mask log reads**: `sed -E 's/(token|stream|secret)=[^& "]*/\1=***/g'`.
 
-**Opening (2026-10-25):** notice at 0ms, greeting 1.30-1.49s after pickup on simulated calls
-(Deepgram connects in the background); the caller cannot interrupt the notice or greeting; a
-silent caller hears nothing more until they speak. Not yet timed on a real phone call (the
-network adds ~0.3s). Groq tool-call rejections are retried once without tools; junk leads like
-name "b" are refused.
+**Built this session (2026-10-25, evening), all test-first, pen-tested, verified in the browser:**
+contact editor (name, numbers, tags create/pick, Do not call in one place); bulk calls from a CSV
+through an agent (1-10 at once); agent call settings now real end to end (calling window, opening
+line, longest call, ring time); the sidebar folded / hover-open / pinnable, KahoAI heading with the
+organization as subheading; several organizations per account (create, switch, join by invite);
+phone and tablet layouts; Supabase TLS. **Concurrency measured** on simulated calls with real
+providers: 5 at once greeted in median 1.30s (worst 1.64s), 10 at once median 1.74s (worst 2.14s);
+the phone server caps at `WS_MAX_CONCURRENT_CALLS=10`. Not yet tried on real phones in parallel.
+
+**Test data Claude left in the local Studio DB:** organizations "QA Test Org" and "QA Staging" (and
+one with an `<img ...>` name from the pen test), accounts qa.owner@kaho.test / qa.member@kaho.test
+(passwords in the session scratchpad, not the repo), a fake number +918000000001 with fake Plivo
+credentials, and a few cancelled bulk runs. The owner's own organization is "Tredence" with
++918065520552. Delete the QA organizations when no longer useful (deleting an organization row
+cascades).
+
+**Owner actions open:** sign in again at localhost:5173 (Claude's test sign-in replaced the
+owner's session in the shared Chrome); rotate the keys leaked earlier (Deepgram, Smallest,
+ElevenLabs, Cartesia, Google) and delete the Google key; fill the persona's placeholders; give the
+Supabase connection string (session pooler, port 5432) and CA certificate when ready.
 
 Owner rules (in `CLAUDE.md`, "How we build"): test-first with the red run shown; pen-test before
 every push and report findings without fixing them; don't ask permission, list it at the end.
@@ -168,6 +175,12 @@ Commits this project, newest first:
 
 | Commit | What |
 |---|---|
+| `1573a09` | Docs: Studio-driven calls, bulk calls, concurrency, Supabase, organizations |
+| `ddd75bc` | Studio UI: contact editor, bulk calls page, hover/pinned sidebar, organization switcher, phone layouts |
+| `f472858` | Several organizations per account (memberships, session org, create/switch/join) |
+| `8c7ace3` | Supabase TLS (db/ssl.js); transaction pooler refused; also carries the BULK_* settings |
+| `a0cf533` | Bulk calls (BulkCall, bulkRunner, calling.js shared with single calls); its tests need f472858's helpers |
+| `bf13836` | Phone server reads agents from the Studio and reports outcomes/transcripts back (studio_link.py) |
 | `6f55232` | Caching the notice can never stop the server from starting (warm-up catches SystemExit; CI was red without keys) |
 | `ce6bbd3` | Docs: voice Suri, "KahoAI", fast opening, webhooks, pins |
 | `6d0e90e` | Calls: fast opening (`notice_audio.py`), voice failover in `CallHealth`, Plivo V3 signatures, stream tokens, conversation filters |
@@ -1495,3 +1508,36 @@ production). The voice pipeline (`apps/voice`) is unchanged.
   `recordings/`, `leads/` into a `voice/` folder. The dialler still carries the
   webhook token in the callback URL for compatibility with the running voice
   server; moving it out of the URL is part of that voice-server pass.
+
+### 2026-10-25 (evening), Claude session kahoai-voice-2d
+
+- Owner asked: phone-number edit and tag creation back in the contact editor; how many calls in
+  parallel; bulk calling from a CSV through any agent; every agent call setting working, nothing
+  demo; a fuller, prettier sidebar that stays folded and opens; phone/tablet/laptop; working invite
+  codes; Supabase. Then, mid-session: their number looked replaced; hover-to-open sidebar; "KahoAI"
+  heading with the organization as subheading; create more organizations; panel-style toggle.
+- Found: the new Studio and the phone server were not connected. The phone server read
+  data/agents.json, so a new-Studio agent was refused ("unknown agent") and opening line / prompt
+  edits never reached calls; only the calling window and ring time (both applied at dial) were real.
+  Fixed with studio_link.py; verified on a simulated call.
+- The "wrong number": Claude signed a test account into the owner's Chrome at localhost:5173 (one
+  cookie jar), so the owner saw the test organization's fake number. Nothing of theirs changed.
+  Claude signed the test account out; later browser tests used 127.0.0.1:5174 (its own cookies).
+- Tests: Python 761, backend 137, frontend 9 (node --test), all green; lints clean; build ok.
+- Pen test run live (local): bulk API with no consent, injected `parallel`, another org's agent /
+  number / bulk run, >1MB body, junk row shapes, SQL in numbers, XSS names in contacts/tags/bulk
+  rows/org names (rendered as text), cross-site Origin, no session, internal API without/wrong token
+  and on the LAN address, number edits to junk or guessed ids, switching into the owner's org,
+  junk invite codes: all refused or neutralised. Reasoned only: double-ring across two runs, run
+  fairness between organizations, consent being a checkbox.
+- Findings reported, not fixed (owner decides):
+  - uvicorn's access log writes `token=<WEBHOOK_SECRET>` for every /answer and /hangup (the cause
+    of both leaks this session). Medium.
+  - The same number in two bulk runs at once is called twice; nothing dedupes across runs. Medium.
+  - Bulk calls run at any hour unless the agent's calling window is switched on (it is off by
+    default); TRAI allows 09:00-21:00. Medium.
+  - Another organization's number id is accepted when a bulk run is created (the dial then refuses
+    it, so nothing rings). Low.
+  - One organization's big run can take all 10 slots (BULK_MAX_CONCURRENT is global). Low.
+  - A phone number belongs to one organization, so a new environment cannot reuse +918065520552.
+  - scripts/import-legacy.js predates organizations and would fail as written. Low.
