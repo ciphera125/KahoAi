@@ -1437,3 +1437,61 @@ first line must always be completed).**
 - Simulated calls' transcripts and recordings (fake number +910000000001) were deleted.
 - The backend session plans edits to server.py, recording.py, tools.py (leads writer),
   scripts/call.py, admin.py; it was told to pull this push first.
+
+**2026-10-25 (owner: finish the rebuild — organizations + strict RBAC, a calling
+window, the security fixes, paged contacts, real URLs; then commit and push).**
+Same `backend/` and new `frontend/`, both committed this time (not yet run in
+production). The voice pipeline (`apps/voice`) is unchanged.
+
+- **Organizations + RBAC (strict).** Anyone signing up without an invite creates
+  an organization and is its owner; an invite code joins that organization as a
+  member. Roles owner > admin > member. Every customer row carries `org_id`;
+  models filter by it AND PostgreSQL row-level security enforces it underneath,
+  so one team cannot read another's data even if a query forgets the filter.
+  The app runs as a restricted role `kaho_app` (no BYPASSRLS) inside per-request
+  transactions (`inOrg`); `asSystem` is the only cross-org path (sign-in, voice
+  service, imports). Proven by `tests/tenancy.test.js`, including a test that
+  connects as `kaho_app` and confirms it reads zero rows across teams and that a
+  cross-org INSERT is refused by the database.
+- **Calling window** per agent (Agents → Call settings): off by default, else
+  calls go through only between a start and end time in a chosen time zone
+  (overnight windows work). Outside it, placing a call returns the exact popup
+  message the owner asked for and dials no one. `Agent.inCallWindow` +
+  `tests/callwindow.test.js`.
+- **Contacts are paged and searched on the server** (`/api/contacts?page=&per_page=&q=`),
+  so the page stays fast at 100k+ contacts; a small `/contacts/lookup` feeds the
+  call form's type-ahead. DNC is in each contact's ⋯ menu; a DNC contact is never
+  dialled (TRAI) until someone clears it. `tests/paging.test.js`.
+- **Security fixes done (backend):** the voice-service API is on its own port
+  (:8021, 127.0.0.1), off the public one; the everyday rate limit is keyed per
+  session (so a whole office behind one address is not throttled as one person)
+  with a high per-IP flood ceiling above it; sign-in lockout is two-tier
+  (per email+address fast, per email slow) and lives in Postgres; sessions time
+  out after 12h idle as well as 7d; owners/admins can remove members and end
+  sessions at once; live-transcript streams are capped per user; start-up refuses
+  to boot if a port is taken, if `SECRETS_KEY` is wrong (a canary), or if RLS/the
+  restricted role is not in effect; provider credentials are encrypted at rest
+  (AES-256-GCM). Re-attacked live: CSRF/forged-origin/bad-Host/oversized/bad-JSON/
+  SQLi/path-traversal all refused, internal API 404 on the public port and 401
+  without its token, no secrets in the logs.
+- **Real URLs:** React Router, one path per screen. SPA fallback is required in
+  production (serve index.html for any path) — noted in `frontend/README.md`.
+- **Tests:** backend 108 (vitest + supertest on a real Postgres test DB), written
+  first; both lints clean; frontend builds.
+- **Storage stays as the owner is handling it:** data lives in local Postgres
+  (`kaho_studio`); the owner is moving Postgres + recordings to Supabase and gave
+  no URLs yet, so no cloud writes were added. The live-stream "each connection
+  polls the DB" is left for later by the owner's decision (the per-user cap is in).
+- **Running now:** backend `127.0.0.1:8020` (voice API :8021), frontend dev
+  `localhost:5173`. `backend/.env` holds fresh `SECRETS_KEY`/`INTERNAL_API_TOKEN`
+  and the call settings; it is gitignored.
+- **NOT done, scoped for next:** the voice-server (Python) hardening is a separate
+  tested pass — bind 127.0.0.1, reject replayed Plivo nonces, rate-limit `/answer`,
+  write `recordings/` and `leads/` as owner-only (0600), refuse to start if the
+  port is taken, and check DNC against the Studio API on outbound. These touch
+  live-call paths and need real-call verification, so they were not done blind in
+  this session. Also not done: wiring `apps/voice/server.py` to the new
+  `/internal/v1` API (it still reads `data/*.json`), and moving `apps/voice`,
+  `recordings/`, `leads/` into a `voice/` folder. The dialler still carries the
+  webhook token in the callback URL for compatibility with the running voice
+  server; moving it out of the URL is part of that voice-server pass.
