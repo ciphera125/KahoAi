@@ -30,9 +30,9 @@ cp .env.example .env            # fill SECRETS_KEY and INTERNAL_API_TOKEN (opens
 createdb kaho_studio
 npm install
 npm run migrate                 # also runs automatically on npm start
-npm run import:legacy           # one-off: copy data/ and logs/calls into Postgres
+npm run import:legacy -- --org-name "Acme"   # one-off: data/ and logs/calls into one organization (or --org org_...)
 npm start                       # public API :8020, voice-service API :8021 (127.0.0.1)
-npm test                        # 137 tests
+npm test                        # 144 tests
 npm run lint
 ```
 
@@ -50,7 +50,9 @@ call from and how many calls at once (1-10). `services/bulkRunner.js` runs every
 (2s) in each worker, one at a time through an advisory lock: it settles calls that ended (the
 voice service reports hang-ups to `/internal/v1/calls/:id`), then dials the next rows through the
 same `services/calling.js` as a single call, so Do not call, the calling window, the agent's ring
-time and longest call all apply. A row is never dialled twice. New numbers are added to Contacts.
+time and longest call all apply. A row is never dialled twice, and nobody called in the last
+`BULK_REPEAT_HOURS` (24) is called again. With the agent's calling window off, bulk calls still keep to
+09:00-21:00 India time. Organizations share `BULK_MAX_CONCURRENT` equally. New numbers are added to Contacts.
 
 ## Supabase
 

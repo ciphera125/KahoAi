@@ -147,7 +147,9 @@ API within `STUDIO_TIMEOUT_SECS` (1.5) and falls back to `data/agents.json` if i
 transcript lines (already masked) go back to the Studio in the background, never on the call path.
 Before this, an agent made in the new Studio was refused ("unknown agent") and edits never reached
 calls. Bulk calls (`backend/src/services/bulkRunner.js`) dial a CSV list through an agent, at most
-`BULK_MAX_CONCURRENT` (10, the phone server's `WS_MAX_CONCURRENT_CALLS`) at once. Measured on
+`BULK_MAX_CONCURRENT` (10, the phone server's `WS_MAX_CONCURRENT_CALLS`) at once, shared equally between
+organizations; nobody is called again within `BULK_REPEAT_HOURS` (24), and bulk calls keep to 09:00-21:00
+IST even when the agent's own window is off. The phone server's logs mask `token=`, `stream=`, `secret=`. Measured on
 simulated calls: 5 at once, greeting median 1.30s (worst 1.64s); 10 at once, median 1.74s (worst 2.14s).
 
 Webhooks: `/answer`, `/hangup` and `/transfer` need `WEBHOOK_SECRET` *and* Plivo's V3 signature

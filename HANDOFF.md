@@ -12,7 +12,7 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-25 (evening). **Everything is committed and pushed; CI #47 green on `b117c46`** (see section 2).
+Last updated: 2026-10-25 (evening). **Everything is committed and pushed** (see section 2). Every pen-test finding of 2026-10-25 is fixed.
 The voice is Smallest **`suri`** in English, backed up by ElevenLabs; LLM `openai/gpt-oss-20b`,
 effort medium, fallback off, GPT-OSS only, no qwen. Webhooks need Plivo's V3 signature; `/ws`
 needs a single-use stream token.
@@ -1530,17 +1530,27 @@ production). The voice pipeline (`apps/voice`) is unchanged.
   and on the LAN address, number edits to junk or guessed ids, switching into the owner's org,
   junk invite codes: all refused or neutralised. Reasoned only: double-ring across two runs, run
   fairness between organizations, consent being a checkbox.
-- Findings reported, not fixed (owner decides):
-  - uvicorn's access log writes `token=<WEBHOOK_SECRET>` for every /answer and /hangup (the cause
-    of both leaks this session). Medium.
-  - The same number in two bulk runs at once is called twice; nothing dedupes across runs. Medium.
-  - Bulk calls run at any hour unless the agent's calling window is switched on (it is off by
-    default); TRAI allows 09:00-21:00. Medium.
-  - Another organization's number id is accepted when a bulk run is created (the dial then refuses
-    it, so nothing rings). Low.
-  - One organization's big run can take all 10 slots (BULK_MAX_CONCURRENT is global). Low.
-  - A phone number belongs to one organization, so a new environment cannot reuse +918065520552.
-  - scripts/import-legacy.js predates organizations and would fail as written. Low.
+- Findings from the pen test: **all fixed later the same evening** at the owner's request (see the
+  entry below).
 - Pushed `bf13836`..`b117c46`; CI #47 green (1m37s). The other session pulled cleanly and stays out of
   backend/src and frontend/src. Still owed: a real phone call (ideally two at once) to confirm the
   Studio-driven opening line and timings on a live line.
+
+### 2026-10-25 (late evening), same session: the findings fixed
+
+Owner: "fix all the findings". Each one test-first (red shown, then green), then checked live:
+- uvicorn's logs wrote `token=<WEBHOOK_SECRET>` -> `MaskSecrets` filter on every uvicorn handler
+  (`uvicorn_log_config()`). Live: a probe and a simulated call left `token=***` in the log and the
+  real secret nowhere in it. Server logs are now safe to read, but keep masking reads anyway.
+- Same person on two lists called twice -> nobody is called again by a bulk call within
+  `BULK_REPEAT_HOURS` (24) of any call to them in that organization, bulk or by hand ("skipped:
+  already called in the last 24 hours").
+- Bulk calls at any hour when the agent's window is off -> they keep to 09:00-21:00 IST then.
+- Another organization's number accepted when a run is made -> refused at creation (and a number that
+  cannot call yet).
+- One organization taking all 10 slots -> with N organizations dialling, each gets at most 1/N.
+- `scripts/import-legacy.js` could not run (missing helper, no org_id) -> `importLegacy()` imports into
+  one organization (new, or `--org`), idempotent, tested.
+- Not a bug, left as designed: a phone number belongs to one organization, because inbound calls are
+  routed by number.
+- Tests: backend 144, phone server 765, frontend 9; lints clean.
