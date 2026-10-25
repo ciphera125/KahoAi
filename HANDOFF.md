@@ -12,7 +12,7 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-25 (evening). **Everything is committed and pushed** (see section 2).
+Last updated: 2026-10-25 (evening). **Everything is committed and pushed; CI #47 green on `b117c46`** (see section 2).
 The voice is Smallest **`suri`** in English, backed up by ElevenLabs; LLM `openai/gpt-oss-20b`,
 effort medium, fallback off, GPT-OSS only, no qwen. Webhooks need Plivo's V3 signature; `/ws`
 needs a single-use stream token.
@@ -1541,3 +1541,6 @@ production). The voice pipeline (`apps/voice`) is unchanged.
   - One organization's big run can take all 10 slots (BULK_MAX_CONCURRENT is global). Low.
   - A phone number belongs to one organization, so a new environment cannot reuse +918065520552.
   - scripts/import-legacy.js predates organizations and would fail as written. Low.
+- Pushed `bf13836`..`b117c46`; CI #47 green (1m37s). The other session pulled cleanly and stays out of
+  backend/src and frontend/src. Still owed: a real phone call (ideally two at once) to confirm the
+  Studio-driven opening line and timings on a live line.
