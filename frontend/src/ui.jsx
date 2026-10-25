@@ -1,6 +1,7 @@
 // Small shared pieces: icons, toast, modal, confirm, a dropdown menu, and a few
 // formatters. Kept together so the pages stay about their own screen.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 /* ---------- icons (same set as the original Studio) ---------- */
 const PATHS = {
@@ -16,7 +17,10 @@ const PATHS = {
   pencil: "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z", refresh: "M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6",
   check: "M20 6 9 17l-5-5", eye: "M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z",
   bell: "M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0", chat: "M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z",
-  back: "M15 18l-6-6 6-6", clock: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2",
+  back: "M15 18l-6-6 6-6", panel: "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2zM9 3v18",
+  updown: "M7 15l5 5 5-5M7 9l5-5 5 5", chevron: "M9 18l6-6-6-6", menu: "M4 6h16M4 12h16M4 18h16",
+  upload: "M12 15V3M7 8l5-5 5 5M5 21h14", bulk: "M12 2 2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5",
+  out: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9", clock: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 6v6l4 2",
 };
 export const Icon = ({ name, ...rest }) => (
   <svg className="i" viewBox="0 0 24 24" aria-hidden="true" {...rest}>
@@ -97,7 +101,8 @@ export function Modal({ title, onClose, wide, children }) {
     document.addEventListener("keydown", esc);
     return () => document.removeEventListener("keydown", esc);
   }, [onClose]);
-  return (
+  // Drawn on <body>, so a dialog opened from inside the sidebar is not clipped or styled by it.
+  return createPortal(
     <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
       <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
         <div className="card-head" style={{ marginBottom: "var(--s2)" }}>
@@ -106,7 +111,8 @@ export function Modal({ title, onClose, wide, children }) {
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 export function useConfirm() {

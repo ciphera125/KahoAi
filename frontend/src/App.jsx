@@ -1,4 +1,4 @@
-// Real URLs, one per screen: /dashboard, /calls, /contacts, /agents,
+// Real URLs, one per screen: /dashboard, /calls, /contacts, /bulk, /agents,
 // /agents/:id, /prompts, /numbers, /team. Each loads on its own. Signed out,
 // every path shows the sign-in screen; "/" sends you to the dashboard.
 import { Navigate, Route, Routes } from "react-router-dom";
@@ -14,6 +14,7 @@ import AgentDetail from "./pages/AgentDetail.jsx";
 import Prompts from "./pages/Prompts.jsx";
 import Numbers from "./pages/Numbers.jsx";
 import Team from "./pages/Team.jsx";
+import Bulk from "./pages/Bulk.jsx";
 
 export default function App() {
   const { me } = useAuth();
@@ -25,6 +26,8 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/calls" element={<Calls />} />
         <Route path="/contacts" element={<Contacts />} />
+        <Route path="/bulk" element={<Bulk />} />
+        <Route path="/bulk/:runId" element={<Bulk />} />
         <Route path="/agents" element={<Agents />} />
         <Route path="/agents/:agentId" element={<AgentDetail />} />
         <Route path="/prompts" element={<Prompts />} />

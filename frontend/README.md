@@ -1,7 +1,7 @@
 # Kaho AI Studio — frontend
 
 The Studio as a React single-page app, with a real URL per screen
-(`/dashboard`, `/calls`, `/contacts`, `/agents`, `/agents/:id`, `/prompts`,
+(`/dashboard`, `/calls`, `/contacts`, `/bulk`, `/bulk/:id`, `/agents`, `/agents/:id`, `/prompts`,
 `/numbers`, `/team`) instead of `#hash` routes. Talks to the backend over `/api`.
 
 ## Run
@@ -12,6 +12,7 @@ npm run dev        # http://localhost:5173, proxies /api to the backend (:8020)
 npm run build      # static files into dist/
 npm run preview    # serve the built app
 npm run lint
+npm test           # node --test: the CSV reader for bulk calls
 ```
 
 `VITE_API_TARGET` overrides where `/api` is proxied in dev (default
@@ -36,6 +37,8 @@ src/
   auth.jsx           who is signed in (mirrors /api/me; the server enforces access)
   ui.jsx             shared pieces: icons, toast, modal, confirm, menu, formatters
   styles.css         the design tokens, carried over from the original Studio
-  components/Layout  sidebar (real links), notifications, profile
+  csv.js             reads a call list (CSV, any column order, header optional)
+  components/Layout  sidebar (folded to icons, opens on hover, pinned by its panel button; a drawer on phones),
+                     the organization switcher (switch, create, join), notifications, profile
   pages/             one file per screen
 ```

@@ -29,6 +29,7 @@ export default function Team() {
           <div className="card-head"><span className="card-title">Invite a teammate</span></div>
           <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
             <span className="code" style={{ padding: "3px 8px", borderRadius: 4, background: "var(--surface-2)", border: "1px solid var(--border)" }}>{invite.code}</span>
+            <button type="button" className="ghost small-btn" onClick={() => navigator.clipboard.writeText(invite.code).then(() => toast("Invite code copied. They enter it when they create their account."), () => toast("Could not copy; select the code instead.", true))}>Copy</button>
             <button className="ghost small-btn" onClick={newInvite}>New code</button>
             <span className="hint">They enter this when creating their account. Works once, for a week.</span>
           </div>
