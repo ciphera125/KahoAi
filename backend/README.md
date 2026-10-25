@@ -32,9 +32,33 @@ npm install
 npm run migrate                 # also runs automatically on npm start
 npm run import:legacy           # one-off: copy data/ and logs/calls into Postgres
 npm start                       # public API :8020, voice-service API :8021 (127.0.0.1)
-npm test                        # 108 tests
+npm test                        # 137 tests
 npm run lint
 ```
+
+## Organizations
+
+One account can be in several organizations (separate environments), with a role in each
+(`memberships`). A session works in one at a time (`sessions.org_id`); `POST /api/orgs` makes a new
+one (you own it), `POST /api/orgs/:id/switch` moves this browser to another of yours, and
+`POST /api/orgs/join` joins one with its invite code. A phone number belongs to one organization.
+
+## Bulk calls
+
+`POST /api/bulk-calls` takes a list (up to 5,000 rows of `{name, number}`), an agent, a number to
+call from and how many calls at once (1-10). `services/bulkRunner.js` runs every `BULK_TICK_MS`
+(2s) in each worker, one at a time through an advisory lock: it settles calls that ended (the
+voice service reports hang-ups to `/internal/v1/calls/:id`), then dials the next rows through the
+same `services/calling.js` as a single call, so Do not call, the calling window, the agent's ring
+time and longest call all apply. A row is never dialled twice. New numbers are added to Contacts.
+
+## Supabase
+
+Use the **session pooler** or the direct connection (port 5432) as `DATABASE_URL`, never the
+transaction pooler (6543): migrations and the bulk runner take advisory locks and live transcripts
+LISTEN, which need a real session. TLS is switched on for Supabase hosts; set `DATABASE_SSL_CA` to
+Supabase's CA certificate (Project Settings > Database > SSL) so the server is verified, not just
+encrypted. Migrations create the restricted role `kaho_app` themselves.
 
 ## Tenant isolation (how one team never sees another's data)
 

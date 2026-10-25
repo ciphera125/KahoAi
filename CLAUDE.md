@@ -43,6 +43,8 @@ scalable.
 ```
 apps/voice/main.py       the pipeline (build_worker) and the local mic/speaker entrypoint
 apps/voice/server.py     phone entrypoint: Plivo calls (in and out) over a websocket
+apps/voice/studio_link.py  the phone server's link to the Studio (backend/): each call's agent from
+                         /internal/v1/call-config; outcomes and masked transcript lines sent back
 apps/voice/interruptions.py  which caller sounds may interrupt the agent (words, not noise or backchannel)
 apps/voice/duration_limit.py  hard ceiling on any call's length, enforced beside the pipeline
 apps/voice/personas.py   safe lookup of a persona by name (agent names can arrive from the network)
@@ -137,6 +139,16 @@ it: pickup to greeting 1.30-1.49s on simulated calls (2026-10-25). The greeting 
 `GREETING_LEAD_SECS` (0.8) before the notice ends; the notice is written into the recording.
 **The caller is muted through the notice and the whole greeting** (owner, 2026-10-25: the first
 line is always completed; a nearby voice once cut it to "Hello,"). From then on every word is heard.
+
+**The Studio drives the calls (2026-10-25).** With `STUDIO_INTERNAL_URL` and `STUDIO_INTERNAL_TOKEN`
+set, `/answer` reads the agent (prompt, opening line, tools, longest call) from the Studio's internal
+API within `STUDIO_TIMEOUT_SECS` (1.5) and falls back to `data/agents.json` if it does not answer;
+`/ws` reuses what `/answer` read, so nothing is fetched between pickup and greeting. Hang-ups and
+transcript lines (already masked) go back to the Studio in the background, never on the call path.
+Before this, an agent made in the new Studio was refused ("unknown agent") and edits never reached
+calls. Bulk calls (`backend/src/services/bulkRunner.js`) dial a CSV list through an agent, at most
+`BULK_MAX_CONCURRENT` (10, the phone server's `WS_MAX_CONCURRENT_CALLS`) at once. Measured on
+simulated calls: 5 at once, greeting median 1.30s (worst 1.64s); 10 at once, median 1.74s (worst 2.14s).
 
 Webhooks: `/answer`, `/hangup` and `/transfer` need `WEBHOOK_SECRET` *and* Plivo's V3 signature
 (`plivo_signature.py`, checked on a real call 2026-10-24); our own preflight signs its request
