@@ -8,7 +8,8 @@ from starlette.websockets import WebSocketDisconnect
 
 def stream_url(**call) -> str:
     """A /ws URL with a token as /answer would issue it for this call."""
-    base = {"caller": None, "agent": None, "max_secs": None, "studio_agent": None}
+    base = {"caller": None, "agent": None, "max_secs": None, "studio_agent": None,
+            "agent_config": None}
     return f"/ws?stream={server.issue_stream({**base, **call})}"
 
 
@@ -44,7 +45,7 @@ def test_answer_streams_call_audio_to_our_websocket(client):
     assert 'contentType="audio/x-mulaw;rate=8000"' in resp.text
     assert ">wss://kaho.example.com/ws?stream=" in resp.text and "s3cret" not in resp.text
     assert answered(resp) == {"caller": "+919999999999", "agent": None, "max_secs": 600,
-                              "studio_agent": None}
+                              "studio_agent": None, "agent_config": None}
 
 
 def test_answer_works_for_get_too(client):

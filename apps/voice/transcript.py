@@ -34,13 +34,15 @@ _ANY_DIGIT = re.compile(r"\d")
 
 
 class CallTranscript:
-    def __init__(self, call_id: str, directory: Path):
+    def __init__(self, call_id: str, directory: Path, sink=None):
         # The id comes from the network on a phone call, so it is not trusted to
         # be a safe filename.
         safe_id = _UNSAFE.sub("_", call_id)[:100] or "unknown"
         directory.mkdir(parents=True, exist_ok=True)
         self.call_id = call_id
         self.path = directory / f"{safe_id}.jsonl"
+        # Also handed every line as written, masked (studio_link.EventSink).
+        self.sink = sink
         self._ended = False
         self._held: list[dict] = []
         # What the caller has said so far, masked, for tools that must only act
@@ -56,6 +58,11 @@ class CallTranscript:
             record["text"] = mask_sensitive(record["text"])
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        if self.sink is not None:
+            try:
+                self.sink(record)
+            except Exception:  # noqa: BLE001 - the file is the record; the sink is extra
+                pass
 
     @staticmethod
     def _looks_like_fragment(text: str) -> bool:

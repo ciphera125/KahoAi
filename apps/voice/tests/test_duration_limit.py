@@ -16,7 +16,8 @@ from transcript import CallTranscript
 
 def stream_url(**call) -> str:
     """A /ws URL with a token as /answer would issue it for this call."""
-    base = {"caller": None, "agent": None, "max_secs": None, "studio_agent": None}
+    base = {"caller": None, "agent": None, "max_secs": None, "studio_agent": None,
+            "agent_config": None}
     return f"/ws?stream={server.issue_stream({**base, **call})}"
 
 
@@ -406,7 +407,7 @@ def test_an_outbound_answer_carries_agent_peer_and_max(client):
     resp = client.post("/answer?token=s3cret&agent=sales&peer=%2B919876543210&max=120")
     assert resp.status_code == 200
     assert answered(resp) == {"caller": "+919876543210", "agent": "sales", "max_secs": 120,
-                              "studio_agent": None}
+                              "studio_agent": None, "agent_config": None}
 
 
 def test_the_callee_is_the_number_the_tools_use_for_an_outbound_call(client):

@@ -36,6 +36,7 @@ import numbers_store
 import personas
 import plivo_signature
 import prompt_store
+import studio_link
 import uvicorn
 from dotenv import load_dotenv
 from duration_limit import configured_ceiling, enforce_max_duration, resolve_max_duration
@@ -320,13 +321,12 @@ async def answer(request: Request, token: str | None = Query(None)):
     # number routes to for an inbound call. Checked here, so a bad id never rings.
     studio_agent = first("studio_agent")
     if studio_agent:
-        config = agents_store.default_store().call_config(studio_agent)
+        config = await agent_config_for(agent_id=studio_agent)
         if config is None:
             logger.error("Refusing the call: unknown Studio agent")
             return Response("unknown agent", status_code=400)
     elif not peer:
-        studio_agent = agents_store.default_store().agent_for_number(first("To"))
-        config = agents_store.default_store().call_config(studio_agent)
+        config = await agent_config_for(number=first("To"))
     else:
         config = None
     if config:
@@ -335,7 +335,8 @@ async def answer(request: Request, token: str | None = Query(None)):
     logger.info(f"{'Outbound call to' if peer else 'Inbound call from'} {caller or 'unknown'}")
     apology = env("FAILURE_MESSAGE") or DEFAULT_APOLOGY
     stream_token = issue_stream({"caller": caller, "agent": agent, "max_secs": max_secs,
-                                 "studio_agent": config["agent_id"] if config else None})
+                                 "studio_agent": config["agent_id"] if config else None,
+                                 "agent_config": config})
     return Response(answer_xml(env("PUBLIC_HOST"), stream_token, apology),
                     media_type="text/xml")
 
@@ -395,16 +396,24 @@ async def hangup(request: Request, token: str | None = Query(None)):
     params = {**form, **parse_qs(request.url.query)}
     first = lambda key: (params.get(key) or [None])[0]  # noqa: E731
     call_id = first("CallUUID") or first("RequestUUID")
+    outcome = dict(
+        status=call_outcomes.classify(first("CallStatus"), first("HangupCauseName"),
+                                      first("BillDuration")),
+        cause=first("HangupCauseName"), duration_secs=first("BillDuration"),
+        request_uuid=first("RequestUUID"), peer=clean_caller(first("peer")),
+        direction=first("Direction"), agent_id=first("studio_agent"))
     try:
-        call_outcomes.default_log().record(
-            call_id or "",
-            status=call_outcomes.classify(first("CallStatus"), first("HangupCauseName"),
-                                          first("BillDuration")),
-            cause=first("HangupCauseName"), duration_secs=first("BillDuration"),
-            request_uuid=first("RequestUUID"), peer=clean_caller(first("peer")),
-            direction=first("Direction"), agent_id=first("studio_agent"))
+        call_outcomes.default_log().record(call_id or "", **outcome)
     except ValueError:
         logger.warning("Ignoring a hangup report with no usable call id")
+        return Response(status_code=200)
+    if outcome["duration_secs"] is not None:
+        try:
+            outcome["duration_secs"] = int(float(outcome["duration_secs"]))
+        except ValueError:
+            outcome["duration_secs"] = None
+    # Bounded and never raises: the local log above is the record either way.
+    await studio_link.report_outcome(call_id, outcome)
     return Response(status_code=200)
 
 
@@ -452,9 +461,14 @@ async def stream(websocket: WebSocket, stream: str | None = Query(None)):
         logger.error(f"Rejecting the stream: {e}")
         await websocket.close(code=1011)
         return
-    # Read again, not trusted from the URL: an agent deleted while the phone rang
-    # leaves this call on the default persona rather than failing it.
-    agent_config = agents_store.default_store().call_config(studio_agent)
+    if studio_link.configured():
+        # What /answer read from the Studio seconds ago: asking again would put a
+        # network round trip between pickup and the greeting.
+        agent_config = call.get("agent_config")
+    else:
+        # Read again, not trusted from the URL: an agent deleted while the phone rang
+        # leaves this call on the default persona rather than failing it.
+        agent_config = agents_store.default_store().call_config(studio_agent)
     if agent_config:
         limit = min(limit, agent_config["max_secs"])
     try:
@@ -549,6 +563,8 @@ async def _run_call(
         serializer.fail_open = not spoken
         await worker.cancel(reason="provider failure")
 
+    sink = studio_link.EventSink(call_id or "")
+    sink.start()
     worker = build_worker(
         transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id,
         caller_number=clean_caller(caller),
@@ -560,6 +576,7 @@ async def _run_call(
         tool_names=agent_config["tools"] if agent_config else None,
         opening_line=agent_config["opening_line"] if agent_config else None,
         notice_prespoken=notice_prespoken,
+        transcript_sink=sink,
     )
     if agent_config:
         worker.transcript.event("call_agent", agent_id=agent_config["agent_id"])
@@ -610,7 +627,33 @@ async def _run_call(
                 logger.error("The maximum-duration cutoff did not finish; leaving it")
         else:
             guard.cancel()
+        # Normally closed after the summary (main.py); this catches a call whose
+        # teardown never got that far, so its sender does not run on forever.
+        asyncio.create_task(_close_sink_later(sink))
     logger.info(f"Call {call_id} finished")
+
+
+SINK_GRACE_SECS = 90.0  # longer than any summary's own deadline
+
+
+async def _close_sink_later(sink) -> None:
+    await asyncio.sleep(SINK_GRACE_SECS)
+    await sink.close()
+
+
+async def agent_config_for(agent_id: str | None = None, number: str | None = None) -> dict | None:
+    """The Studio agent for a call: by its id (outbound) or by our number (inbound).
+    Read from the Studio when it is linked; if it cannot answer, from
+    data/agents.json, so a Studio that is down never stops a call ringing."""
+    store = agents_store.default_store()
+    if studio_link.configured():
+        try:
+            return await studio_link.call_config(agent_id=agent_id, number=number)
+        except studio_link.StudioUnavailable as e:
+            logger.warning(f"The Studio did not answer ({e}); using the local agents")
+    if agent_id is None:
+        agent_id = store.agent_for_number(number)
+    return store.call_config(agent_id)
 
 
 WARMUP_TIMEOUT_SECS = 5.0

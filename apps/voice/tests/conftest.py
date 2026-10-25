@@ -20,3 +20,6 @@ def _local_data_files(tmp_path, monkeypatch):
     monkeypatch.setenv("CALL_INDEX_PATH", str(tmp_path / "_call_index.json"))
     # Most tests post unsigned webhooks; test_server_agents turns the check back on.
     monkeypatch.setenv("PLIVO_VERIFY_SIGNATURE", "false")
+    # Never the real Studio: a developer's .env links to it (test_studio_link sets its own).
+    monkeypatch.delenv("STUDIO_INTERNAL_URL", raising=False)
+    monkeypatch.delenv("STUDIO_INTERNAL_TOKEN", raising=False)

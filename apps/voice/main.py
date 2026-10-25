@@ -1121,6 +1121,7 @@ def build_worker(
     tool_names: list[str] | None = None,
     opening_line: str | None = None,
     notice_prespoken: tuple | None = None,
+    transcript_sink=None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -1175,7 +1176,7 @@ def build_worker(
     # as text and with Aadhaar/PAN masked at the point of writing.
     call_id = call_id or datetime.now(UTC).strftime("local-%Y%m%dT%H%M%S")
     calls_dir = Path(env("CALL_LOG_DIR") or HERE.parent.parent / "logs" / "calls")
-    transcript = CallTranscript(call_id, calls_dir)
+    transcript = CallTranscript(call_id, calls_dir, sink=transcript_sink)
     if caller_number:
         # Who was on the other end, for the Studio's call history. A phone number,
         # not call content, so it goes in its own field rather than through masking.
@@ -1359,14 +1360,25 @@ def build_worker(
         transcript.end()
         # SUMMARY_ENABLED=false skips it. It runs after the call, so it adds no
         # latency for the caller, and it never raises into teardown.
+        summary_path = None
         if (env("SUMMARY_ENABLED") or "true").strip().lower() == "true":
-            await summarise_call(
+            summary_path = await summarise_call(
                 transcript.path,
                 env("GROQ_API_KEY"),
                 env("SUMMARY_MODEL_ID") or env("GROQ_MODEL_ID"),
                 attempts=int(env_float("SUMMARY_MAX_ATTEMPTS", DEFAULT_ATTEMPTS)),
                 deadline_secs=env_float("SUMMARY_DEADLINE_SECS", DEFAULT_DEADLINE_SECS),
             )
+        if transcript_sink is not None:
+            # The summary is made from the masked transcript; the Studio masks it again.
+            try:
+                if summary_path:
+                    text = json.loads(Path(summary_path).read_text(encoding="utf-8")).get("summary")
+                    if isinstance(text, str) and text:
+                        transcript_sink({"event": "summary", "summary": text})
+            except (OSError, ValueError):
+                pass
+            await transcript_sink.close()
 
     @worker.event_handler("on_pipeline_started")
     async def greet(worker, frame):
