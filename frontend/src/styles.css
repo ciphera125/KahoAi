@@ -326,3 +326,13 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
 .who .link { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; line-height: 1.4; }
 .shell.rail-wide .rail-text.brand { overflow: visible; }
+.badge { display: inline-block; font-size: 12px; padding: 2px 8px; border-radius: 9999px; background: var(--surface-2); color: var(--text-1); }
+.badge.ok { background: var(--ok-soft); color: var(--ok); }
+.badge.bad { background: var(--bad-soft, rgba(239,68,68,.12)); color: var(--bad); }
+.badge.warn { background: var(--warn-soft); color: var(--warn); }
+.settings-grid { display: grid; grid-template-columns: 180px 1fr; gap: 8px 16px; margin: 0; }
+.settings-grid dt { font-weight: 500; color: var(--text-2); }
+.settings-grid dd { margin: 0; }
+.tab-btn { padding: 8px 16px; border: none; background: none; cursor: pointer; font: inherit; color: var(--text-2); border-bottom: 2px solid transparent; }
+.tab-btn.active { color: var(--text-1); border-bottom-color: var(--accent); font-weight: 600; }
+.tab-btn:hover { color: var(--text-1); }

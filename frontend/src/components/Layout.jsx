@@ -7,8 +7,9 @@ import { useAuth } from "../auth.jsx";
 import { ago, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
 
 const NAV = [
-  ["Operate", [["dashboard", "dash", "Dashboard"], ["calls", "call", "Calls"], ["bulk", "bulk", "Bulk calls"], ["contacts", "contacts", "Contacts"]]],
+  ["Operate", [["dashboard", "dash", "Dashboard"], ["calls", "call", "Calls"], ["live", "live", "Live"], ["bulk", "bulk", "Bulk calls"], ["contacts", "contacts", "Contacts"]]],
   ["Configure", [["agents", "agent", "Agents"], ["prompts", "prompt", "Prompts"], ["numbers", "numbers", "Numbers"], ["team", "team", "Team"]]],
+  ["Inspect", [["tool-calls", "tool", "Tool Calls"], ["tags", "tag", "Tags"], ["errors", "warn", "Error Logs"], ["settings", "settings", "Settings"]]],
 ];
 const RAIL_KEY = "kaho.rail.open";
 const readRail = () => { try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } };
