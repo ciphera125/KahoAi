@@ -7,4 +7,5 @@ router.get("/call-config", internal.callConfig);
 router.put("/calls/:callId", internal.recordOutcome);
 router.get("/dnc", internal.dnc);
 router.post("/calls/:callId/events", internal.ingest);
+router.post("/errors", internal.reportError);
 export default router;

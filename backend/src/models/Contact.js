@@ -10,7 +10,7 @@ const MAX_NAME = 80;
 const MAX_NUMBERS = 50;
 export const PAGE_SIZES = [10, 20, 25, 50, 100];
 
-const SHOW = `SELECT c.id, c.name, c.dnc, c.created_at,
+const SHOW = `SELECT c.id, c.name, c.dnc, c.consent, c.created_at,
     coalesce((SELECT array_agg(ct.tag_id ORDER BY ct.position) FROM contact_tags ct WHERE ct.contact_id = c.id), '{}') AS tags,
     coalesce((SELECT json_agg(json_build_object('id', n.id, 'number', n.number, 'tags',
         coalesce((SELECT array_agg(nt.tag_id ORDER BY nt.position) FROM contact_number_tags nt WHERE nt.number_id = n.id), '{}'))
@@ -25,7 +25,7 @@ const CALL_STATS = `,
       ORDER BY k.started_at DESC NULLS LAST LIMIT 1) AS last_call`;
 
 const shape = (r) => ({ id: r.id, name: r.name, created_at: r.created_at.toISOString(), tags: r.tags, numbers: r.numbers,
-  dnc: r.dnc, ...(r.call_count !== undefined ? { call_count: r.call_count, last_call: r.last_call } : {}) });
+  dnc: r.dnc, consent: r.consent, ...(r.call_count !== undefined ? { call_count: r.call_count, last_call: r.last_call } : {}) });
 
 const name = (raw) => cleanText(raw, MAX_NAME, "name");
 
@@ -60,7 +60,7 @@ const likeEscape = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 
 /** One page of contacts, oldest first, matching `q` (a name, part of a number,
  * or a tag) if given, with how many calls each had and the newest one. */
-export async function page(orgId, { page: p = 1, perPage = 25, q = "" } = {}) {
+export async function page(orgId, { page: p = 1, perPage = 25, q = "", consent } = {}) {
   const size = Number(perPage);
   if (!PAGE_SIZES.includes(size)) throw new ValidationError(`per_page must be one of ${PAGE_SIZES.join(", ")}`);
   const n = Math.max(1, Math.floor(Number(p)) || 1);
@@ -68,6 +68,10 @@ export async function page(orgId, { page: p = 1, perPage = 25, q = "" } = {}) {
   const digits = text.replace(/\D/g, "");
   const params = [orgId];
   let where = "c.org_id = $1";
+  if (consent && ["pending", "given", "refused"].includes(consent)) {
+    params.push(consent);
+    where += ` AND c.consent = $${params.length}`;
+  }
   if (text) {
     params.push(`%${likeEscape(text.toLowerCase())}%`);
     const conds = [`lower(c.name) LIKE $${params.length}`,
@@ -134,6 +138,11 @@ export async function update(orgId, id, body) {
       }
     }
     if ("dnc" in body) await db.query("UPDATE contacts SET dnc = $1 WHERE id = $2 AND org_id = $3", [body.dnc === true, id, orgId]);
+    if ("consent" in body) {
+      const v = String(body.consent);
+      if (!["pending", "given", "refused"].includes(v)) throw new ValidationError("consent must be pending, given or refused");
+      await db.query("UPDATE contacts SET consent = $1 WHERE id = $2 AND org_id = $3", [v, id, orgId]);
+    }
     return show(db, orgId, id);
   });
 }

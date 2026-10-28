@@ -75,6 +75,27 @@ describe("contacts", () => {
     expect((await b.patch(`/api/contacts/${c.id}`).send({ dnc: "yes" })).body.dnc).toBe(false);
   });
 
+  it("tracks consent: new contacts start as pending, can be set to given or refused, and the list filters by it", async () => {
+    const b = await owner();
+    await line(b);
+    const c1 = (await b.post("/api/contacts").send({ name: "Asha" })).body;
+    expect(c1.consent).toBe("pending");
+    expect((await b.patch(`/api/contacts/${c1.id}`).send({ consent: "given" })).body.consent).toBe("given");
+    const c2 = (await b.post("/api/contacts").send({ name: "Ravi" })).body;
+    expect(c2.consent).toBe("pending");
+    expect((await b.patch(`/api/contacts/${c2.id}`).send({ consent: "refused" })).body.consent).toBe("refused");
+    expect((await b.patch(`/api/contacts/${c2.id}`).send({ consent: "junk" })).body.error).toBeTruthy();
+    // Filter: all, consented, refused
+    const all = (await b.get("/api/contacts")).body.contacts;
+    expect(all).toHaveLength(2);
+    const consented = (await b.get("/api/contacts?consent=given")).body.contacts;
+    expect(consented).toHaveLength(1);
+    expect(consented[0].name).toBe("Asha");
+    const refused = (await b.get("/api/contacts?consent=refused")).body.contacts;
+    expect(refused).toHaveLength(1);
+    expect(refused[0].name).toBe("Ravi");
+  });
+
   it("bulk deletes, owner only, and members still do the daily work", async () => {
     const o = await owner();
     await line(o);

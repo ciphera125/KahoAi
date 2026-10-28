@@ -2,6 +2,7 @@
 import * as Agent from "../models/Agent.js";
 import * as Call from "../models/Call.js";
 import * as Contact from "../models/Contact.js";
+import * as ErrorLog from "../models/ErrorLog.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 
 /** Never an error: a call must start even if this lookup fails. */
@@ -27,5 +28,11 @@ export async function dnc(req, res) {
 
 export async function ingest(req, res) {
   await Call.ingest(req.params.callId, req.body?.events);
+  res.json({ ok: true });
+}
+
+export async function reportError(req, res) {
+  const { level, source, message, call_id, org_id } = req.body ?? {};
+  await ErrorLog.add(org_id || null, { level, source, message, call_id });
   res.json({ ok: true });
 }

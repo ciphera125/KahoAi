@@ -3,7 +3,7 @@ import * as Tag from "../models/Tag.js";
 import { note } from "./notify.js";
 
 export async function list(req, res) {
-  res.json(await Contact.page(req.user.org_id, { page: req.query.page, perPage: req.query.per_page ?? 25, q: req.query.q }));
+  res.json(await Contact.page(req.user.org_id, { page: req.query.page, perPage: req.query.per_page ?? 25, q: req.query.q, consent: req.query.consent }));
 }
 
 export async function lookup(req, res) {
