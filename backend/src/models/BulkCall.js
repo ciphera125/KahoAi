@@ -193,14 +193,22 @@ export async function claim(runId, n) {
   return rows.sort((a, b) => a.position - b.position);
 }
 
+// Only these columns may be set dynamically — everything else is silently
+// dropped, so a future caller that accidentally passes user input cannot
+// inject column names into the UPDATE statement.
+const ITEM_COLS = new Set(["status", "reason", "call_id", "outcome", "placed_at", "finished_at"]);
+const RUN_COLS = new Set(["status", "waiting"]);
+
 export async function mark(itemId, fields) {
-  const cols = Object.keys(fields);
+  const cols = Object.keys(fields).filter((c) => ITEM_COLS.has(c));
+  if (!cols.length) return;
   await asSystem((db) => db.query(`UPDATE bulk_items SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(", ")} WHERE id = $1`,
     [itemId, ...cols.map((c) => fields[c])]));
 }
 
 export async function setRun(runId, fields) {
-  const cols = Object.keys(fields);
+  const cols = Object.keys(fields).filter((c) => RUN_COLS.has(c));
+  if (!cols.length) return;
   await asSystem((db) => db.query(`UPDATE bulk_runs SET ${cols.map((c, i) => `${c} = $${i + 2}`).join(", ")}, updated_at = now()
     WHERE id = $1`, [runId, ...cols.map((c) => fields[c])]));
 }

@@ -3,7 +3,7 @@ import * as ws from "../controllers/workspaceController.js";
 import * as auth from "../controllers/authController.js";
 import * as orgs from "../controllers/orgController.js";
 import { authLimiter } from "../middleware/rateLimit.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requireAdmin, requireOwner } from "../middleware/auth.js";
 
 const router = Router();
 router.get("/me", ws.me);
@@ -17,6 +17,6 @@ router.post("/orgs", orgs.create);
 router.post("/orgs/join", authLimiter, orgs.join);
 router.post("/orgs/:orgId/switch", orgs.switchTo);
 router.get("/team", auth.team);
-router.patch("/team/:userId", auth.changeRole);
+router.patch("/team/:userId", requireOwner, auth.changeRole);
 router.delete("/team/:userId", requireAdmin, auth.removeMember);
 export default router;

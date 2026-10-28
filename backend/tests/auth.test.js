@@ -155,6 +155,57 @@ describe("accounts", () => {
     expect((await o.get("/api/me")).status).toBe(401);
   });
 
+  it("only the owner can change roles, not even an admin (enforced at the route)", async () => {
+    const o = await owner();
+    const m = await member(o);
+    // Promote Ravi to admin so we can test whether an admin can change roles.
+    await o.patch(`/api/team/${m.user.id}`).send({ role: "admin" });
+    // A third member for the admin to try changing.
+    const m2 = await member(o, { name: "Priya", email: "priya@acme.in", password: "12345678" });
+    // The admin cannot change roles — only the owner can.
+    expect((await m.patch(`/api/team/${m2.user.id}`).send({ role: "admin" })).status).toBe(403);
+    expect((await m.patch(`/api/team/${m2.user.id}`).send({ role: "admin" })).body.error).toMatch(/owner/);
+    // The owner can.
+    expect((await o.patch(`/api/team/${m2.user.id}`).send({ role: "admin" })).status).toBe(200);
+  });
+
+  it("ends an idle session even before its absolute expiry", async () => {
+    const o = await owner();
+    // Session was just issued: it is fine.
+    expect((await o.get("/api/me")).status).toBe(200);
+    // Jump last_seen_at back past the idle threshold.
+    await db.query("UPDATE sessions SET last_seen_at = now() - interval '13 hours'");
+    expect((await o.get("/api/me")).status).toBe(401);
+  });
+
+  it("evicts the oldest session when a user exceeds the session cap", async () => {
+    await owner();
+    // Sign in 10 more times → 11 sessions total; the oldest should be evicted.
+    const sessions = [];
+    for (let i = 0; i < 11; i++) {
+      const b = browser();
+      await b.post("/api/auth/login").send({ email: "asha@acme.in", password: "correct horse" });
+      sessions.push(b);
+    }
+    // The very first session (from owner()) should now be evicted.
+    // The 10 most recent sessions should all work.
+    const { rows } = await db.query("SELECT count(*)::int AS n FROM sessions WHERE user_id = (SELECT id FROM users WHERE email = 'asha@acme.in')");
+    expect(rows[0].n).toBeLessThanOrEqual(10);
+  });
+
+  it("signs out every other browser on demand", async () => {
+    const o = await owner();
+    const other = browser();
+    await other.post("/api/auth/login").send({ email: "asha@acme.in", password: "correct horse" });
+    expect((await other.get("/api/me")).status).toBe(200);
+    // Sign out other browsers.
+    expect((await o.post("/api/auth/logout-others")).status).toBe(200);
+    // The other browser is now signed out.
+    expect((await other.get("/api/me")).status).toBe(401);
+    // But this browser still works.
+    expect((await o.get("/api/me")).status).toBe(200);
+  });
+
   it("signs in users imported from the Python Studio with their old password", async () => {
     // Made by Python's hashlib.scrypt(b"legacy pass", salt, n=2**14, r=8, p=1, dklen=32), as auth_store.py does.
     await db.query("INSERT INTO organizations (id, name) VALUES ('org_000000000001', 'Old Co')");

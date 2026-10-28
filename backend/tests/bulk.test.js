@@ -200,10 +200,15 @@ describe("who sees a bulk call", () => {
     expect((await b.get("/api/bulk-calls")).body.map((r) => r.id)).toEqual([run.id]);
   });
 
-  it("a member can start and watch one too", async () => {
+  it("only an admin or the owner can start a bulk call; members can still watch", async () => {
     const { b, n, a } = await setup();
     const m = await member(b);
-    expect((await start(m, { agent_id: a.id, from_id: n.id, rows: rows(1) })).status).toBe(200);
+    // A plain member cannot start a bulk call (it affects the org's phone budget).
+    expect((await start(m, { agent_id: a.id, from_id: n.id, rows: rows(1) })).status).toBe(403);
+    // But they can list and inspect runs started by someone else.
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(1) })).body;
+    expect((await m.get("/api/bulk-calls")).body.map((r) => r.id)).toEqual([run.id]);
+    expect((await m.get(`/api/bulk-calls/${run.id}`)).body.id).toBe(run.id);
   });
 });
 

@@ -92,9 +92,18 @@ export async function add(orgId, { provider, number, label, credentials: given }
   if (missing.length) throw new ValidationError(`missing: ${missing.join(", ")}`);
   await ensureSeeded(orgId);
   // A number belongs to one organization, since inbound calls on it are routed by it.
-  const owner = (await asSystem((db) => db.query("SELECT org_id FROM phone_numbers WHERE number = $1", [number]))).rows[0];
-  if (owner) throw new ValidationError(owner.org_id === orgId ? `${number} is already added` : `${number} is already in use`);
+  const existing = (await asSystem((db) => db.query("SELECT id, org_id, env_backed FROM phone_numbers WHERE number = $1", [number]))).rows[0];
+  if (existing && !(existing.env_backed && existing.org_id === orgId))
+    throw new ValidationError(existing.org_id === orgId ? `${number} is already added` : `${number} is already in use`);
   try {
+    if (existing) {
+      // Env-seeded number in the same org: upgrade with explicit credentials.
+      return await inOrg(orgId, async (db) => {
+        const { rows } = await db.query(`UPDATE phone_numbers SET provider = $1, label = $2, credentials_enc = $3, env_backed = false
+          WHERE id = $4 AND org_id = $5 RETURNING *`, [provider, String(label ?? "").trim().slice(0, 80), encryptJson(clean), existing.id, orgId]);
+        return toPublic(rows[0]);
+      });
+    }
     return await inOrg(orgId, async (db) => {
       const first = !(await db.query("SELECT 1 FROM phone_numbers WHERE org_id = $1 LIMIT 1", [orgId])).rowCount;
       const { rows } = await db.query(`INSERT INTO phone_numbers (id, provider, number, label, credentials_enc, is_default, org_id)
