@@ -1,35 +1,80 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
+import { isAdmin, useMe } from "../auth.jsx";
 import { fmtDur, Icon, initials, Menu, Modal, OutcomePill, plural, Spinner, useConfirm, useToast, whenShort } from "../ui.jsx";
 
-const PER_PAGE = 25;
+const TABS = [
+  { key: "all", label: "All" },
+  { key: "given", label: "Consented" },
+  { key: "refused", label: "DNC" },
+];
+const PER_OPTIONS = [10, 25, 50, 100];
 
 export default function Contacts() {
+  const me = useMe();
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
   const [data, setData] = useState(null);
   const [tags, setTags] = useState([]);
   const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
   const [q, setQ] = useState("");
-  const [editing, setEditing] = useState(null); // contact or {} for new
+  const [tab, setTab] = useState("all");
+  const [selected, setSelected] = useState(new Set());
+  const [editing, setEditing] = useState(null);
   const debounce = useRef();
 
-  const load = useCallback(() => get(`/api/contacts?page=${page}&per_page=${PER_PAGE}&q=${encodeURIComponent(q)}`).then(setData).catch((e) => toast(e.message, true)), [page, q, toast]);
+  const consent = tab === "all" ? "" : tab === "refused" ? "refused" : "given";
+  const load = useCallback(() => {
+    let url = `/api/contacts?page=${page}&per_page=${perPage}&q=${encodeURIComponent(q)}`;
+    if (consent) url += `&consent=${consent}`;
+    get(url).then((d) => { setData(d); setSelected(new Set()); }).catch((e) => toast(e.message, true));
+  }, [page, perPage, q, consent, toast]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { get("/api/tags").then(setTags).catch(() => {}); }, [editing]);
 
   const onSearch = (e) => { const v = e.target.value; clearTimeout(debounce.current); debounce.current = setTimeout(() => { setPage(1); setQ(v); }, 250); };
+  const switchTab = (key) => { setTab(key); setPage(1); };
   const tagById = (id) => tags.find((t) => t.id === id);
+
+  const toggleAll = () => {
+    if (!data) return;
+    const ids = data.contacts.map((c) => c.id);
+    setSelected((s) => (s.size === ids.length ? new Set() : new Set(ids)));
+  };
+  const toggleOne = (id) => setSelected((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
   const toggleDnc = async (c) => {
     try { await patch(`/api/contacts/${c.id}`, { dnc: !c.dnc }); toast(c.dnc ? `${c.name} can be called again.` : `${c.name} will not be called.`); load(); }
+    catch (e) { toast(e.message, true); }
+  };
+  const setConsent = async (c, v) => {
+    try { await patch(`/api/contacts/${c.id}`, { consent: v }); toast(`Consent set to ${v}.`); load(); }
     catch (e) { toast(e.message, true); }
   };
   const remove = async (c) => {
     if (!(await confirm({ title: `Delete ${c.name}?`, text: "Their numbers and tags go with them. Call history is kept.", ok: "Delete" }))) return;
     await del(`/api/contacts/${c.id}`); toast("Contact deleted."); load();
   };
+  const bulkAction = async (action) => {
+    if (!selected.size) return toast("Select contacts first.", true);
+    const ids = [...selected];
+    if (action === "delete") {
+      if (!(await confirm({ title: `Delete ${ids.length} contacts?`, text: "Their numbers and tags go with them.", ok: "Delete" }))) return;
+      for (const id of ids) await del(`/api/contacts/${id}`).catch(() => {});
+      toast(`${ids.length} contacts deleted.`);
+    } else if (action === "dnc") {
+      for (const id of ids) await patch(`/api/contacts/${id}`, { dnc: true }).catch(() => {});
+      toast(`${ids.length} contacts marked Do not call.`);
+    } else if (action === "consent-given") {
+      for (const id of ids) await patch(`/api/contacts/${id}`, { consent: "given" }).catch(() => {});
+      toast(`${ids.length} contacts marked as consented.`);
+    }
+    load();
+  };
+
+  const totalPages = data ? Math.ceil(data.total / perPage) : 0;
 
   return (
     <section>
@@ -40,43 +85,75 @@ export default function Contacts() {
           <button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New contact</button>
         </div>
       </header>
+
+      <div className="notice-bar" style={{ marginBottom: "var(--s4)", padding: "var(--s3) var(--s4)", background: "var(--warn-soft)", borderRadius: "var(--r-lg)", fontSize: 13 }}>
+        Outbound calls require the person's consent under India's TRAI/DND rules. Mark contacts as Consented before calling them.
+      </div>
+
       <div className="card list">
+        <div className="tabs-bar" style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", marginBottom: "var(--s3)" }}>
+          {TABS.map((t) => (
+            <button key={t.key} type="button" className={`tab-btn${tab === t.key ? " active" : ""}`} onClick={() => switchTab(t.key)}>{t.label}</button>
+          ))}
+        </div>
+
         <div className="list-bar">
           <span className="muted">{data ? plural(data.total, "contact") : ""}</span>
+          {selected.size > 0 && (
+            <span className="list-actions" style={{ display: "flex", gap: 8, marginLeft: 12 }}>
+              <button className="ghost small-btn" onClick={() => bulkAction("consent-given")}>Mark consented</button>
+              <button className="ghost small-btn" onClick={() => bulkAction("dnc")}>Mark DNC</button>
+              {isAdmin(me) && <button className="ghost small-btn bad" onClick={() => bulkAction("delete")}>Delete</button>}
+            </span>
+          )}
           <span className="grow" />
           <input type="search" placeholder="Search name, number or tag" onChange={onSearch} />
         </div>
-        <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) 56px" }}>
-          <span>Name</span><span>Number</span><span>Tags</span><span>Last call</span><span />
+
+        <div className="row head" style={{ gridTemplateColumns: "32px minmax(0,1.3fr) minmax(0,1fr) minmax(0,0.8fr) 80px minmax(0,1fr) 56px" }}>
+          <span><input type="checkbox" checked={data?.contacts.length > 0 && selected.size === data?.contacts.length} onChange={toggleAll} aria-label="Select all" /></span>
+          <span>Name</span><span>Number</span><span>Tags</span><span>Consent</span><span>Last call</span><span />
         </div>
         {!data && <Spinner />}
-        {data?.contacts.length === 0 && <div className="empty">{q ? "No contacts match that search." : "No contacts yet. Add one with “New contact”."}</div>}
+        {data?.contacts.length === 0 && <div className="empty">{q ? "No contacts match that search." : 'No contacts yet. Add one with “New contact”.'}</div>}
         {data?.contacts.map((c) => {
           const first = c.numbers[0];
           const lc = c.last_call;
+          const consentBadge = c.consent === "given" ? "ok" : c.consent === "refused" ? "bad" : "";
           return (
-            <div key={c.id} className="row" style={{ gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr) minmax(0,1fr) minmax(0,1.1fr) 56px" }}>
+            <div key={c.id} className="row" style={{ gridTemplateColumns: "32px minmax(0,1.3fr) minmax(0,1fr) minmax(0,0.8fr) 80px minmax(0,1fr) 56px" }}>
+              <span><input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} aria-label={`Select ${c.name}`} /></span>
               <div className="who"><div className="avatar">{initials(c.name)}</div>
                 <div style={{ minWidth: 0 }}><button type="button" className="link ellip" onClick={() => setEditing(c)}>{c.name}</button>{c.dnc ? <span className="pill dnc" style={{ height: 20, fontSize: 11, marginTop: 4 }}>Do not call</span> : <div className="muted">{c.call_count ? plural(c.call_count, "call") : "Not called yet"}</div>}</div>
               </div>
               <div className="num ellip">{first ? first.number : <span className="muted">No number</span>}{c.numbers.length > 1 && <span className="muted">  +{c.numbers.length - 1}</span>}</div>
               <div className="tags">{(c.tags || []).map((id) => { const t = tagById(id); return t ? <span key={id} className="tag" style={{ "--tc": `var(--t-${t.color})` }}>{t.name}</span> : null; })}</div>
+              <span><span className={`badge ${consentBadge}`}>{c.consent || "pending"}</span></span>
               <div style={{ minWidth: 0 }}>{lc ? <div><div className="muted">{whenShort(lc.started_at)}</div><div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}><OutcomePill status={lc.status} />{lc.status === "answered" && lc.duration_secs != null && <span className="muted">{fmtDur(lc.duration_secs)}</span>}</div></div> : <span className="muted">—</span>}</div>
               <div className="row-actions">
                 <Menu items={[
                   ["Edit", () => setEditing(c)],
                   [c.dnc ? "Allow calls again" : "Mark Do not call", () => toggleDnc(c)],
-                  ["Delete", () => remove(c), true],
-                ]} />
+                  c.consent !== "given" && ["Mark consented", () => setConsent(c, "given")],
+                  c.consent !== "refused" && ["Mark refused", () => setConsent(c, "refused")],
+                  isAdmin(me) && ["Delete", () => remove(c), true],
+                ].filter(Boolean)} />
               </div>
             </div>
           );
         })}
-        {data && data.total > PER_PAGE && (
-          <div className="pager">
-            <span>Page {data.page} of {Math.ceil(data.total / PER_PAGE)}</span>
+        {data && (
+          <div className="pager" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <span>Page {data.page} of {totalPages || 1}</span>
             <button className="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button>
-            <button className="ghost" disabled={page * PER_PAGE >= data.total} onClick={() => setPage((p) => p + 1)}>Next</button>
+            <button className="ghost" disabled={page * perPage >= data.total} onClick={() => setPage((p) => p + 1)}>Next</button>
+            <span className="grow" />
+            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
+              Rows per page
+              <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }} style={{ width: 64 }}>
+                {PER_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
+              </select>
+            </label>
           </div>
         )}
       </div>
@@ -201,7 +278,7 @@ function TagPicker({ tags, picked, setPicked, onCreate }) {
               <span className="tag" style={{ "--tc": `var(--t-${t.color})` }}>{t.name}</span>
             </button>
           ))}
-          {q && !exact && <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={create}><span><Icon name="plus" /> Create tag “{text.trim()}”</span></button>}
+          {q && !exact && <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={create}><span><Icon name="plus" /> Create tag "{text.trim()}"</span></button>}
         </div>
       )}
     </div>

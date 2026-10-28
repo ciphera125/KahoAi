@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { get, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
 import { fmtTalk, Icon, OutcomePill, plural, Spinner, useToast, whenShort } from "../ui.jsx";
@@ -8,9 +9,30 @@ export default function Dashboard() {
   const toast = useToast();
   const [days, setDays] = useState(30);
   const [d, setD] = useState(null);
+  const [err, setErr] = useState(null);
   const [syncing, setSyncing] = useState(false);
-  const load = () => get(`/api/dashboard?days=${days}`).then(setD).catch((e) => toast(e.message, true));
+  const [active, setActive] = useState(null);
+  const load = () => { setErr(null); get(`/api/dashboard?days=${days}`).then(setD).catch((e) => { setErr(e.message); toast(e.message, true); }); };
   useEffect(() => { setD(null); load(); /* eslint-disable-next-line */ }, [days]);
+  useEffect(() => {
+    const poll = () => get("/api/calls/active").then((c) => setActive(c.length)).catch(() => {});
+    poll();
+    const t = setInterval(poll, 10000);
+    return () => clearInterval(t);
+  }, []);
+
+  if (err && !d) {
+    return (
+      <section>
+        <header className="page"><div><h1>Overview</h1></div></header>
+        <div className="card"><div className="empty">Could not load the dashboard. {err}</div>
+          <div className="actions" style={{ justifyContent: "flex-start", marginTop: "var(--s3)" }}>
+            <button className="ghost" onClick={load}><Icon name="refresh" />Retry</button>
+          </div>
+        </div>
+      </section>
+    );
+  }
   if (!d) return <Spinner />;
 
   const t = d.totals, finished = t.calls - t.ringing;
@@ -29,6 +51,12 @@ export default function Dashboard() {
       <header className="page">
         <div><h1>Overview</h1><div className="sub">How your calls are going: who picked up, who talked, and when.</div></div>
         <div className="head-actions">
+          {active > 0 && (
+            <Link to="/live" className="btn ghost" style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", background: "var(--ok)", display: "inline-block" }} />
+              {plural(active, "call")} live
+            </Link>
+          )}
           <select value={days} onChange={(e) => setDays(Number(e.target.value))} style={{ width: 150 }}>
             <option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option>
           </select>
