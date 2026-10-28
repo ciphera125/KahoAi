@@ -126,6 +126,9 @@ h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.01em; }
 
 /* controls */
 .field { display: grid; gap: 6px; margin-bottom: var(--s4); }
+input.err, select.err, textarea.err { border-color: var(--bad); }
+.field-err { font-size: 12px; color: var(--bad); }
+.btn-spinner { width: 14px; height: 14px; border-width: 2px; display: inline-block; vertical-align: middle; margin-right: 6px; border-color: rgba(255,255,255,.35); border-top-color: #fff; }
 .f { font-size: 13px; font-weight: 500; }
 input, select, textarea { width: 100%; height: var(--field); padding: 0 10px; border-radius: var(--r-md); outline: none; color: var(--text); font: 400 14px/1.4 var(--sans); background: var(--surface); border: 1px solid var(--border-strong); }
 input[type=tel], input[type=number], input[type=time] { font-family: var(--mono); }
