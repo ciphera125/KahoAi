@@ -178,6 +178,15 @@ export async function page(orgId, { page: p, perPage, peers = null }) {
   });
 }
 
+/** Calls currently in progress (ringing or on the line in the last 2 minutes). */
+export async function activeCalls(orgId) {
+  const { rows } = await inOrg(orgId, (db) => db.query(`SELECT ${FIELDS} FROM calls
+    WHERE org_id = $1 AND (status = 'ringing' OR (status = 'answered' AND ended_at IS NULL))
+      AND started_at > now() - interval '2 hours'
+    ORDER BY started_at DESC LIMIT 50`, [orgId]));
+  return rows.map(shape);
+}
+
 /** Whether the organization has this call (for the live view). */
 export async function owns(orgId, callId) {
   if (!CALL_ID.test(String(callId))) return false;
@@ -191,6 +200,17 @@ export async function turns(orgId, callId) {
     WHERE c.call_id = $1 AND c.org_id = $2 ORDER BY e.id`, [callId, orgId]));
   if (!rows.length || !rows[0].has_transcript) throw new NotFoundError("call");
   return rows.filter((r) => r.at).map((r) => ({ at: r.at.toISOString(), role: r.role === "assistant" ? "agent" : "caller", text: r.text ?? "" }));
+}
+
+/** Tool calls across all calls, newest first. */
+export async function toolCalls(orgId, { limit = 50 } = {}) {
+  const n = Math.min(Math.max(1, Number(limit) || 50), 200);
+  const { rows } = await inOrg(orgId, (db) => db.query(
+    `SELECT e.id, e.call_id, e.at, e.name, c.peer, c.agent_id FROM call_events e
+     JOIN calls c ON c.call_id = e.call_id AND c.org_id = e.org_id
+     WHERE e.event = 'tool' AND e.org_id = $1 ORDER BY e.id DESC LIMIT $2`, [orgId, n]));
+  return rows.map((r) => ({ id: Number(r.id), call_id: r.call_id, at: r.at?.toISOString() ?? null,
+    tool: r.name, peer: r.peer, agent_id: r.agent_id }));
 }
 
 /** Transcript lines after `afterId` that the live view shows; tool lines carry only the tool's name. */

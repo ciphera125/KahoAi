@@ -64,6 +64,15 @@ export async function transcriptCsv(req, res) {
   res.send(lines.join("\r\n") + "\r\n");
 }
 
+export async function toolCallsList(req, res) {
+  res.json(await Call.toolCalls(req.user.org_id, { limit: req.query.limit }));
+}
+
+export async function activeCalls(req, res) {
+  const calls = await Call.activeCalls(req.user.org_id);
+  res.json(await named(req.user.org_id, calls));
+}
+
 export async function dashboard(req, res) {
   const days = Number(req.query.days ?? 30);
   if (!Number.isInteger(days) || days < 1 || days > 365) throw new ValidationError("days must be between 1 and 365");

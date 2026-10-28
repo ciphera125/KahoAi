@@ -216,3 +216,38 @@ describe("the dashboard", () => {
     expect((await b.get("/api/dashboard?days=abc")).status).toBe(400);
   });
 });
+
+describe("tool calls endpoint", () => {
+  it("lists tool events from calls", async () => {
+    const b = await owner();
+    await line(b);
+    await internal("put", "/internal/v1/calls/call-tc1").send({ ours: OURS, agent_id: "a1", status: "answered" });
+    await events("call-tc1", [
+      { event: "call_start", at: at(5) },
+      { event: "call_party", number: "+919876543210", direction: "outbound", at: at(5) },
+      { event: "tool", name: "capture_lead", at: at(4) },
+      { event: "tool", name: "end_call", at: at(3) },
+      { event: "call_end", at: at(2) },
+    ]);
+    const r = await b.get("/api/calls/tools");
+    expect(r.status).toBe(200);
+    expect(r.body.length).toBe(2);
+    expect(r.body[0].tool).toBe("end_call");
+    expect(r.body[1].tool).toBe("capture_lead");
+  });
+});
+
+describe("active calls endpoint", () => {
+  it("returns calls currently in progress", async () => {
+    const b = await owner();
+    await line(b);
+    await internal("put", "/internal/v1/calls/call-live1").send({ ours: OURS, agent_id: "a1", status: "answered" });
+    await events("call-live1", [
+      { event: "call_start", at: at(1) },
+      { event: "call_party", number: "+919876543210", direction: "outbound", at: at(1) },
+    ]);
+    const r = await b.get("/api/calls/active");
+    expect(r.status).toBe(200);
+    expect(r.body.some((c) => c.call_id === "call-live1")).toBe(true);
+  });
+});
