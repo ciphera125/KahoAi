@@ -288,6 +288,46 @@ async def test_two_leads_append_to_the_same_days_file(leads, tmp_path):
     assert [r["name"] for r in lead_rows(leads)] == ["Asha", "Ravi"]
 
 
+async def test_a_saved_lead_is_also_reported_to_the_studio(leads, tmp_path):
+    call, transcript = make_call(tmp_path)
+    call.caller_number = "+911111111111"
+    transcript.user("Hi, I'm Asha Rao.")
+    transcript.user("Ravi here.")
+    reported = []
+
+    async def report_lead(lead):
+        reported.append(lead)
+
+    call.report_lead = report_lead
+    schemas = tools.build_tool_schemas(call, ["capture_lead"])
+    p, got = params(name="Asha Rao", reason="wants a callback about pricing", phone="98765 43210")
+    await run(schemas, "capture_lead", p)
+    assert got[0]["status"] == "saved"
+    assert reported == [{
+        "at": reported[0]["at"], "call_id": "t1", "name": "Asha Rao",
+        "phone": "9876543210", "phone_source": "caller_stated",
+        "reason": "wants a callback about pricing",
+    }]
+
+
+async def test_a_failing_studio_report_never_breaks_capture_lead(leads, tmp_path):
+    call, transcript = make_call(tmp_path)
+    call.caller_number = "+911111111111"
+    transcript.user("Hi, I'm Asha Rao.")
+    transcript.user("Ravi here.")
+
+    async def report_lead(lead):
+        raise RuntimeError("Studio is down")
+
+    call.report_lead = report_lead
+    schemas = tools.build_tool_schemas(call, ["capture_lead"])
+    p, got = params(name="Asha Rao", reason="wants a callback about pricing", phone="98765 43210")
+    await run(schemas, "capture_lead", p)
+    assert got[0]["status"] == "saved"
+    (row,) = lead_rows(leads)
+    assert row["name"] == "Asha Rao"
+
+
 # Junk leads seen on real calls on 2026-10-24, one test per kind: the model
 # called capture_lead during its own greeting, with placeholders, or with its
 # own name.

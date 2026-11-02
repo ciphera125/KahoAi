@@ -40,6 +40,7 @@ class FakeStudio:
         self.outcomes: dict[str, dict] = {}
         self.events: dict[str, list] = {}
         self.errors: list[dict] = []
+        self.leads: list[dict] = []
 
     async def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -64,6 +65,9 @@ class FakeStudio:
             return httpx.Response(200, json={"ok": True})
         if path == "/internal/v1/errors":
             self.errors.append(json.loads(request.content))
+            return httpx.Response(200, json={"ok": True})
+        if path == "/internal/v1/leads":
+            self.leads.append(json.loads(request.content))
             return httpx.Response(200, json={"ok": True})
         return httpx.Response(404)
 
@@ -215,6 +219,15 @@ async def test_a_provider_failure_is_reported_to_the_studio(studio):
                                  "org_id": "org_0123456789ab"}
     studio.fail = True
     assert await studio_link.report_error("error", "tts", "down again") is False
+
+
+async def test_a_lead_is_reported_to_the_studio(studio):
+    lead = {"call_id": "c8eea833-f765-449e-ba8e-e7554f8f1e21", "name": "Asha Rao",
+            "phone": "9876543210", "phone_source": "caller_stated", "reason": "wants a callback"}
+    assert await studio_link.report_lead(lead, org_id="org_0123456789ab") is True
+    assert studio.leads[0] == {**lead, "org_id": "org_0123456789ab"}
+    studio.fail = True
+    assert await studio_link.report_lead(lead) is False
 
 
 def test_a_hangup_is_reported_to_the_studio(client, studio):

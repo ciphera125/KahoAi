@@ -5,7 +5,7 @@ import { hexId } from "../utils/crypto.js";
 
 export const MAX_ITEMS = 200;
 const MAX_TEXT = 160;
-const VIEWS = new Set(["dashboard", "calls", "contacts", "agents", "prompts", "numbers", "team", "errors"]);
+const VIEWS = new Set(["dashboard", "calls", "contacts", "agents", "prompts", "numbers", "team", "errors", "leads"]);
 
 export async function add(orgId, kind, text, { view = null, ref = null, actor = null } = {}) {
   await inOrg(orgId, async (db) => {

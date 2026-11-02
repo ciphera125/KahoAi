@@ -4,6 +4,7 @@ import * as Agent from "../models/Agent.js";
 import * as Call from "../models/Call.js";
 import * as Contact from "../models/Contact.js";
 import * as ErrorLog from "../models/ErrorLog.js";
+import * as Lead from "../models/Lead.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 
 /** Never an error: a call must start even if this lookup fails. */
@@ -37,6 +38,15 @@ export async function reportError(req, res) {
   await ErrorLog.add(org_id || null, { level, source, message, call_id });
   // Never block the report on this: a notification is a convenience, the logged row is the record.
   if (org_id) await Activity.add(org_id, "error", `${source}: ${message}`, { view: "errors", ref: call_id || null })
+    .catch(() => {});
+  res.json({ ok: true });
+}
+
+export async function reportLead(req, res) {
+  const { call_id, name, phone, phone_source, reason, org_id } = req.body ?? {};
+  await Lead.add(org_id || null, { call_id, name, phone, phone_source, reason });
+  // Same as reportError: never block the record on the notification.
+  if (org_id) await Activity.add(org_id, "lead", `New lead: ${name}`, { view: "leads", ref: call_id || null })
     .catch(() => {});
   res.json({ ok: true });
 }

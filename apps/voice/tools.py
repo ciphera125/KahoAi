@@ -68,6 +68,10 @@ class CallContext:
     hang_up: Callable[[], Awaitable[None]] | None = None
     # Set by the phone server: hands the live call to a human. None on a local run.
     transfer: Callable[[], Awaitable[None]] | None = None
+    # Set by the phone server: mirrors a captured lead to the Studio
+    # (studio_link.report_lead). None on a local run, where the lead stays
+    # only in leads/*.jsonl, as before.
+    report_lead: Callable[[dict], Awaitable[None]] | None = None
     # Room for per-call state a deployment's tools want to share (a looked-up
     # customer, a chosen slot) without reaching for globals.
     state: dict = field(default_factory=dict)
@@ -355,6 +359,11 @@ async def capture_lead(args: dict, call: CallContext) -> dict:
     with (directory / f"{now:%Y-%m-%d}.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(lead, ensure_ascii=False) + "\n")
     logger.info(f"Lead captured for call {call.call_id}")
+    if call.report_lead is not None:
+        try:
+            await call.report_lead(lead)
+        except Exception as e:  # noqa: BLE001 - the local file is the record; the Studio copy is extra
+            logger.warning(f"Could not report lead for call {call.call_id} to the Studio: {e!r}")
     return {"status": "saved", "phone_saved": phone}
 
 

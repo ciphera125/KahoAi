@@ -141,6 +141,25 @@ async def report_error(level: str, source: str, message: str, *, call_id: str | 
         return False
 
 
+async def report_lead(lead: dict, *, org_id: str | None = None) -> bool:
+    """A captured lead, mirrored to the Studio's own store (the voice service
+    keeps its local leads/*.jsonl copy regardless). Never raises; off the call
+    path, like report_outcome and report_error. `lead` already has every field
+    masking.py requires masked (capture_lead does this before calling here)."""
+    if not configured():
+        return False
+    body = dict(lead)
+    if org_id:
+        body["org_id"] = org_id
+    try:
+        async with _client() as client:
+            r = await asyncio.wait_for(client.post("/internal/v1/leads", json=body), _timeout())
+        return r.status_code == 200
+    except (httpx.HTTPError, TimeoutError) as e:
+        logger.warning(f"Could not report a lead to the Studio: {type(e).__name__}")
+        return False
+
+
 class EventSink:
     """Transcript lines on their way to the Studio, sent in the background.
 

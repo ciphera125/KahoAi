@@ -10,6 +10,7 @@ import contactRoutes from "./contacts.js";
 import callRoutes from "./calls.js";
 import bulkRoutes from "./bulk.js";
 import errorRoutes from "./errors.js";
+import leadRoutes from "./leads.js";
 
 const router = Router();
 router.use("/auth", authRoutes);
@@ -22,4 +23,5 @@ router.use(contactRoutes);
 router.use(callRoutes);
 router.use("/bulk-calls", bulkRoutes);
 router.use(errorRoutes);
+router.use(leadRoutes);
 export default router;
