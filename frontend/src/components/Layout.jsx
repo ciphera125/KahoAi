@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { get, post } from "../api.js";
 import { useAuth } from "../auth.jsx";
+import { LogoMark } from "../logo.jsx";
 import { ago, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
 
 const NAV = [
@@ -33,7 +34,7 @@ export default function Layout() {
     return () => document.removeEventListener("keydown", esc);
   }, [drawer]);
   const togglePin = () => setPinned((v) => { try { localStorage.setItem(RAIL_KEY, v ? "0" : "1"); } catch { /* private window */ } setPeek(false); return !v; });
-  const enter = () => { clearTimeout(peekTimer.current); peekTimer.current = setTimeout(() => setPeek(true), 120); };
+  const enter = () => { clearTimeout(peekTimer.current); peekTimer.current = setTimeout(() => setPeek(true), 30); };
   const leave = () => { clearTimeout(peekTimer.current); peekTimer.current = setTimeout(() => setPeek(false), 200); };
   const open = pinned || peek || drawer;
   return (
@@ -41,7 +42,7 @@ export default function Layout() {
       {drawer && <div className="rail-scrim" onClick={() => setDrawer(false)} />}
       <nav className={`rail${drawer ? " open" : ""}`} aria-label="Sections" onMouseEnter={enter} onMouseLeave={leave}>
         <div className="logo">
-          <div className="mark" aria-hidden="true">K</div>
+          <div className="mark" aria-hidden="true"><LogoMark /></div>
           <div className="rail-text brand">
             <b>KahoAI</b>
             <OrgSwitcher />
@@ -51,7 +52,6 @@ export default function Layout() {
           </button>
           <button type="button" className="icon-btn drawer-close" onClick={() => setDrawer(false)} aria-label="Close menu"><Icon name="x" /></button>
         </div>
-        <NavLink to="/calls" className="quick" data-label="New call"><Icon name="call" /><span className="rail-text">New call</span></NavLink>
         <div className="rail-scroll">
           {NAV.map(([group, items]) => (
             <div key={group} className="nav-section">
@@ -76,8 +76,9 @@ export default function Layout() {
         <div className="inner">
           <div className="topbar">
             <button type="button" className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu"><Icon name="menu" /></button>
-            <span className="topbar-brand"><span className="mark" aria-hidden="true">K</span>KahoAI</span>
+            <span className="topbar-brand"><span className="mark" aria-hidden="true"><LogoMark size={14} /></span>KahoAI</span>
             <span className="grow" />
+            <ThemeToggle />
             <Bell />
           </div>
           <Outlet />
@@ -157,6 +158,28 @@ function OrgSwitcher() {
         </Modal>
       )}
     </div>
+  );
+}
+
+const THEME_KEY = "kaho.theme";
+function isDarkNow() {
+  const set = document.documentElement.dataset.theme;
+  if (set === "dark") return true;
+  if (set === "light") return false;
+  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ?? false;
+}
+function ThemeToggle() {
+  const [dark, setDark] = useState(isDarkNow);
+  const toggle = () => {
+    const next = !dark ? "dark" : "light";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem(THEME_KEY, next); } catch { /* private window */ }
+    setDark(!dark);
+  };
+  return (
+    <button type="button" className="icon-btn" title={dark ? "Switch to light mode" : "Switch to dark mode"} onClick={toggle}>
+      <Icon name={dark ? "sun" : "moon"} />
+    </button>
   );
 }
 

@@ -8,6 +8,7 @@ import { requireAdmin, requireOwner } from "../middleware/auth.js";
 const router = Router();
 router.get("/me", ws.me);
 router.get("/config", ws.settings);
+router.get("/settings", ws.settings); // the Studio frontend's name for this; /config is kept for agents.js's own check
 router.get("/tools", ws.tools);
 router.get("/providers", ws.providers);
 router.get("/notifications", ws.notifications);

@@ -1,22 +1,21 @@
-import { useEffect, useState } from "react";
-import { del, get, patch, post } from "../api.js";
+import { useState } from "react";
+import { del, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
+import { useTags } from "../tags.jsx";
 import { Icon, Menu, Modal, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 export default function Tags() {
   const me = useMe();
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
-  const [tags, setTags] = useState(null);
+  const { tags, reload } = useTags();
   const [editing, setEditing] = useState(null);
-  const load = () => get("/api/tags").then(setTags).catch((e) => toast(e.message, true));
-  useEffect(() => { load(); }, []);
   if (!tags) return <Spinner />;
 
   const remove = async (t) => {
     if (!(await confirm({ title: `Delete "${t.name}"?`, text: "It will be removed from all contacts.", ok: "Delete" }))) return;
     await del(`/api/tags/${t.id}`).catch((e) => toast(e.message, true));
-    toast("Tag deleted."); load();
+    toast("Tag deleted."); reload();
   };
 
   return (
@@ -36,7 +35,7 @@ export default function Tags() {
           </div>
         ))}
       </div>
-      {editing && <EditTag tag={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
+      {editing && <EditTag tag={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }} />}
       {confirmNode}
     </section>
   );

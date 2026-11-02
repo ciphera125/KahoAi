@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
+import { useTags } from "../tags.jsx";
 import { fmtDur, Icon, initials, Menu, Modal, OutcomePill, plural, Spinner, useConfirm, useToast, whenShort } from "../ui.jsx";
 
 const TABS = [
@@ -16,7 +17,7 @@ export default function Contacts() {
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
   const [data, setData] = useState(null);
-  const [tags, setTags] = useState([]);
+  const { tags, reload: reloadTags } = useTags();
   const [page, setPage] = useState(1);
   const [perPage, setPerPage] = useState(25);
   const [q, setQ] = useState("");
@@ -32,7 +33,6 @@ export default function Contacts() {
     get(url).then((d) => { setData(d); setSelected(new Set()); }).catch((e) => toast(e.message, true));
   }, [page, perPage, q, consent, toast]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { get("/api/tags").then(setTags).catch(() => {}); }, [editing]);
 
   const onSearch = (e) => { const v = e.target.value; clearTimeout(debounce.current); debounce.current = setTimeout(() => { setPage(1); setQ(v); }, 250); };
   const switchTab = (key) => { setTab(key); setPage(1); };
@@ -157,7 +157,7 @@ export default function Contacts() {
           </div>
         )}
       </div>
-      {editing && <EditContact contact={editing} tags={tags} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); get("/api/tags").then(setTags).catch(() => {}); }} />}
+      {editing && <EditContact contact={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); reloadTags(); }} />}
       {confirmNode}
     </section>
   );
@@ -167,12 +167,12 @@ const TAG_COLOURS = ["marigold", "plum", "orchid", "teal", "silver", "rose"];
 
 // One place to change everything about a person: name, numbers, tags (pick or
 // create), and Do not call. Nothing is saved until "Save contact".
-function EditContact({ contact, tags: initialTags, onClose, onSaved }) {
+function EditContact({ contact, onClose, onSaved }) {
   const toast = useToast();
+  const { tags, reload: reloadTags } = useTags();
   const isNew = !contact.id;
   const [name, setName] = useState(contact.name || "");
   const [numbers, setNumbers] = useState(() => (contact.numbers?.length ? contact.numbers.map((n) => ({ id: n.id, number: n.number })) : [{ id: null, number: "" }]));
-  const [tags, setTags] = useState(initialTags);
   const [picked, setPicked] = useState(contact.tags || []);
   const [dnc, setDnc] = useState(!!contact.dnc);
   const [busy, setBusy] = useState(false);
@@ -182,7 +182,7 @@ function EditContact({ contact, tags: initialTags, onClose, onSaved }) {
 
   const createTag = async (tagName) => {
     const t = await post("/api/tags", { name: tagName, color: TAG_COLOURS[tags.length % TAG_COLOURS.length] });
-    setTags((list) => [...list, t]);
+    reloadTags();
     setPicked((p) => [...p, t.id]);
   };
 

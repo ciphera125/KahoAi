@@ -3,6 +3,7 @@
 // every path shows the sign-in screen; "/" sends you to the dashboard.
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useAuth } from "./auth.jsx";
+import { TagsProvider } from "./tags.jsx";
 import { Spinner } from "./ui.jsx";
 import Layout from "./components/Layout.jsx";
 import SignIn from "./pages/SignIn.jsx";
@@ -26,25 +27,27 @@ export default function App() {
   if (me === undefined) return <Spinner />;
   if (!me) return <SignIn />;
   return (
-    <Routes>
-      <Route element={<Layout />}>
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/calls" element={<Calls />} />
-        <Route path="/contacts" element={<Contacts />} />
-        <Route path="/bulk" element={<Bulk />} />
-        <Route path="/bulk/:runId" element={<Bulk />} />
-        <Route path="/agents" element={<Agents />} />
-        <Route path="/agents/:agentId" element={<AgentDetail />} />
-        <Route path="/prompts" element={<Prompts />} />
-        <Route path="/numbers" element={<Numbers />} />
-        <Route path="/team" element={<Team />} />
-        <Route path="/tool-calls" element={<ToolCalls />} />
-        <Route path="/tags" element={<Tags />} />
-        <Route path="/errors" element={<ErrorLogs />} />
-        <Route path="/settings" element={<Settings />} />
-        <Route path="/live" element={<Live />} />
-      </Route>
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+    <TagsProvider>
+      <Routes>
+        <Route element={<Layout />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/calls" element={<Calls />} />
+          <Route path="/contacts" element={<Contacts />} />
+          <Route path="/bulk" element={<Bulk />} />
+          <Route path="/bulk/:runId" element={<Bulk />} />
+          <Route path="/agents" element={<Agents />} />
+          <Route path="/agents/:agentId" element={<AgentDetail />} />
+          <Route path="/prompts" element={<Prompts />} />
+          <Route path="/numbers" element={<Numbers />} />
+          <Route path="/team" element={<Team />} />
+          <Route path="/tool-calls" element={<ToolCalls />} />
+          <Route path="/tags" element={<Tags />} />
+          <Route path="/errors" element={<ErrorLogs />} />
+          <Route path="/settings" element={<Settings />} />
+          <Route path="/live" element={<Live />} />
+        </Route>
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </TagsProvider>
   );
 }

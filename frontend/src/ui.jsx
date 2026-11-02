@@ -26,6 +26,8 @@ const PATHS = {
   tag: "M20.6 9.8l-8.4-8.4a2 2 0 0 0-1.4-.6H4a2 2 0 0 0-2 2v6.8a2 2 0 0 0 .6 1.4l8.4 8.4a2 2 0 0 0 2.8 0l6.8-6.8a2 2 0 0 0 0-2.8zM7 7h.01",
   warn: "M10.3 2.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01",
   settings: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 8v4l2 2",
+  sun: "M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10zM12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4",
+  moon: "M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z",
 };
 export const Icon = ({ name, ...rest }) => (
   <svg className="i" viewBox="0 0 24 24" aria-hidden="true" {...rest}>
@@ -92,6 +94,33 @@ export function Menu({ items }) {
         <div className="menu" onClick={(e) => e.stopPropagation()}>
           {items.filter(Boolean).map(([label, fn, bad], i) => (
             <button key={i} type="button" className={bad ? "bad" : ""} onClick={() => { setOpen(false); fn(); }}>{label}</button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A primary-button dropdown (same panel as Menu, a labeled trigger instead
+ * of the triple-dot) — for "+ Add X" buttons that need to offer a choice. */
+export function DropdownButton({ label, icon, items }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef();
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (e) => { if (!ref.current?.contains(e.target)) setOpen(false); };
+    document.addEventListener("click", close);
+    return () => document.removeEventListener("click", close);
+  }, [open]);
+  return (
+    <div className="menu-wrap" ref={ref}>
+      <button type="button" className="primary" onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}>
+        {icon && <Icon name={icon} />}{label}
+      </button>
+      {open && (
+        <div className="menu" onClick={(e) => e.stopPropagation()}>
+          {items.filter(Boolean).map(([itemLabel, fn, bad], i) => (
+            <button key={i} type="button" className={bad ? "bad" : ""} onClick={() => { setOpen(false); fn(); }}>{itemLabel}</button>
           ))}
         </div>
       )}

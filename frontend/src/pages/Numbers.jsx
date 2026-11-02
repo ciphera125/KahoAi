@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
-import { Icon, Menu, Modal, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { DropdownButton, Menu, Modal, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 const STATUS = { active: ["Active", "active"], incomplete: ["Needs credentials", "warn"], not_connected: ["Not connected yet", "muted"] };
 
@@ -25,8 +25,10 @@ export default function Numbers() {
     <section>
       <header className="page">
         <div><h1>Numbers</h1><div className="sub">The numbers your agents call from and answer on, and which agent answers each one.</div></div>
-        {admin && <div className="head-actions"><Menu items={providers.map((p) => [`${p.label}${p.connected ? "" : " (save only)"}`, () => setEditing({ provider: p })])} />
-          <button className="primary" onClick={() => setEditing({ provider: providers.find((p) => p.id === "plivo") })}><Icon name="plus" />Add Plivo number</button></div>}
+        {admin && <div className="head-actions">
+          <DropdownButton label="Add number" icon="plus"
+            items={providers.map((p) => [`${p.label}${p.connected ? "" : " (save only)"}`, () => setEditing({ provider: p })])} />
+        </div>}
       </header>
       <div className="card list">
         <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr) 150px 56px" }}><span>Number</span><span>Answers with</span><span>Status</span><span /></div>
