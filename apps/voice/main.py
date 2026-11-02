@@ -1122,6 +1122,7 @@ def build_worker(
     opening_line: str | None = None,
     notice_prespoken: tuple | None = None,
     transcript_sink=None,
+    report_error=None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -1136,6 +1137,9 @@ def build_worker(
     async callable that hands the live call to a human (phone server only).
     recording_sample_rate is the rate the call's recording is saved at; the phone
     server passes the phone line's 8kHz, since anything higher stores no more sound.
+    report_error(level, source, message) is CallHealth's way of telling the Studio
+    about a provider failure (the phone server wires it to studio_link.report_error);
+    None leaves it silent, as the local mic/speaker run does.
     tool_names and opening_line come from a Studio agent: its tools replace
     TOOLS_ENABLED, and the greeting opens with its line. notice_prespoken is
     (PrespokenNotice, monotonic time it was sent): the phone server already sent
@@ -1290,6 +1294,7 @@ def build_worker(
     health = CallHealth(
         {"stt": [stt], "llm": [llm], "tts": tts_services},
         record=transcript.event,
+        report_error=report_error,
         interrupt_and_say=interrupt_and_say,
         abort=abort,
         switch_to=switch_to if switcher else None,

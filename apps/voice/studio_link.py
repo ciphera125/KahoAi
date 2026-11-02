@@ -78,7 +78,9 @@ def _clean_config(raw) -> dict | None:
             return None
         if opening is not None and not isinstance(opening, str):
             return None
-        return {"agent_id": str(raw["agent_id"]), "name": str(raw.get("name") or ""),
+        org_id = raw.get("org_id")
+        return {"agent_id": str(raw["agent_id"]), "org_id": str(org_id) if org_id else None,
+                "name": str(raw.get("name") or ""),
                 "prompt": prompt or None, "tools": tools, "opening_line": opening or None,
                 "max_secs": float(raw["max_secs"]), "ring_secs": int(raw["ring_secs"])}
     except (KeyError, TypeError, ValueError):
@@ -116,6 +118,26 @@ async def report_outcome(call_id: str, fields: dict) -> bool:
         return r.status_code == 200
     except (httpx.HTTPError, TimeoutError) as e:
         logger.warning(f"Could not report call {call_id} to the Studio: {type(e).__name__}")
+        return False
+
+
+async def report_error(level: str, source: str, message: str, *, call_id: str | None = None,
+                        org_id: str | None = None) -> bool:
+    """A provider or call failure, for the Studio's Error Logs page and its
+    notifications. Never raises; off the call path, like report_outcome."""
+    if not configured():
+        return False
+    body = {"level": level, "source": source, "message": message}
+    if call_id:
+        body["call_id"] = call_id
+    if org_id:
+        body["org_id"] = org_id
+    try:
+        async with _client() as client:
+            r = await asyncio.wait_for(client.post("/internal/v1/errors", json=body), _timeout())
+        return r.status_code == 200
+    except (httpx.HTTPError, TimeoutError) as e:
+        logger.warning(f"Could not report an error to the Studio: {type(e).__name__}")
         return False
 
 

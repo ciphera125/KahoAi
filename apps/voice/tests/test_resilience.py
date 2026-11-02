@@ -22,7 +22,7 @@ class Harness:
     def __init__(self, stt=None, llm=None, tts=None, wrappers=None, **kw):
         self.stt, self.llm = stt or Svc("stt"), llm or Svc("llm")
         self.tts = tts or [Svc("tts")]
-        self.events, self.said, self.aborts, self.switches = [], [], [], []
+        self.events, self.said, self.aborts, self.switches, self.reported = [], [], [], [], []
         self.now = 0.0
 
         async def say(text):
@@ -34,6 +34,9 @@ class Harness:
         async def switch(svc):
             self.switches.append(svc)
 
+        async def report_error(level, source, message):
+            self.reported.append((level, source, message))
+
         self.health = CallHealth(
             {"stt": [self.stt], "llm": [self.llm], "tts": self.tts},
             record=lambda name, **f: self.events.append((name, f)),
@@ -42,6 +45,7 @@ class Harness:
             switch_to=switch,
             wrappers=wrappers,
             clock=lambda: self.now,
+            report_error=report_error,
             **{"recheck_secs": 0.02, **kw},
         )
 
@@ -406,6 +410,25 @@ def test_bearer_tokens_and_api_keys_are_redacted_wherever_they_appear():
 def test_long_reasons_are_truncated_and_empty_ones_have_a_placeholder():
     assert len(resilience.safe_reason("x" * 1000)) <= 163
     assert resilience.safe_reason(None) == "unknown error"
+
+
+async def test_a_provider_failure_is_reported_to_the_studio_as_well_as_the_transcript():
+    """So the Studio's Error Logs page (and its notification) are not dead:
+    today nothing in the voice service calls studio_link.report_error at all."""
+    h = Harness(tts=[Svc("tts"), Svc("tts_backup")])
+    await h.error(h.tts[0], msg="402 quota exceeded")
+    assert h.reported, "a voice refusing a request should be reported"
+    level, source, message = h.reported[0]
+    assert source == "tts" and level in ("error", "warn")
+    assert "quota" in message or "402" in message
+
+
+async def test_ending_a_call_reports_the_failure_too():
+    h = Harness()
+    h.stt.is_usable = False
+    await h.error(h.stt, msg="connection reset")
+    assert h.health.failed
+    assert any(source == "stt" for _, source, _ in h.reported)
 
 
 async def test_the_recorded_reason_is_the_sanitised_one():

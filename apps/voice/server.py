@@ -568,6 +568,11 @@ async def _run_call(
 
     sink = studio_link.EventSink(call_id or "")
     sink.start()
+    org_id = agent_config.get("org_id") if agent_config else None
+
+    async def report_error(level: str, source: str, message: str) -> None:
+        await studio_link.report_error(level, source, message, call_id=call_id, org_id=org_id)
+
     worker = build_worker(
         transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id,
         caller_number=clean_caller(caller),
@@ -580,6 +585,7 @@ async def _run_call(
         opening_line=agent_config["opening_line"] if agent_config else None,
         notice_prespoken=notice_prespoken,
         transcript_sink=sink,
+        report_error=report_error,
     )
     if agent_config:
         worker.transcript.event("call_agent", agent_id=agent_config["agent_id"])

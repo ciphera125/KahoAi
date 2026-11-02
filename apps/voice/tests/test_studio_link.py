@@ -39,6 +39,7 @@ class FakeStudio:
         self.requests: list[httpx.Request] = []
         self.outcomes: dict[str, dict] = {}
         self.events: dict[str, list] = {}
+        self.errors: list[dict] = []
 
     async def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
@@ -60,6 +61,9 @@ class FakeStudio:
             return httpx.Response(200, json={"ok": True})
         if path.startswith("/internal/v1/calls/") and request.method == "PUT":
             self.outcomes[path.split("/")[4]] = json.loads(request.content)
+            return httpx.Response(200, json={"ok": True})
+        if path == "/internal/v1/errors":
+            self.errors.append(json.loads(request.content))
             return httpx.Response(200, json={"ok": True})
         return httpx.Response(404)
 
@@ -198,6 +202,19 @@ async def test_an_outcome_is_reported_and_a_failure_never_raises(studio):
     assert studio.outcomes["c8eea833-f765-449e-ba8e-e7554f8f1e21"]["status"] == "answered"
     studio.fail = True
     assert await studio_link.report_outcome("c8eea833-f765-449e-ba8e-e7554f8f1e21", {}) is False
+
+
+async def test_a_provider_failure_is_reported_to_the_studio(studio):
+    studio.fail = False
+    assert await studio_link.report_error("error", "tts", "Smallest returned 503",
+                                           call_id="c8eea833-f765-449e-ba8e-e7554f8f1e21",
+                                           org_id="org_0123456789ab") is True
+    assert studio.errors[0] == {"level": "error", "source": "tts",
+                                 "message": "Smallest returned 503",
+                                 "call_id": "c8eea833-f765-449e-ba8e-e7554f8f1e21",
+                                 "org_id": "org_0123456789ab"}
+    studio.fail = True
+    assert await studio_link.report_error("error", "tts", "down again") is False
 
 
 def test_a_hangup_is_reported_to_the_studio(client, studio):

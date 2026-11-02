@@ -1,4 +1,5 @@
 // What the voice service asks of the Studio's data, and what it reports back.
+import * as Activity from "../models/Activity.js";
 import * as Agent from "../models/Agent.js";
 import * as Call from "../models/Call.js";
 import * as Contact from "../models/Contact.js";
@@ -34,5 +35,8 @@ export async function ingest(req, res) {
 export async function reportError(req, res) {
   const { level, source, message, call_id, org_id } = req.body ?? {};
   await ErrorLog.add(org_id || null, { level, source, message, call_id });
+  // Never block the report on this: a notification is a convenience, the logged row is the record.
+  if (org_id) await Activity.add(org_id, "error", `${source}: ${message}`, { view: "errors", ref: call_id || null })
+    .catch(() => {});
   res.json({ ok: true });
 }

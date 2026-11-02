@@ -96,6 +96,7 @@ class CallHealth:
         roles: dict[str, list],
         *,
         record: Callable[..., None],
+        report_error: Callable[[str, str, str], Awaitable[None]] | None = None,
         interrupt_and_say: Callable[[str], Awaitable[None]],
         abort: Callable[[bool], Awaitable[None]],
         switch_to: Callable[[object], Awaitable[None]] | None = None,
@@ -118,6 +119,7 @@ class CallHealth:
         self._roles = roles
         self._wrappers = wrappers or {}
         self._record = record
+        self._report_error = report_error
         self._interrupt_and_say = interrupt_and_say
         self._abort = abort
         self._switch_to = switch_to
@@ -175,6 +177,16 @@ class CallHealth:
                 return s
         return None
 
+    async def _report(self, level: str, source: str, message: str) -> None:
+        """Mirrors _record into the Studio's Error Logs; never raises into a
+        health check (a reporting failure must not look like a provider one)."""
+        if self._report_error is None:
+            return
+        try:
+            await self._report_error(level, source, message)
+        except Exception as e:
+            logger.warning(f"Could not report {source} failure to the Studio: {e!r}")
+
     # -- provider errors -------------------------------------------------------
 
     async def on_error(self, frame) -> None:
@@ -205,6 +217,8 @@ class CallHealth:
             # already failing over, so there is nothing to do but note it.
             logger.warning(f"{role} provider is down; relying on its backup")
             self._record("provider_failover", role=role)
+            await self._report("warn", role,
+                               f"{role} provider is down ({why}); relying on its backup")
             return
 
         if id(processor) in self._abandoned:
@@ -215,6 +229,8 @@ class CallHealth:
                 logger.error(f"The voice refused a request ({why}); switching to the backup")
                 self._abandoned.add(id(processor))
                 self._record("provider_failover", role="tts", cause="tts error")
+                await self._report("error", "tts",
+                                   f"The voice refused a request ({why}); switched to the backup")
                 await self._switch_to(backup)
                 return
 
@@ -231,6 +247,8 @@ class CallHealth:
         if backup is not None and self._switch_to is not None:
             logger.error(f"{self._threshold} {role} errors in {self._window:g}s; switching")
             self._record("provider_failover", role=role, cause="repeated errors")
+            await self._report("error", role,
+                               f"{self._threshold} {role} errors in {self._window:g}s; switched")
             await self._switch_to(backup)
         else:
             await self.fail(role, f"{self._threshold} {role} errors within {self._window:g}s")
@@ -382,6 +400,7 @@ class CallHealth:
         self.disarm()
         logger.error(f"Call cannot continue, {self.failed}")
         self._record("call_failed", role=role, reason=reason)
+        await self._report("error", role, f"Call ended: {reason}")
 
         # TTS being the broken part means an apology cannot be spoken by us.
         if role != "tts" and self._usable("tts"):

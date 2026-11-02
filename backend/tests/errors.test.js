@@ -27,6 +27,17 @@ describe("error logs", () => {
     expect(list.errors[0]).toMatchObject({ source: "llm", call_id: null });
   });
 
+  it("also raises a notification, linked to the Error Logs page", async () => {
+    const b = await owner();
+    await internal("post", "/internal/v1/errors").send({
+      level: "error", source: "tts", message: "Smallest returned 503", org_id: b.user.org_id,
+    });
+    const feed = (await b.get("/api/notifications")).body;
+    const note = feed.items.find((n) => n.text.includes("Smallest returned 503"));
+    expect(note).toBeTruthy();
+    expect(note.view).toBe("errors");
+  });
+
   it("pages and limits the error list", async () => {
     const b = await owner();
     const orgId = b.user.org_id;
