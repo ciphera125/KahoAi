@@ -175,6 +175,14 @@ export async function plivoCredentials(orgId) {
   }
 }
 
+/** Every organization with at least one Plivo number, for the background sync
+ * (it has no single organization's session to scope the query to). */
+export async function orgsWithPlivo() {
+  const { rows } = await asSystem((db) => db.query(
+    "SELECT DISTINCT org_id FROM phone_numbers WHERE provider = 'plivo'"));
+  return rows.map((r) => r.org_id);
+}
+
 /** The organization that owns one of our numbers, or null. Never throws. */
 export async function orgForNumber(raw) {
   try {
