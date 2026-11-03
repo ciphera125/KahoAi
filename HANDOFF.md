@@ -12,60 +12,79 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-10-28. **Nothing from this session is committed yet** (see section 2) — the
-owner has not been asked to push. The voice pipeline (`apps/voice`) is untouched this session.
-The voice is Smallest **`suri`** in English, backed up by ElevenLabs; LLM `openai/gpt-oss-20b`,
-effort medium, fallback off, GPT-OSS only, no qwen. Webhooks need Plivo's V3 signature; `/ws`
-needs a single-use stream token.
+Last updated: 2026-11-03. **This session's work is committed and pushed** (`877930b`,
+`fa89539`; `main` == `origin/main`). The voice pipeline (`apps/voice`) changed this session: new
+Studio-reporting hooks and a new recording-upload path (below). Voice is Smallest **`suri`** in
+English, backed up by ElevenLabs; LLM `openai/gpt-oss-20b`, effort medium, fallback off, GPT-OSS
+only, no qwen. Webhooks need Plivo's V3 signature; `/ws` needs a single-use stream token.
 
-**The Studio is now `backend/` (Node + Postgres, :8020, voice API :8021) + `frontend/` (React,
+**The Studio's database is now Supabase Postgres, `ap-south-1` (Mumbai), not local.** Project
+"Adinair01's Project" under the "Kaho Ai" org, ref `mxhkhuhdhfonebyrjkfe`. `backend/.env`'s
+`DATABASE_URL` points at the **session pooler** (`aws-0-ap-south-1.pooler.supabase.com:5432`,
+not the transaction pooler on 6543 — `db/ssl.js` refuses that one outright), `DATABASE_SSL=verify`
+with `DATABASE_SSL_CA` pointed at the downloaded CA cert (`~/Downloads/prod-ca-2021.crt`) — the
+connection is encrypted *and* certificate-verified, confirmed by the startup warning disappearing
+once the CA was set. All 7 migrations applied directly against it. **The previous local
+`kaho_studio` Postgres database (with the QA test orgs/accounts from 2026-10-28, see that session's
+log entry) is no longer what the backend reads from**; it still exists on disk, untouched, but is
+now stale — the real org data (if any) is in Supabase now, starting empty except for whatever the
+owner signs up as owner of. **Supabase Storage** also has a bucket, `call-recordings` (private),
+for the new recording-upload path. **Network restrictions on the Supabase project are still open
+("accessible by all IPs")** — fine while testing from a home IP, but should be locked down (an
+allow-list of the deployed server's IP) before real call data lands there for real.
+
+**The Studio is `backend/` (Node + Postgres, :8020, voice API :8021) + `frontend/` (React,
 Vite :5173).** The old Python Studio (`apps/voice/admin.py`, :8001) still runs but is superseded.
 The phone server reads each call's agent from the Studio (`studio_link.py`, `STUDIO_INTERNAL_URL`
 / `STUDIO_INTERNAL_TOKEN` in `.env`) and sends outcomes and transcripts back; it falls back to
 `data/agents.json` if the Studio does not answer in 1.5s.
 
-**Running right now:** phone server on **:8765** (ngrok tunnel `kahoai` -> localhost:8765),
-Studio backend :8020/:8021 and the old Studio :8001 (both started by Claude this session), Vite
-:5173 (started by the other session). `WEBHOOK_SECRET` was rotated again 2026-10-25 (Claude
-printed it by grepping the server log unmasked: uvicorn's access lines carry `token=`); it is in
-`.env` and `backend/.env`. **Always mask log reads**: `sed -E 's/(token|stream|secret)=[^& "]*/\1=***/g'`.
+**Running right now (this session):** backend :8020/:8021 against Supabase, Vite :5173, phone
+server :8765 (no ngrok tunnel re-checked this session — the previous `open-buckskin-wolverine`
+tunnel may be stale). **Always mask log reads**: `sed -E 's/(token|stream|secret)=[^& "]*/\1=***/g'`.
 
-**Built this session (2026-10-28), all test-first, uncommitted:** Studio production-readiness pass
-across security hardening, new backend endpoints, and five new sidebar pages (Tool Calls, Tags,
-Error Logs, Settings, Live). Full details in the 2026-10-28 session log entry below; summary:
-- Security: `requireAdmin`/`requireOwner` added on bulk-call creation and role changes; SQL-
-  injection-proof column whitelists in `BulkCall.mark`/`setRun`; perf indexes (migration 005);
-  fixed an env-seeded-number collision bug in `PhoneNumber`.
-- New tables/columns: `contacts.consent` (pending/given/refused, TRAI/DND tracking) and
-  `error_logs` (voice service -> Studio error reporting), migration 006.
-- New endpoints: `GET /api/calls/tools`, `GET /api/calls/active`, `GET/POST/PATCH/DELETE
-  /api/errors` and `/internal/v1/errors`.
-- Frontend: SignIn inline field errors + spinner; Contacts reworked (tabs All/Consented/DNC,
-  checkboxes, bulk actions, rows-per-page, consent column, TRAI/DND notice banner); Dashboard
-  error-state retry + live "N calls live" indicator; five new pages wired into routing and nav.
-- 154 backend tests pass (152 + 2 new), frontend builds clean. Pen-tested live against the local
-  test server (not just reasoned about): tenant isolation holds on both new `/api/calls/*`
-  endpoints, auth is enforced, SQL-injection payloads in the `consent` filter were neutralised,
-  an oversized error message was clamped server-side. **Findings reported, not fixed** (owner's
-  call): the internal `/errors` endpoint accepts any `org_id` from anyone holding the shared
-  `INTERNAL_API_TOKEN`, with no check tying the caller to that org; `activeCalls()` filters on the
-  raw stored `status` column but returns a different *computed* status field, so a live call's
-  displayed status can disagree with what matched the filter.
+**Built this session (2026-11-03), test-first, committed and pushed:**
+- **Connected the Studio to Supabase** (DB + Storage), walked the owner through project creation,
+  pooler vs. direct connection, the CA cert, and the API-keys page — see above.
+- **Leads now also mirror to the Studio's database** (`877930b`): `capture_lead` reports through a
+  new `CallContext.report_lead` hook (None on a local run) to a new `/internal/v1/leads` endpoint
+  and `leads` table (migration 007); `GET /api/leads` lists them per org; a captured lead raises an
+  Activity notification. The local `leads/*.jsonl` copy is unchanged and stays the primary record.
+- **Call recordings now also upload to Supabase Storage, unmasked, as-is — the owner's explicit
+  decision** (`fa89539`): `CallRecorder.close()` schedules a background upload
+  (`recording_upload.py`) once the WAV is fully written; Opus-encoded via `ffmpeg` to control
+  storage cost (compression only, never a content change — falls back to the raw WAV if `ffmpeg`
+  is missing or fails); off the call path by construction, never raises, never retries forever.
+  **Known gap, not yet closed: `RECORDING_RETENTION_DAYS` only deletes the local copy, not the
+  Supabase one** — a recording uploaded today stays in Supabase Storage indefinitely unless deleted
+  by hand.
+- Discovered, not built this session: masked **transcripts and summaries were already flowing**
+  into Postgres (`call_events`/`calls` tables) from an earlier session's work — nothing new needed
+  there, it's just been pointed at Supabase instead of local Postgres since the `DATABASE_URL`
+  switch.
+- Verified live, not just unit-tested: a real lead posted through the real endpoint landed in the
+  real Supabase table (checked by direct query); a real tiny recording went through `CallRecorder`,
+  got Opus-encoded, uploaded, and was confirmed present in Supabase Storage before being deleted.
+  783 voice tests + 163 backend tests pass; ruff and eslint clean. Pen-tested `/internal/v1/leads`
+  live: no-auth and wrong-token both `401`, a SQL-injection payload in `phone_source` landed as
+  inert text, an oversized name clamped server-side to 500 chars.
 
-**Test data Claude left in the local Studio DB:** organizations "QA Test Org" and "QA Staging" (and
-one with an `<img ...>` name from the pen test), accounts qa.owner@kaho.test / qa.member@kaho.test
-(passwords in the session scratchpad, not the repo), a fake number +918000000001 with fake Plivo
-credentials, and a few cancelled bulk runs. The owner's own organization is "Tredence" with
-+918065520552. Delete the QA organizations when no longer useful (deleting an organization row
-cascades).
+**Secrets pasted into this chat session (rotate when convenient, not urgent):** the Supabase DB
+password was reset once already after being pasted (handled); the `sb_secret_...` key (Supabase's
+service-role-equivalent, full privileged access, bypasses RLS) was pasted once and **has not been
+rotated** — do that from Project Settings → API Keys when there's a moment, then update
+`SUPABASE_SECRET_KEY` in `apps/voice/.env`.
 
-**Owner actions open:** sign in again at localhost:5173 (Claude's test sign-in replaced the
-owner's session in the shared Chrome); rotate the keys leaked earlier (Deepgram, Smallest,
-ElevenLabs, Cartesia, Google) and delete the Google key; fill the persona's placeholders; give the
-Supabase connection string (session pooler, port 5432) and CA certificate when ready; review the
-Contacts rework and the five new pages (Tool Calls, Tags, Error Logs, Settings, Live) in the
-browser — not yet checked in Chrome this session, only built and API-tested; decide on the two
-2026-10-28 pen-test findings above.
+**Owner actions open:**
+1. Rotate the `sb_secret_...` key (above) once convenient.
+2. Lock down Supabase's network restrictions before real call data lands there.
+3. Decide whether Supabase-stored recordings should also respect `RECORDING_RETENTION_DAYS` (gap
+   above) — ask Claude to build it if so.
+4. Everything still open from 2026-10-28 below (QA test orgs now sit in the *old*, unused local DB
+   and can be ignored or deleted at leisure; the Contacts rework / five new pages still haven't
+   been reviewed in a browser; the two 2026-10-28 pen-test findings are still undecided).
+5. Rotate the keys leaked earlier (Deepgram, Smallest, ElevenLabs, Cartesia, Google) and delete the
+   Google key — carried over from 2026-10-28, still not done.
 
 Owner rules (in `CLAUDE.md`, "How we build"): test-first with the red run shown; pen-test before
 every push and report findings without fixing them; don't ask permission, list it at the end.
@@ -188,10 +207,28 @@ A CI-like machine for reproducing: `git archive HEAD` into a scratch dir, then
 -r apps/voice/requirements-dev.txt"`, then run ruff and pytest inside. `docker update
 --cpus=0.7 kaho-ci` emulates a loaded runner. It reproduced the CI test failure exactly.
 
-Commits this project, newest first:
+Commits this project, newest first (not exhaustive before `1573a09` — see git log directly):
 
 | Commit | What |
 |---|---|
+| `fa89539` | Call recordings also upload to Supabase Storage, unmasked, as-is (owner's decision) |
+| `877930b` | Leads captured on calls also mirror to the Studio's database (`leads` table, migration 007) |
+| `aa1a372` | Frontend: shared tag cache, a logo component, a `/settings` route alias |
+| `4f370ce` | Background Plivo-sync runner: Dashboard outcomes stay current without a manual sync |
+| `4c3e54d` | `CallHealth` reports provider failures to the Studio's Error Logs |
+| `260932f` | Handoff: Studio production-readiness pass (security, new endpoints, five new pages) |
+| `3a1c34e` | Contacts: tabs, bulk actions, consent column; Dashboard: retry state, live-call indicator |
+| `2040ab1` | Five new sidebar pages: Tool Calls, Tags, Error Logs, Settings, Live |
+| `8e857ce` | SignIn: inline field-level errors and a submit-button spinner |
+| `7df7223` | Tool-call history and active-call endpoints |
+| `1ad4184` | Contact consent tracking (TRAI/DND) and a voice-service error log |
+| `84f05d4` | Security hardening: role-gated bulk calls/role changes, SQL-injection-proof column whitelists, perf indexes |
+| `786033a` | Docs and handoff: every finding of 2026-10-25 fixed |
+| `b30bc72` | Legacy import works again, into one organization |
+| `b80c1a5` | Bulk calls: no repeat calls, TRAI hours by default, the caller number checked, fair slots |
+| `277094a` | Phone server logs mask `token=`, `stream=` and `secret=` |
+| `3ef580e` | Handoff: CI #47 green on `b117c46`; what is still owed |
+| `b117c46` | Handoff: what was built, measured and found this evening; test data left; owner actions |
 | `1573a09` | Docs: Studio-driven calls, bulk calls, concurrency, Supabase, organizations |
 | `ddd75bc` | Studio UI: contact editor, bulk calls page, hover/pinned sidebar, organization switcher, phone layouts |
 | `f472858` | Several organizations per account (memberships, session org, create/switch/join) |
@@ -251,11 +288,16 @@ Commits this project, newest first:
 | `8321073` | Smallest AI as a TTS provider |
 | `4c89535` | Qwen interrupt-crash fix (pre-existing) |
 
-As of 2026-10-28, `main` is level with `origin/main` at `786033a` (the 2026-10-25 evening findings
-fix). **Everything built this session (2026-10-28, Studio production-readiness) is uncommitted**,
-only in the working tree — 23 files modified, 11 new (`git status` lists them in full in the
-session log below). The owner has not asked for a commit or push yet.
-Earlier: pushed through `eeef867`, level with
+As of 2026-11-03, `main` is level with `origin/main` at `fa89539`. At the start of this session
+`origin/main` was already at `260932f` — the 2026-10-28 work had been committed and pushed by the
+owner or another session between then and now, ahead of this handoff file catching up with it (the
+2026-10-28 entry below still describes it as uncommitted; it was not, by the time this session
+started). This session added four more commits on top and pushed twice, on request: first
+`4c3e54d`..`aa1a372` (error-reporting, Plivo-sync runner, frontend tag cache), then `877930b` and
+`fa89539` (leads and recordings to Supabase). No CI run confirmed for either push this session (not
+asked to check); confirm via the Actions page before relying on that.
+Earlier: `main` was level with `origin/main` at `786033a` (the 2026-10-25 evening findings fix)
+before the 2026-10-28 work landed. Before that: pushed through `eeef867`, level with
 origin (2026-10-12). **CI #34 is green** (1m12s),
 confirmed by screenshot of the Actions page; one run covers the whole push (`f36d5ae`
 through `eeef867`), since GitHub Actions fires once per push, not once per commit.
@@ -284,7 +326,12 @@ apps/voice/interruptions.py  which caller sounds may interrupt (words only; back
 scripts/talk.py          local mic/speaker run, same as apps/voice/main.py
 apps/voice/masking.py    Aadhaar/PAN masking (any 12 digits; AAAAA9999A)
 apps/voice/transcript.py CallTranscript: only writer of call content; masks in write()
-apps/voice/recording.py  CallRecorder: call audio to recordings/<id>.recording.wav (NOT masked); retention
+apps/voice/recording.py  CallRecorder: call audio to recordings/<id>.recording.wav (NOT masked); retention;
+                         since 2026-11-03 also schedules a background Supabase Storage upload (upload=)
+apps/voice/recording_upload.py  new 2026-11-03: posts a closed recording to Supabase Storage, Opus-encoded
+                         via ffmpeg when available, falling back to the raw WAV; off the call path
+apps/voice/studio_link.py  the phone server's link to the Studio: call config in, outcomes/transcript/
+                         errors/leads out; since 2026-11-03 also report_lead()
 apps/voice/summary.py    post-call LLM summary of the MASKED transcript; retry + failure marker
 apps/voice/duration_limit.py hard max call duration, enforced by a timer beside the pipeline
 apps/voice/personas.py   safe persona lookup by name (names arrive from the network)
@@ -293,13 +340,17 @@ apps/voice/resilience.py CallHealth: what happens when STT/LLM/TTS fails mid-cal
 apps/voice/groq_usage.py append-only log of every Groq API call (logs/groq_usage.log): timestamp, caller, model
 apps/voice/rate_limit.py ConnectionLimiter: /ws's per-IP-per-minute and global-concurrent caps, ahead of any pipeline work
 apps/voice/prompts/      default.md (with "Leaving details"), example_clinic.md, sales.md (generic outbound template)
-apps/voice/tests/        355 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
+apps/voice/tests/        783 tests (pipeline_fakes.py: provider stand-ins for build_worker tests)
+backend/src/models/Lead.js  new 2026-11-03: leads table (migration 007), mirrors capture_lead's local copy
+backend/src/routes/leads.js, src/controllers/leadController.js  GET /api/leads; POST handled in internalController
 scripts/                 check_providers.py, latency_summary.py, bench_llm_tts.py, ...
 logs/turns.jsonl         per-turn timings        (gitignored)
 logs/groq_usage.log      every Groq API call: timestamp, caller, model (gitignored)
 logs/calls/<id>.jsonl    masked transcript, <id>.summary.json   (gitignored)
 leads/<date>.jsonl       captured leads          (gitignored; holds names/numbers)
-recordings/<id>.recording.wav  call audio, caller left, agent right (gitignored; unmasked; 60 days)
+recordings/<id>.recording.wav  call audio, caller left, agent right (gitignored; unmasked; 60 days
+                         locally; since 2026-11-03 also uploaded unmasked to Supabase Storage
+                         bucket call-recordings, which the 60-day retention does NOT yet reach)
 CLEANROOM.md             decision log with sources; add a row for every non-obvious choice
 ```
 
@@ -322,6 +373,22 @@ still open, section 6).
 
 ## 4. Verified by Claude (simulated or offline, NOT real phone calls)
 
+- **Supabase wiring (2026-11-03), against the real cloud project, not a mock — but still not a
+  real phone call.** Migrations applied directly to Supabase Postgres (`ap-south-1`) over the
+  session pooler with a CA-verified TLS connection; the backend served real HTTP requests against
+  it (auth/session gating checked). A lead posted through the real `/internal/v1/leads` endpoint
+  was confirmed present in the real `leads` table by direct query afterward. A real small WAV was
+  driven through the actual `CallRecorder` class, Opus-encoded by the actual `ffmpeg` on this
+  machine, uploaded through the actual `recording_upload.upload_recording`, and confirmed present
+  in the real `call-recordings` Supabase Storage bucket, then deleted. The Storage REST API's
+  exact shape (`POST /storage/v1/object/<bucket>/<path>`, `Authorization`+`apikey` headers both set
+  to the secret key, `x-upsert: true`) was confirmed against the live API with throwaway probes
+  before being written into code, not assumed from memory. **What this does NOT cover:** no real
+  phone call has gone through this path yet — `report_lead`/`recording_upload` are wired from
+  `server.py`'s real `_run_call`, but only exercised directly in these tests and the throwaway
+  script, not via an actual Plivo call reaching `build_worker`. Also unverified: whether a
+  multi-megabyte recording from a long real call uploads within a caller-invisible time (tested
+  only with a ~4KB/1s clip); Opus encoding quality on real speech (tested only with a sine tone).
 - 299 tests pass locally (Python 3.13) at `c11d7c2`; ruff clean. In the CI-like Linux 3.11
   container, the previous version of one recording test was flaky (failed in up to half the
   runs); its replacement passes locally but was not looped in the container (interrupted)
@@ -519,6 +586,23 @@ still open, section 6).
 
 Never claim any of these works until a real call shows it.
 
+**Supabase (new 2026-11-03)**
+- Leads-to-Supabase and recordings-to-Supabase have never run on a real phone call — only directly
+  (a script calling `studio_link.report_lead`/`recording_upload.upload_recording`) and through the
+  Node test suite's `supertest` client. The actual path from a live caller — `capture_lead` firing
+  mid-call, or `CallRecorder.close()` firing when a real Plivo stream ends — has not been
+  exercised end to end.
+- Upload latency and reliability on a real call's recording (minutes long, not a 1-second clip)
+  are unmeasured; the background task's behavior if the phone server restarts or is killed
+  mid-upload is unhandled and untested (the local WAV survives either way; the Storage copy
+  wouldn't exist yet).
+- Whether the Opus encode step adds caller-visible delay to anything is moot since it's off the
+  call path by construction, but it has not been watched on a call long enough to know how long
+  `ffmpeg` takes on a real multi-minute recording, or whether `FFMPEG_TIMEOUT_SECS` (60s) is enough.
+- Supabase's free-tier limits (DB size, Storage size, bandwidth) have not been checked against
+  what real call volume would consume; the handoff's own earlier math (section 6, item 3) was a
+  rough estimate, not re-verified against this specific project's tier.
+
 **Rate limiting and Groq logging**
 - `/ws` rate limiting has only been driven through FastAPI's `TestClient`, never a real
   websocket client over the network or a real Plivo connection. The close code (1013) and
@@ -657,16 +741,18 @@ signature validation below (`eeef867`). Remaining:
    The persona already says to read the details back and only save after a yes, so the
    fix probably belongs in code (refuse obviously empty values at the wrapper) rather
    than in another sentence of prompt. Not started.
-3. **Where call data is stored.** Everything is local files on the owner's Mac today —
-   `logs/calls/` (52K, masked), `recordings/` (17M, unmasked), `leads/`, all gitignored.
-   The owner wants Supabase. Agreed shape, not yet built: transcripts/summaries/leads
-   into Postgres **through `CallTranscript` so masking cannot be bypassed**; recordings
-   into object storage, but two decisions are the owner's first — the Mumbai region (DPDP
-   data residency, same reasoning as hosting in `ap-south-1`) and whether unmasked audio
-   goes to the cloud at all. Uncompressed stereo WAV is ~1.8MB/min (5.0MB for a 163s
-   call), so encode to Opus before uploading anything: a 1GB free tier is about two days
-   at 100 calls/day. **Upload after `call_end`, never on the call path** — a cloud write
-   that hangs mid-call is the hung-LLM incident again.
+3. ~~**Where call data is stored.**~~ **Mostly done 2026-11-03.** Local files
+   (`logs/calls/`, `recordings/`, `leads/`) are all still written exactly as before and remain the
+   primary record; Supabase (Postgres, `ap-south-1` Mumbai, resolving the region/DPDP question) is
+   now a mirror. Masked transcripts/summaries were already flowing into Postgres from an earlier
+   session (`call_events`/`calls`, via `CallTranscript`'s own sink — masking was never at risk of
+   being bypassed, since the sink only ever sees what `write()` already masked); leads now flow the
+   same way (migration 007). Recordings upload to Supabase Storage **unmasked, as-is — the owner's
+   explicit decision (2026-11-03)**, Opus-encoded to control cost, after `call_end`, never on the
+   call path, exactly as this item originally specified. **Still open:** `RECORDING_RETENTION_DAYS`
+   only deletes the local copy, not the Supabase one (section 4/5 above); Supabase's network
+   restrictions are still "open to all IPs" (should be locked down before real traffic); the
+   `sb_secret_...` key pasted into the session chat should be rotated.
 4. **STT fragmentation, which is also the biggest remaining latency cost.** Deepgram
    splits one sentence into several turns ("Okay. So" / "what do you do?"), which costs
    three ways: extra LLM completions (token burn, hence the 429s), partial sentences
@@ -1648,3 +1734,63 @@ between.
 - Next: owner reviews the Contacts rework and the five new pages in the browser (not yet checked
   in Chrome this session — only `vite build` and the API tests were run); owner decides on the two
   pen-test findings above; then commit and push when asked.
+
+### 2026-11-03: connected the Studio to Supabase; leads and recordings now mirror there too
+
+Owner asked to "make the project live local" and push everything. Found the 2026-10-28 work
+(`260932f` and the commits folded into it) had already been committed and pushed by the time this
+session started — git log showed it on `origin/main` already, contradicting this file's own
+"uncommitted" note from that date (now corrected above). Ran the full gate before touching
+anything: 768 voice tests, 158 backend tests, frontend build, ruff, eslint — all green at session
+start. Started all three services locally (backend :8020/:8021, Vite :5173, phone server :8765);
+pen-tested the running servers for real (forged/unsigned `/answer`, `/hangup`, `/transfer`, `/ws`,
+`/internal/v1/errors` — all correctly rejected; grepped the live log for unmasked secrets — none).
+Committed and pushed the pre-existing uncommitted diff as three concern-split commits
+(`4c3e54d`/`4f370ce`/`aa1a372`): `CallHealth` error-reporting to the Studio, a background
+Plivo-sync runner, and frontend tag-cache/logo/route-alias polish.
+
+**Then connected the Studio's database to Supabase**, walking the owner through the dashboard live
+(region = `ap-south-1`/Mumbai per `CLAUDE.md`'s own DPDP reasoning; session pooler, not the
+transaction pooler the code already refuses; the CA cert for verified TLS, not just encrypted).
+Two secrets were pasted into the chat in the process (the DB password, reset once already; the
+`sb_secret_...` Storage key, not yet rotated — both noted above). Applied all migrations directly
+against Supabase; restarted the backend against it; confirmed via a real HTTP round-trip
+(`401` on an unauthenticated `/api/auth/me`) that it was actually serving from the new DB, not
+just that migrate succeeded.
+
+**Owner then asked, in order: "build the transcript/leads piece" and "tell me what to do for
+recordings, unmasked, as-is."** Investigated before building: discovered masked
+transcripts/summaries were *already* flowing into Postgres from an earlier session's
+`studio_link.EventSink` → `/internal/v1/calls/:id/events` → `Call.ingest` path — nothing to build
+there, it just needed `DATABASE_URL` pointed at Supabase, which it now was. Leads were the real
+gap: `capture_lead` wrote only to a local file; `Call.ingest`'s own "tool" event handling discarded
+the tool's `text` payload entirely. Built `leads` end to end, test-first (5 backend tests written
+red first, then `Lead.js`/`leadController.js`/migration 007/route wiring; 2 voice tests for
+`capture_lead` calling a new `CallContext.report_lead` hook, mirroring `report_error`'s existing
+pattern). Verified live: a lead posted through the real endpoint landed in the real Supabase table,
+confirmed by direct query. Pen-tested live: unauth/wrong-token both `401`; a SQL-injection payload
+in `phone_source` landed as inert parametrized text and the enum fallback caught it; a 10,000-char
+name was clamped server-side to 500; table stayed intact; test rows cleaned up after.
+
+For recordings, walked the owner through creating a Storage bucket (`call-recordings`, private)
+and getting the new-style `sb_secret_...` key (Supabase's service-role equivalent) — the latter
+also got pasted into chat, flagged for rotation. Verified the Storage REST API's exact shape
+against the live endpoint with throwaway `curl` probes (confirmed bucket privacy — unauthenticated
+public read got `400` — before writing any code against it, not after). Built
+`recording_upload.py` test-first (9 tests: successful upload, Opus-vs-WAV fallback, retries on
+429/5xx, no retry on a refusal, missing file, connection error — all red before the module
+existed), then wired `CallRecorder.close()` to schedule it as a background `asyncio.Task` (3 more
+tests: scheduled when an upload fn is given, never raises on failure, never scheduled when there
+was no audio to save). Verified live end to end: a real 1-second tone recording went through the
+real `CallRecorder`, got Opus-encoded by the real `ffmpeg` on this machine, uploaded through the
+real upload function, and was confirmed present in the real Supabase Storage bucket before being
+deleted. Full suites green throughout: 783 voice tests (771 + 12), 163 backend tests (158 + 5),
+ruff and eslint clean.
+
+Committed as two concern-split commits and pushed on request: `877930b` (leads) and `fa89539`
+(recordings). Rewrote this file's state sections (1/3/4/5/6) to match; see "Owner actions open" at
+the top for what the owner still needs to do (rotate the Storage key, lock down Supabase's network
+restrictions, decide on cloud-recording retention). **Not done this session, still owed:** no real
+phone call has exercised either new path (`report_lead` or `recording_upload`) end to end — only
+direct script calls and the test suites have. The 2026-10-28 pen-test findings and browser review
+are still outstanding, untouched this session.
