@@ -38,6 +38,7 @@ import numbers_store
 import personas
 import plivo_signature
 import prompt_store
+import recording_upload
 import studio_link
 import uvicorn
 import uvicorn.config
@@ -573,6 +574,12 @@ async def _run_call(
     async def report_error(level: str, source: str, message: str) -> None:
         await studio_link.report_error(level, source, message, call_id=call_id, org_id=org_id)
 
+    async def report_lead(lead: dict) -> None:
+        await studio_link.report_lead(lead, org_id=org_id)
+
+    async def upload_recording(path) -> None:
+        await recording_upload.upload_recording(path, path.name)
+
     worker = build_worker(
         transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id,
         caller_number=clean_caller(caller),
@@ -586,6 +593,8 @@ async def _run_call(
         notice_prespoken=notice_prespoken,
         transcript_sink=sink,
         report_error=report_error,
+        report_lead=report_lead,
+        recording_upload=upload_recording,
     )
     if agent_config:
         worker.transcript.event("call_agent", agent_id=agent_config["agent_id"])

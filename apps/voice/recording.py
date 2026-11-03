@@ -22,6 +22,7 @@ logged, recorded in the transcript as `recording_failed`, and recording stops fo
 that call; the conversation goes on. Nothing is raised.
 """
 
+import asyncio
 import math
 import os
 import re
@@ -105,8 +106,12 @@ class CallRecorder:
         sample_rate: int,
         record=None,
         chunk_secs: float = CHUNK_SECS,
+        upload=None,
     ):
-        """record(event, **fields) writes a marker line, normally CallTranscript.event."""
+        """record(event, **fields) writes a marker line, normally CallTranscript.event.
+        upload(path) -> bool, awaited in the background once the file is closed
+        (normally recording_upload.upload_recording); None (the default) leaves
+        the recording local-only, as before this existed."""
         # The id comes from the network on a phone call, so it is not trusted to
         # be a safe filename.
         safe_id = _UNSAFE.sub("_", call_id)[:100] or "unknown"
@@ -114,6 +119,8 @@ class CallRecorder:
         self.sample_rate = sample_rate
         self._directory = directory
         self._record = record or (lambda *a, **k: None)
+        self._upload = upload
+        self._upload_task: asyncio.Task | None = None
         self._chunk_bytes = max(2, int(sample_rate * chunk_secs) * 2)  # per side, 16-bit
         self._wav: wave.Wave_write | None = None
         self._failed = False
@@ -185,6 +192,14 @@ class CallRecorder:
         self._wav = None
         self._record("recording_saved", file=self.path.name, seconds=seconds)
         logger.info(f"Recording saved: {self.path} ({seconds}s)")
+        if self._upload is not None:
+            self._upload_task = asyncio.create_task(self._run_upload())
+
+    async def _run_upload(self) -> None:
+        try:
+            await self._upload(self.path)
+        except Exception as e:  # noqa: BLE001 - best-effort; the local file is the record
+            logger.warning(f"Recording upload failed for {self.path.name}: {e!r}")
 
     def _fail(self, error: Exception) -> None:
         self._failed = True

@@ -1123,6 +1123,8 @@ def build_worker(
     notice_prespoken: tuple | None = None,
     transcript_sink=None,
     report_error=None,
+    report_lead=None,
+    recording_upload=None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -1139,7 +1141,14 @@ def build_worker(
     server passes the phone line's 8kHz, since anything higher stores no more sound.
     report_error(level, source, message) is CallHealth's way of telling the Studio
     about a provider failure (the phone server wires it to studio_link.report_error);
-    None leaves it silent, as the local mic/speaker run does.
+    None leaves it silent, as the local mic/speaker run does. report_lead(lead) is
+    the same idea for capture_lead: the phone server wires it to
+    studio_link.report_lead so a saved lead also reaches the Studio, not only
+    leads/*.jsonl; None (the local mic/speaker run) leaves the local file as the
+    only copy, as before. recording_upload(path) -> bool is the same idea for the
+    finished recording: CallRecorder calls it in the background once the WAV is
+    closed (the phone server wires it to recording_upload.upload_recording); None
+    leaves the recording local-only, as before.
     tool_names and opening_line come from a Studio agent: its tools replace
     TOOLS_ENABLED, and the greeting opens with its line. notice_prespoken is
     (PrespokenNotice, monotonic time it was sent): the phone server already sent
@@ -1192,7 +1201,8 @@ def build_worker(
     recorder = None
     if (env("RECORDING_ENABLED") or "true").strip().lower() == "true":
         recorder = CallRecorder(
-            call_id, recordings_dir(), recording_sample_rate, record=transcript.event
+            call_id, recordings_dir(), recording_sample_rate, record=transcript.event,
+            upload=recording_upload,
         )
 
     # A recorded call opens with RECORDING_NOTICE, word for word, before anything else
@@ -1218,6 +1228,7 @@ def build_worker(
     # Tools are opt-in per deployment through TOOLS_ENABLED (default: end_call).
     call = CallContext(call_id=call_id, transcript=transcript, caller_number=caller_number)
     call.transfer = transfer
+    call.report_lead = report_lead
     call.hang_up = lambda: llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
     try:
         tool_schemas = build_tool_schemas(

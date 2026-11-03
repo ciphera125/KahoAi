@@ -201,6 +201,43 @@ def test_closing_twice_records_the_save_once(tmp_path, transcript):
         assert w.getnframes() == RATE // 2
 
 
+async def test_closing_schedules_an_upload_when_one_is_configured(tmp_path, transcript):
+    uploaded = []
+
+    async def upload(path):
+        uploaded.append(path)
+        return True
+
+    rec = recorder(tmp_path, transcript, upload=upload)
+    rec.write(tone(0.5, RATE) * 2, RATE, 2)
+    rec.close()
+    await rec._upload_task
+    assert uploaded == [rec.path]
+
+
+async def test_an_upload_failure_never_raises_into_the_call(tmp_path, transcript):
+    async def upload(path):
+        raise RuntimeError("Supabase is down")
+
+    rec = recorder(tmp_path, transcript, upload=upload)
+    rec.write(tone(0.5, RATE) * 2, RATE, 2)
+    rec.close()  # must not raise
+    await rec._upload_task  # the task itself must not raise either
+
+
+def test_no_upload_is_scheduled_without_audio(tmp_path, transcript):
+    calls = []
+
+    async def upload(path):
+        calls.append(path)
+        return True
+
+    rec = recorder(tmp_path, transcript, upload=upload)
+    rec.close()  # nothing was ever written; no file, nothing to upload
+    assert rec._upload_task is None
+    assert calls == []
+
+
 def test_hostile_call_id_cannot_escape_the_directory(tmp_path):
     rec = CallRecorder("../../etc/passwd", tmp_path, RATE)
     assert rec.path.parent == tmp_path
