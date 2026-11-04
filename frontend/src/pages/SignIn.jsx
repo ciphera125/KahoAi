@@ -1,5 +1,6 @@
 // Sign in, or create an account. Creating one without an invite starts a new
 // organization (you are its owner); with an invite you join that organization.
+import { LogoMark, Wordmark } from "../logo.jsx";
 import { useEffect, useState } from "react";
 import { get, post } from "../api.js";
 import { useAuth } from "../auth.jsx";
@@ -47,7 +48,7 @@ export default function SignIn() {
   return (
     <div className="auth">
       <div className="card auth-card">
-        <div className="logo" style={{ marginBottom: "var(--s5)" }}><div className="mark">K</div><b>Kaho AI Studio</b></div>
+        <div className="logo" style={{ marginBottom: "var(--s5)" }}><LogoMark size={48} /><b><Wordmark /> <span className="studio-tag">Studio</span></b></div>
         <h1>{mode === "in" ? "Welcome back" : joining ? "Join your team" : "Create your organization"}</h1>
         <div className="sub">{mode === "in" ? "Sign in to run your calling agents." : joining ? "You have an invite code from your team." : "You will be its owner. Invite your team after."}</div>
         <div className="tabs" role="tablist">

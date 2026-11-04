@@ -2,9 +2,11 @@
 // notifications bell and the profile menu. <Outlet/> is the current page.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
+import { motion } from "motion/react";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { get, post } from "../api.js";
 import { useAuth } from "../auth.jsx";
-import { LogoMark } from "../logo.jsx";
+import { LogoMark, Wordmark } from "../logo.jsx";
 import { ago, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
 
 const NAV = [
@@ -40,11 +42,12 @@ export default function Layout() {
   return (
     <div className={`shell${pinned ? " rail-pinned" : ""}${open ? " rail-wide" : ""}${peek && !pinned ? " rail-peek" : ""}`}>
       {drawer && <div className="rail-scrim" onClick={() => setDrawer(false)} />}
+      <Tooltip.Provider delayDuration={80} skipDelayDuration={300}>
       <nav className={`rail${drawer ? " open" : ""}`} aria-label="Sections" onMouseEnter={enter} onMouseLeave={leave}>
         <div className="logo">
-          <div className="mark" aria-hidden="true"><LogoMark /></div>
+          <LogoMark size={54} />
           <div className="rail-text brand">
-            <b>KahoAI</b>
+            <b><Wordmark /></b>
             <OrgSwitcher />
           </div>
           <button type="button" className="icon-btn rail-pin" onClick={togglePin} aria-label={pinned ? "Unpin the sidebar" : "Keep the sidebar open"} aria-pressed={pinned} title={pinned ? "Unpin sidebar" : "Keep sidebar open"}>
@@ -56,11 +59,7 @@ export default function Layout() {
           {NAV.map(([group, items]) => (
             <div key={group} className="nav-section">
               <div className="nav-group"><span className="rail-text">{group}</span></div>
-              {items.map(([path, icon, label]) => (
-                <NavLink key={path} to={`/${path}`} className="nav-item" data-label={label}>
-                  <span className="nav-icon"><Icon name={icon} /></span><span className="rail-text">{label}</span>
-                </NavLink>
-              ))}
+              {items.map(([path, icon, label]) => <RailLink key={path} path={path} icon={icon} label={label} showTip={!open} />)}
             </div>
           ))}
         </div>
@@ -72,20 +71,43 @@ export default function Layout() {
           </div>
         </button>
       </nav>
+      </Tooltip.Provider>
       <main className="wrap">
         <div className="inner">
           <div className="topbar">
             <button type="button" className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu"><Icon name="menu" /></button>
-            <span className="topbar-brand"><span className="mark" aria-hidden="true"><LogoMark size={14} /></span>KahoAI</span>
+            <span className="topbar-brand"><LogoMark size={30} waves={false} /><Wordmark /></span>
             <span className="grow" />
             <ThemeToggle />
             <Bell />
           </div>
-          <Outlet />
+          <motion.div key={location.pathname} className="page-enter" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}>
+            <Outlet />
+          </motion.div>
         </div>
       </main>
       {profile && <Profile onClose={() => setProfile(false)} />}
     </div>
+  );
+}
+
+function RailLink({ path, icon, label, showTip }) {
+  const link = (
+    <NavLink to={`/${path}`} className="nav-item">
+      {({ isActive }) => (
+        <>
+          {isActive && <motion.span layoutId="nav-pill" className="nav-pill" transition={{ type: "spring", stiffness: 520, damping: 40 }} />}
+          <span className="nav-icon"><Icon name={icon} /></span><span className="rail-text">{label}</span>
+        </>
+      )}
+    </NavLink>
+  );
+  if (!showTip) return link;
+  return (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>{link}</Tooltip.Trigger>
+      <Tooltip.Portal><Tooltip.Content side="right" sideOffset={12} className="tip">{label}<Tooltip.Arrow className="tip-arrow" /></Tooltip.Content></Tooltip.Portal>
+    </Tooltip.Root>
   );
 }
 

@@ -1,7 +1,8 @@
 // Small shared pieces: icons, toast, modal, confirm, a dropdown menu, and a few
 // formatters. Kept together so the pages stay about their own screen.
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import * as Dialog from "@radix-ui/react-dialog";
+import { motion } from "motion/react";
 
 /* ---------- icons (same set as the original Studio) ---------- */
 const PATHS = {
@@ -130,23 +131,24 @@ export function DropdownButton({ label, icon, items }) {
 
 /* ---------- modal + confirm ---------- */
 export function Modal({ title, onClose, wide, children }) {
-  useEffect(() => {
-    const esc = (e) => e.key === "Escape" && onClose();
-    document.addEventListener("keydown", esc);
-    return () => document.removeEventListener("keydown", esc);
-  }, [onClose]);
-  // Drawn on <body>, so a dialog opened from inside the sidebar is not clipped or styled by it.
-  return createPortal(
-    <div className="scrim" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className={`modal${wide ? " wide" : ""}`} role="dialog" aria-modal="true">
-        <div className="card-head" style={{ marginBottom: "var(--s2)" }}>
-          <h2>{title}</h2>
-          <button type="button" className="icon-btn" onClick={onClose} title="Close"><Icon name="x" /></button>
-        </div>
-        {children}
-      </div>
-    </div>,
-    document.body,
+  // Radix Dialog gives focus trapping, Escape and screen-reader roles; motion gives the entrance.
+  return (
+    <Dialog.Root open onOpenChange={(o) => !o && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Content asChild aria-describedby={undefined}>
+          <motion.div className="scrim" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.18 }}
+            onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+            <motion.div className={`modal${wide ? " wide" : ""}`} initial={{ opacity: 0, y: 16, scale: 0.97 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 380, damping: 32 }}>
+              <div className="card-head" style={{ marginBottom: "var(--s2)" }}>
+                <Dialog.Title asChild><h2>{title}</h2></Dialog.Title>
+                <Dialog.Close asChild><button type="button" className="icon-btn" title="Close"><Icon name="x" /></button></Dialog.Close>
+              </div>
+              {children}
+            </motion.div>
+          </motion.div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 export function useConfirm() {

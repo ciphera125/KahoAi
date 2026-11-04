@@ -108,7 +108,7 @@ function History({ reload, onWatch }) {
       <div className="card-head"><span className="card-title">Call history</span><span className="muted">{data ? plural(data.total, "call") : ""}</span></div>
       {data?.calls.length === 0 && <div className="hint">No calls yet.</div>}
       {data?.calls.map((c) => (
-        <button key={c.call_id} type="button" className="nav-item" style={{ width: "100%", height: "auto", padding: "8px 0", borderRadius: 0, borderBottom: "1px solid var(--border)", display: "flex", justifyContent: "space-between" }}
+        <button key={c.call_id} type="button" className="call-row"
           onClick={() => (c.has_transcript ? setView(c) : c.status === "ringing" ? onWatch({ uuid: c.call_id, label: c.contact_name || c.peer || "Call", sub: c.peer }) : null)}>
           <div style={{ minWidth: 0, textAlign: "left" }}>
             <b className="ellip">{c.contact_name || c.peer || "Unknown number"}</b>
