@@ -210,3 +210,17 @@ def test_rejected_attempts_do_not_hold_the_global_slot_open(client, monkeypatch)
         with client.websocket_connect(stream_url()):
             pass
     assert accepted == [1]
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_public_server_publishes_no_api_docs(client, path):
+    assert client.get(path).status_code in (403, 404)
+
+
+def test_log_sink_defaults_to_info_and_honours_log_level(monkeypatch):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+    assert server.log_level() == "INFO"
+    monkeypatch.setenv("LOG_LEVEL", "debug")
+    assert server.log_level() == "DEBUG"
+    monkeypatch.setenv("LOG_LEVEL", "bogus")
+    assert server.log_level() == "INFO"

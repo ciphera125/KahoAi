@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { securityHeaders } from "./security-headers.js";
 
 // The app uses real paths (/dashboard, /calls, ...), so both the dev server and
 // the production host must serve index.html for any unknown path (SPA fallback).
@@ -13,6 +14,6 @@ export default defineConfig({
       "/api": { target: process.env.VITE_API_TARGET || "http://127.0.0.1:8020", changeOrigin: false },
     },
   },
-  preview: { port: 4173 },
-  build: { outDir: "dist", sourcemap: true },
+  preview: { port: 4173, headers: securityHeaders },
+  build: { outDir: "dist", sourcemap: false },
 });

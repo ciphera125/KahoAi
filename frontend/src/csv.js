@@ -32,6 +32,11 @@ function cells(text, sep) {
   return rows.filter((r) => r.some((x) => x !== ""));
 }
 
+// A name starting with = + - @ runs as a formula when the contact is exported to a spreadsheet.
+function defang(text) {
+  return /^[=+\-@]/.test(text) ? `'${text}` : text;
+}
+
 export function parseCallList(text) {
   const clean = String(text ?? "").replace(/^\uFEFF/, "");
   if (!clean.trim()) throw new Error("The file is empty.");
@@ -62,6 +67,6 @@ export function parseCallList(text) {
   }
   return {
     header,
-    rows: body.map((r) => ({ name: nameCol >= 0 ? r[nameCol] ?? "" : "", number: r[numberCol] ?? "" })),
+    rows: body.map((r) => ({ name: defang(nameCol >= 0 ? r[nameCol] ?? "" : ""), number: r[numberCol] ?? "" })),
   };
 }

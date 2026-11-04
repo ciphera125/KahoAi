@@ -25,6 +25,7 @@ import math
 import os
 import re
 import secrets
+import sys
 import time
 from contextlib import asynccontextmanager
 from html import escape
@@ -122,7 +123,7 @@ async def lifespan(app: FastAPI):
         sweeper.cancel()
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 
 class FailOpenPlivoSerializer(PlivoFrameSerializer):
@@ -768,8 +769,15 @@ def uvicorn_log_config() -> dict:
     return config
 
 
+def log_level() -> str:
+    level = (os.getenv("LOG_LEVEL") or "INFO").upper()
+    return level if level in {"TRACE", "DEBUG", "INFO", "WARNING", "ERROR"} else "INFO"
+
+
 def main() -> None:
     load_dotenv()
+    logger.remove()
+    logger.add(sys.stderr, level=log_level())
     ensure_ca_bundle()
     require_env("WEBHOOK_SECRET", "PUBLIC_HOST", "PLIVO_AUTH_ID", "PLIVO_AUTH_TOKEN")
     try:

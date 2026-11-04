@@ -42,6 +42,7 @@ test("an empty file says so", () => {
   assert.throws(() => parseCallList(" \n "), /empty/);
 });
 
-test("a spreadsheet formula in a cell is read as text, never evaluated", () => {
-  assert.deepEqual(parseCallList("name,phone\n=HYPERLINK(\"x\"),9876543210").rows, [{ name: '=HYPERLINK("x")', number: "9876543210" }]);
+test("a name that would run as a spreadsheet formula is defanged on import", () => {
+  const r = parseCallList('Name,Phone\n"=HYPERLINK(""http://x"",""a"")",9876543210\n@SUM(A1),9123456789\n+cmd,9000000000\n-2+3,9111111111\nAsha,9222222222\n');
+  assert.deepEqual(r.rows.map((x) => x.name), ["'=HYPERLINK(\"http://x\",\"a\")", "'@SUM(A1)", "'+cmd", "'-2+3", "Asha"]);
 });
