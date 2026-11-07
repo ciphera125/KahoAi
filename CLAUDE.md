@@ -110,8 +110,8 @@ env var: `LLM_PROVIDER` (groq; bedrock is stubbed but not wired), `TTS_PROVIDER`
 (deepgram, elevenlabs, sarvam, smallest or cartesia), `TTS_FALLBACK_PROVIDER`
 (a backup voice if the first one dies mid-call).
 
-The voice is **Smallest `suri`** (owner's pick by ear, 2026-10-24; `lakshmi` and `manmeet` were the
-other two liked; `meher` before), starting in English (`SMALLEST_LANGUAGE=en`: the notice and greeting
+The voice is **Smallest `meher`** (owner, 2026-11-07: back to it after `suri` mispronounced; `suri` was the
+2026-10-24 pick, `lakshmi` and `manmeet` the other two liked), starting in English (`SMALLEST_LANGUAGE=en`: the notice and greeting
 are English, and starting in Hindi audibly switched 2s in on call ddedb4fd), backed up by **ElevenLabs** (`TTS_FALLBACK_PROVIDER=elevenlabs`,
 built-in voice `EXAVITQu4vr4xnSDxMaL`, since the free plan refuses Voice Library voices over the
 API). **Google TTS was removed and Cartesia is on hold** (owner, 2026-10-24): Cartesia's code
@@ -176,6 +176,10 @@ ruff check --config apps/voice/pyproject.toml .
 ```
 
 ## Conventions that matter
+
+
+Every prompt or flow that references a tool must be checked against the tools actually attached before it can go live. Never let a model call an unknown tool without a safe fallback. Log every rejected tool call.
+
 
 **Prompts are data, not code.** A persona file says who the agent is and what it
 knows. `VOICE_RULES` in `main.py` says how to speak and is always prepended.

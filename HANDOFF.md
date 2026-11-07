@@ -12,11 +12,32 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-11-03. **This session's work is committed and pushed** (`877930b`,
-`fa89539`; `main` == `origin/main`). The voice pipeline (`apps/voice`) changed this session: new
-Studio-reporting hooks and a new recording-upload path (below). Voice is Smallest **`suri`** in
-English, backed up by ElevenLabs; LLM `openai/gpt-oss-20b`, effort medium, fallback off, GPT-OSS
-only, no qwen. Webhooks need Plivo's V3 signature; `/ws` needs a single-use stream token.
+Last updated: 2026-11-07. **Everything is committed and pushed** (`main` == `origin/main` at
+`2ebef95`; working tree clean). Five commits landed after the 2026-11-03 entry: `be9720f` (2026-11-04,
+CSV formula guard, frontend security headers, no public API docs, patched deps), `e233d0b` (new parrot
+logo / Plus Jakarta Sans / Radix rebrand), `29d06cb` (webhook replay guard: a signed Plivo nonce is
+accepted once; recordings reported to the Studio; unused aws/boto3 dropped), `3d45151` (migration 008:
+Supabase public-API roles locked out, idempotent transcript lines, call search, recordings linked to
+calls with 10-minute signed links; bulk-claim over-dial fixed) and `2ebef95` (Studio recording player,
+transcript search, `media-src https://*.supabase.co` in the CSP, `scripts/harden_recordings_bucket.py`).
+Voice is Smallest **`suri`** in English, backed up by ElevenLabs; LLM `openai/gpt-oss-20b`, effort
+medium, fallback off, GPT-OSS only, no qwen. Webhooks need Plivo's V3 signature; `/ws` needs a
+single-use stream token.
+
+**Supabase URL check (2026-11-07), names and reachability only, no secret printed:**
+- Root `.env` (the phone server): `SUPABASE_URL=https://mxhkhuhdhfonebyrjkfe.supabase.co`,
+  `SUPABASE_SECRET_KEY` (set), `SUPABASE_RECORDINGS_BUCKET=call-recordings`. In place.
+- `backend/.env`: `DATABASE_URL` (session pooler, Mumbai), `DATABASE_SSL=verify`, `DATABASE_SSL_CA` in
+  place. **`SUPABASE_URL`, `SUPABASE_SECRET_KEY` and `SUPABASE_RECORDINGS_BUCKET` are NOT set there.**
+  The backend reads only its own `backend/.env`, so `GET /api/calls/:id/recording` answers **503** and
+  the Studio's new recording player cannot play anything until they are added (same three values as the
+  root `.env`; restart the backend). The uploads themselves (phone server to Storage) are unaffected.
+- `frontend/`: no Supabase URL needed; the browser only talks to the Studio. The CSP allows
+  `media-src https://*.supabase.co` in both `frontend/public/_headers` and `frontend/security-headers.js`
+  (needed for the signed-link audio). The `.env.example` for the backend lists the three names, blank.
+- The project URL answers (REST `401` without a key, as it should); the bucket path is not publicly
+  readable. Not checked: whether `harden_recordings_bucket.py` was ever run (50 MB cap, audio types).
+- Not verified live: the recording player and signed link, because of the missing backend settings.
 
 **The Studio's database is now Supabase Postgres, `ap-south-1` (Mumbai), not local.** Project
 "Adinair01's Project" under the "Kaho Ai" org, ref `mxhkhuhdhfonebyrjkfe`. `backend/.env`'s
@@ -76,6 +97,8 @@ rotated** — do that from Project Settings → API Keys when there's a moment, 
 `SUPABASE_SECRET_KEY` in `apps/voice/.env`.
 
 **Owner actions open:**
+0. Add the three `SUPABASE_*` values to `backend/.env` and restart the backend (recordings won't play
+   until then); run `scripts/harden_recordings_bucket.py` if not yet done.
 1. Rotate the `sb_secret_...` key (above) once convenient.
 2. Lock down Supabase's network restrictions before real call data lands there.
 3. Decide whether Supabase-stored recordings should also respect `RECORDING_RETENTION_DAYS` (gap
@@ -1794,3 +1817,67 @@ restrictions, decide on cloud-recording retention). **Not done this session, sti
 phone call has exercised either new path (`report_lead` or `recording_upload`) end to end — only
 direct script calls and the test suites have. The 2026-10-28 pen-test findings and browser review
 are still outstanding, untouched this session.
+
+### 2026-11-07: handoff review and Supabase URL check
+
+Read this file against `git log` and `git status`: it was stale (last entry 2026-11-03, five commits
+behind; `main` == `origin/main`, tree clean). Rewrote the header to cover the five commits above.
+Checked the Supabase settings in `.env`, `backend/.env`, the frontend headers and the backend config,
+and probed the project URL (REST `401`, bucket not publicly readable). Finding: the phone server's
+`.env` has all three Supabase values, `backend/.env` has none of them, so recording playback in the
+Studio returns 503. Nothing was changed except this file. Detail for the five commits is in
+`CLEANROOM.md` (rows dated 2026-11-07) and `backend/README.md` ("Supabase: lock-down, search and
+recordings"). Sections 3 to 6 were not rewritten this session and still describe the 2026-11-03 state;
+the test counts there (783 voice, 163 backend) are out of date (the 2026-11-07 CLEANROOM row records 801
+voice tests).
+
+### 2026-11-07 (later): Supabase fixed and verified
+
+Owner: "do all that", no key rotation needed (keys are ours only). Done: the three `SUPABASE_*` values
+copied into `backend/.env` and the backend restarted; `harden_recordings_bucket.py --apply` run (bucket
+private, 50 MB cap, audio types only); **cloud recordings now expire** (`recordingRetentionRunner.js`,
+hourly, `RECORDING_RETENTION_DAYS` default 60, test-first, 5 tests). Live two-organization test against
+real Supabase (two fresh accounts, one agent and call each, real Opus upload through
+`recording_upload.upload_recording`): each org played its own recording through the signed link
+(`audio/opus`), the other org's recording and transcript gave 404, search found nothing across orgs,
+an anonymous request gave 401. Test orgs, calls and objects deleted afterwards (DB back to 1 org, 1 user,
+1 call; bucket empty). Storage layout is `<yyyy>/<mm>/<call_id>.opus`, NOT per organization; isolation
+rests on the API's org check. Network restrictions deliberately left open: the only sensible allow-list
+is the Mumbai server's IP, which does not exist yet; a home IP would lock the Studio out when it changes.
+`tests/hardening.test.js` fails 5 on the local test database (no `anon` role there; fails without
+today's changes too); the same checks pass against real Supabase. Not committed.
+
+### 2026-11-07 (evening): voice back to meher, live transcript bubbles, call-log review
+
+Owner heard `suri` say things wrongly: `SMALLEST_VOICE_ID` is `meher` again (`.env`; phone server restarted,
+`check_providers` OK for Smallest). Live transcript showed one bubble per word: the phone server sends the
+agent's words as captions one at a time; `frontend/src/transcript.js` now joins them into one bubble per
+stretch (caller's interim text replaces itself; the finished turn replaces captions), 5 tests, build and
+lint clean. Call logs `db32d982` and `a09853f2` (agent "task REMinder", `ag_ec797f807341`): the agent's own
+prompt tells the model to use `get_tasks`, `mark_task_done`, `reschedule_task`, `add_task` (not tools we
+have; only `end_call` and `capture_lead` are on) and holds unfilled `{{user_name}}`-style placeholders;
+see the session reply for what that caused. Prompt not changed (owner's content). Not committed.
+
+
+### 2026-11-07 (night): call fixes
+
+Code (test-first, 805 voice tests, ruff clean): empty model reply becomes a spoken "could you say that once
+more?"; more Indian scripts mapped to Devanagari; `VOICE_RULES` made more human and told Hindi verb forms must
+match the persona. Studio data (Supabase, not in git): agent `ag_ec797f807341` (Ria) has a new prompt version
+(old one kept in its history): no invented tools or placeholders, honest that it has no task list, professional
+off-topic redirect, Hindi as a woman; opening line now "Hi, this is Ria, an AI assistant calling from Kaho AI."
+Spot-checked live against Groq on 6 lines. No real call yet with these changes. Not committed.
+
+### 2026-11-07 (late): tools cannot be asked for unless they are attached
+
+Owner's spec (pasted) for a full Tools system; this session did the parts that close the outage, test-first.
+**Done:** (1) `promptCheck.js` refuses a prompt naming a tool the agent lacks, on prompt save AND on taking a
+tool away, in plain words; verified against live Supabase with the original broken Ria prompt. (2) `VOICE_RULES`
+now always says "Only use the tools you were given. If none fits, answer in words." (3) The no-tools retry
+carries "Answer in words only; do not call any tool."; the tool the model tried is parsed, logged and stored as
+a `tool_rejected` transcript event, shown in the Studio's live transcript. (4) Sidebar "Tool Calls" -> "Tools".
+`TOOL_CATALOG` moved to `toolCatalog.js` to avoid an import cycle. 811 voice tests, 200 backend tests, 20
+frontend tests, ruff/eslint clean; `hardening.test.js` still fails 5 on the local test DB (no `anon` role,
+pre-existing). **Not built:** custom API tools, the capture ("save what the caller says") tool, task tools and
+their table, the `{{` variable picker, Save-vs-Publish with rollback, the tool-call history tree. No real call
+yet with any of this. Not committed.
