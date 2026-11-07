@@ -433,3 +433,5 @@ h1 { font-weight: 800; letter-spacing: -.03em; }
 .rec-audio { display: flex; align-items: center; gap: var(--s3); overflow: hidden; }
 .rec-audio audio { flex: 1; min-width: 0; height: 40px; accent-color: var(--accent); border-radius: 999px; }
 .rec-player .primary { justify-self: start; }
+
+.sys.warn-line { color: var(--warn, #b45309); }

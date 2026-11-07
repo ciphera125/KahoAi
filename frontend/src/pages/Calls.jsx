@@ -1,3 +1,4 @@
+import { messages } from "../transcript.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { ApiError, get, post } from "../api.js";
@@ -237,9 +238,10 @@ function LiveTranscript({ watch, onEnded }) {
       </div>
       <div className="chat" ref={boxRef}>
         {events.length === 0 && <div className="center" style={{ margin: "auto", color: "var(--text-3)" }}><Icon name="chat" /><span style={{ marginLeft: 8 }}>The agent on the left, the person on the right.</span></div>}
-        {events.map((e, i) => {
+        {messages(events).map((e, i) => {
           if (e.event === "turn" || e.event === "live") return <div key={i} className={`msg ${e.role === "agent" ? "agent" : "caller"}`}>{e.text}</div>;
           if (e.event === "tool") return <div key={i} className="sys">{TOOL[e.name] || e.name}</div>;
+          if (e.event === "tool_rejected") return <div key={i} className="sys warn-line">The agent tried to use a tool it does not have{e.name && e.name !== "unknown" ? ` (${e.name})` : ""}; it answered in words instead</div>;
           if (e.event === "recording_notice_played") return <div key={i} className="sys">Recording notice played</div>;
           if (e.event === "call_failed") return <div key={i} className="sys">A provider failed during the call</div>;
           if (e.event === "no_answer") return <div key={i} className="sys">Not picked up</div>;
