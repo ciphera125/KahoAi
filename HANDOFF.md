@@ -1881,3 +1881,34 @@ frontend tests, ruff/eslint clean; `hardening.test.js` still fails 5 on the loca
 pre-existing). **Not built:** custom API tools, the capture ("save what the caller says") tool, task tools and
 their table, the `{{` variable picker, Save-vs-Publish with rollback, the tool-call history tree. No real call
 yet with any of this. Not committed.
+
+### 2026-11-08: the Tools system (all eight steps), built autonomously
+
+Read `PROGRESS.md` first: it lists each step with its commit, every decision made, and the
+final review. In short, on top of `4d02d6a`: Save/Publish with versions and rollback (`1e5b235`),
+"Save what the caller says" (`4692c42`), tasks and the four task tools plus API keys
+(`c452beb`), look up contact details (`2f1c298`), the `{{` picker and filled-in prompts
+(`59680d3`), customers' own API tools (`8219771`), the Tools history tree (`3dd6fab`), and
+Test this agent with Publish gating (`794ba9d`), then `1aa44ac` for what an end-to-end run found.
+Migrations 009 to 015 are applied to the live Supabase database; Ria is published version 1,
+unchanged. Suites at the end: 844 voice, 341 backend (the 5 `hardening.test.js` failures are the
+known local-database ones), 20 frontend; ruff and eslint clean. Nothing is pushed. The phone
+server was restarted at the end so the voice-side changes are live.
+
+**Open, and needs the owner:**
+1. **`GROQ_API_KEY` is not in `backend/.env`.** "Test this agent" says so and Publish asks for an
+   admin override until it is. The key is in the root `.env`; copying it is the owner's call.
+2. **Security findings from the live pen-test, reported and NOT fixed** (CLAUDE.md): (a) the
+   address check lets `https://[::ffff:169.254.169.254]/` through at save time; it fails closed
+   when run only because the bracketed host does not resolve, which is luck, not design; (b) a
+   name is resolved once to check it and again to call it, so DNS rebinding could slip between
+   the two; (c) wrong API keys are never throttled (150 in a row all got 401), harmless at 24
+   random bytes but unlimited; (d) loopback `http` addresses are allowed unless
+   `NODE_ENV=production`, so production must set it.
+3. **No real phone call was placed**: that needs the owner's number and consent. Exercised
+   instead: the real voice-side tool code against the live Studio and database, and the real
+   model for a refused tool (it reached for `get_balance`, our retry answered in words, the name
+   was logged). Still unproven on a real phone call: all of it.
+4. Not built, by design or for lack of a decision: CSV task upload; a diff between versions; a
+   warning when "Save what the caller says" is attached with no questions set; the Test does not
+   include the live call's voice rules.
