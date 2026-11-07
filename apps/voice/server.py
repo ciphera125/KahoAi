@@ -618,6 +618,9 @@ async def _run_call(
         return await studio_link.save_answer(
             call_id, field_key=field_key, said=said, turn=turn, confirmed=confirmed)
 
+    async def run_studio_tool(name: str, **args) -> dict:
+        return await studio_link.run_tool(call_id, name, **args)
+
     async def report_recording(path: str, size: int, mime: str) -> None:
         await studio_link.report_recording(call_id, path, size, mime)
 
@@ -637,6 +640,7 @@ async def _run_call(
         opening_line=agent_config["opening_line"] if agent_config else None,
         capture_fields=(agent_config.get("capture_fields") if agent_config else None),
         save_answer=save_answer,
+        run_tool=run_studio_tool,
         notice_prespoken=notice_prespoken,
         transcript_sink=sink,
         report_error=report_error,

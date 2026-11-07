@@ -17,6 +17,7 @@ import Numbers from "./pages/Numbers.jsx";
 import Team from "./pages/Team.jsx";
 import Bulk from "./pages/Bulk.jsx";
 import ToolCalls from "./pages/ToolCalls.jsx";
+import Tasks from "./pages/Tasks.jsx";
 import Tags from "./pages/Tags.jsx";
 import ErrorLogs from "./pages/ErrorLogs.jsx";
 import Settings from "./pages/Settings.jsx";
@@ -40,6 +41,7 @@ export default function App() {
           <Route path="/prompts" element={<Prompts />} />
           <Route path="/numbers" element={<Numbers />} />
           <Route path="/team" element={<Team />} />
+          <Route path="/tasks" element={<Tasks />} />
           <Route path="/tool-calls" element={<ToolCalls />} />
           <Route path="/tags" element={<Tags />} />
           <Route path="/errors" element={<ErrorLogs />} />

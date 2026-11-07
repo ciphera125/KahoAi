@@ -215,6 +215,14 @@ export async function removeNumber(orgId, contactId, numberId) {
 }
 
 /** Do not call, within one organization: none of its people dial this number. */
+/** The contact in this organization with that number, or null. */
+export async function idForNumber(orgId, number) {
+  const { rows } = await inOrg(orgId, (db) => db.query(
+    `SELECT cn.contact_id FROM contact_numbers cn WHERE cn.number = $1 AND cn.org_id = $2 LIMIT 1`,
+    [String(number), orgId]));
+  return rows[0]?.contact_id ?? null;
+}
+
 export async function isDnc(orgId, number) {
   const { rows } = await inOrg(orgId, (db) => db.query(`SELECT EXISTS (SELECT 1 FROM contacts c
     JOIN contact_numbers n ON n.contact_id = c.id WHERE c.org_id = $1 AND c.dnc AND n.number = $2) AS dnc`,

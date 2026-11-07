@@ -1212,6 +1212,7 @@ def build_worker(
     tool_names: list[str] | None = None,
     capture_fields: list | None = None,
     save_answer=None,
+    run_tool=None,
     opening_line: str | None = None,
     notice_prespoken: tuple | None = None,
     transcript_sink=None,
@@ -1327,6 +1328,7 @@ def build_worker(
     call.report_lead = report_lead
     call.capture_fields = list(capture_fields or [])
     call.save_answer = save_answer
+    call.run_tool = run_tool
     call.turn_number = lambda: transcript.caller_turns
     call.hang_up = lambda: llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
     try:

@@ -35,13 +35,15 @@ const MONTHS = ["january", "february", "march", "april", "may", "june", "july",
   "august", "september", "october", "november", "december"];
 
 /** Today where the caller is, as {y, m, d}. */
-function todayIn(now, timezone = TZ) {
+export function todayIn(now, timezone = TZ) {
   const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" })
     .formatToParts(now).reduce((o, p) => ({ ...o, [p.type]: p.value }), {});
   return { y: Number(parts.year), m: Number(parts.month), d: Number(parts.day) };
 }
 
-const iso = ({ y, m, d }) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+export const isoDay = ({ y, m, d }) => `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+export const asDay = (parts) => asDate(parts);
+
 /** Day arithmetic done at noon UTC, far from any midnight a time zone could cross. */
 const asDate = ({ y, m, d }) => new Date(Date.UTC(y, m - 1, d, 12));
 const fromDate = (date) => ({ y: date.getUTCFullYear(), m: date.getUTCMonth() + 1, d: date.getUTCDate() });
@@ -52,9 +54,9 @@ function parseDate(said, now, timezone) {
   const text = said.toLowerCase().replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
   const today = todayIn(now, timezone);
 
-  if (/^(today|aaj)\b/.test(text)) return accept(iso(today));
-  if (/^(day after tomorrow|parso|parson)\b/.test(text)) return accept(iso(addDays(today, 2)));
-  if (/^(tomorrow|kal)\b/.test(text)) return accept(iso(addDays(today, 1)));
+  if (/^(today|aaj)\b/.test(text)) return accept(isoDay(today));
+  if (/^(day after tomorrow|parso|parson)\b/.test(text)) return accept(isoDay(addDays(today, 2)));
+  if (/^(tomorrow|kal)\b/.test(text)) return accept(isoDay(addDays(today, 1)));
 
   // A weekday, with or without "next": the next one that has not gone. The same weekday
   // as today means a week away, because nobody says "Monday" on Monday meaning today.
@@ -64,7 +66,7 @@ function parseDate(said, now, timezone) {
     let ahead = (want - asDate(today).getUTCDay() + 7) % 7;
     if (ahead === 0) ahead = 7;
     if (weekday[1] && ahead < 7) ahead += 7;
-    return accept(iso(addDays(today, ahead)));
+    return accept(isoDay(addDays(today, ahead)));
   }
 
   // 2026-12-15
@@ -110,7 +112,7 @@ function checked(parts, today) {
   if (asDate(parts) < asDate(today)) {
     return refuse("That date is in the past. Please check the date with the caller and ask again.");
   }
-  return accept(iso(parts));
+  return accept(isoDay(parts));
 }
 
 // --- the rest ----------------------------------------------------------------

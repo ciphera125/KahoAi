@@ -188,6 +188,28 @@ async def save_answer(call_id: str, *, field_key: str, said: str, turn: int,
                 "message": "I could not save that just now. Please carry on."}
 
 
+async def run_tool(call_id: str, name: str, **args) -> dict:
+    """One of the Studio's own tools, run for this call. On the call path like
+    save_answer: the agent is waiting to hear what happened, so a failure comes back as
+    something it can say rather than an exception.
+
+    Only the tool's own arguments go over. Whose list may be touched is worked out in the
+    Studio from the call itself."""
+    if not configured() or not _CALL_ID.match(call_id or ""):
+        return {"ok": False, "message": "I cannot reach that just now. Carry on."}
+    try:
+        async with _client() as client:
+            r = await asyncio.wait_for(
+                client.post(f"/internal/v1/calls/{call_id}/tools/{name}", json=dict(args)),
+                _timeout())
+        if r.status_code != 200:
+            return {"ok": False, "message": "I could not do that just now. Please carry on."}
+        return r.json()
+    except (httpx.HTTPError, TimeoutError, ValueError) as e:
+        logger.warning(f"Tool {name} failed for call {call_id}: {type(e).__name__}")
+        return {"ok": False, "message": "I could not do that just now. Please carry on."}
+
+
 async def report_recording(call_id: str, path: str, size: int, mime: str) -> bool:
     """Where a call's recording was stored (Supabase Storage object path, bytes, type),
     so the Studio can link and play it. Never raises; off the call path, like the other

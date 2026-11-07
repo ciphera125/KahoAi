@@ -448,3 +448,5 @@ h1 { font-weight: 800; letter-spacing: -.03em; }
 .q-row { display: grid; grid-template-columns: 1.4fr 1fr auto auto; gap: var(--s3); align-items: end; margin-bottom: var(--s3); }
 @media (max-width: 720px) { .q-row { grid-template-columns: 1fr; } }
 .switch-inline { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; white-space: nowrap; padding-bottom: 8px; }
+.inline-edit { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.inline-edit input { width: auto; }

@@ -6,6 +6,7 @@ import * as Contact from "../models/Contact.js";
 import * as ErrorLog from "../models/ErrorLog.js";
 import * as Lead from "../models/Lead.js";
 import * as CallAnswer from "../models/CallAnswer.js";
+import * as CallTool from "../models/CallTool.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 
 /** Never an error: a call must start even if this lookup fails. */
@@ -43,6 +44,13 @@ export async function recordingReport(req, res) {
  * from the call, never from the body. Always 200 with a line the agent can act on. */
 export async function saveAnswer(req, res) {
   res.json(await CallAnswer.record(req.params.callId, req.body ?? {}));
+}
+
+/** One of the agent's tools, run for the call named in the path. Which organization and
+ * which person it may touch is worked out from the call, never from the body, and the
+ * reply is always something the agent can say. */
+export async function runTool(req, res) {
+  res.json(await CallTool.run(req.params.callId, req.params.tool, req.body ?? {}));
 }
 
 export async function reportError(req, res) {

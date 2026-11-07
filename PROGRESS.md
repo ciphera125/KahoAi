@@ -12,9 +12,9 @@ expected (that database has no `anon` role); everything else must be green.
 | # | Step | Status | Commit |
 |---|------|--------|--------|
 | 1 | Save vs Publish, with versions and rollback | done | `1e5b235` |
-| 2 | "Save What the Caller Says" (capture tool) | done | `STEP2` |
-| 3 | Tasks table, Tasks page, four task tools | in progress | |
-| 4 | "Look Up Contact Details" tool | todo | |
+| 2 | "Save What the Caller Says" (capture tool) | done | `4692c42` |
+| 3 | Tasks table, Tasks page, four task tools | done | `STEP3` |
+| 4 | "Look Up Contact Details" tool | in progress | |
 | 5 | The `{{` picker in the prompt editor | todo | |
 | 6 | Custom API tools ("Call My API") | todo | |
 | 7 | Tool-call History tree | todo | |
@@ -68,6 +68,27 @@ expected (that database has no `anon` role); everything else must be green.
   is worse than asking again.
 - **`variablesOf` lives in `promptCheck.js`, not `Agent.js`** — putting it in Agent.js
   made Prompt.js import Agent.js, which imports Prompt.js.
+
+### Step 3
+
+- **The public API is mounted at `/api/v1`, before the Studio's own `/api` chain**, with
+  its own key check. A machine client sends no Origin and carries no cookies, so it
+  cannot go through the browser's CSRF checks.
+- **An API key is a long random string, hashed with SHA-256, shown once.** scrypt is for
+  passwords, which are guessable; a 24-byte random key is not. Only an admin can make or
+  revoke one.
+- **`external_id` is how a push stays idempotent** (unique per organization), and the
+  call tools reuse the same column with `call_id:tool:turn`.
+- **The agent's task tools only ever see the contact on the call.** The model names a
+  task id; a task that is not that contact's is simply not found. `get_tasks` returns id,
+  title, status and due date only — nothing it could read out by mistake.
+- **A week runs Monday to Sunday** and every range is worked out in India's day, not UTC.
+- **A due date added on a call is set to 09:00 India time** on the day the caller named:
+  a reminder is about the day, and nobody says a time out loud.
+- **CSV upload is not built**, as agreed. `tasks.source` already allows `'csv'`, so it is
+  a page and a parser away.
+- Tests must not start fake timers before the database pool has connected, or the run
+  hangs: freeze the clock immediately before the one request that reads it.
 
 ## Known limits / to revisit
 

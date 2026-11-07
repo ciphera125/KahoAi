@@ -11,6 +11,7 @@ import callRoutes from "./calls.js";
 import bulkRoutes from "./bulk.js";
 import errorRoutes from "./errors.js";
 import leadRoutes from "./leads.js";
+import taskRoutes from "./tasks.js";
 
 const router = Router();
 router.use("/auth", authRoutes);
@@ -24,4 +25,5 @@ router.use(callRoutes);
 router.use("/bulk-calls", bulkRoutes);
 router.use(errorRoutes);
 router.use(leadRoutes);
+router.use(taskRoutes);
 export default router;

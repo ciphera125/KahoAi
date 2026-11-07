@@ -78,6 +78,9 @@ class CallContext:
     # Set by the phone server: saves one answer through the Studio
     # (studio_link.save_answer). None on a local run, where there is nowhere to put it.
     save_answer: Callable[..., Awaitable[dict]] | None = None
+    # Set by the phone server: runs one of the Studio's own tools for this call
+    # (studio_link.run_tool). None on a local run, where there is no task list.
+    run_tool: Callable[..., Awaitable[dict]] | None = None
     # Which caller turn we are on, for the Studio's idempotency key: the same answer
     # sent twice on one turn is one answer, a correction on a later turn is a new one.
     turn_number: Callable[[], int] | None = None
@@ -549,3 +552,103 @@ async def save_answer(args: dict, call: CallContext) -> dict:
     if reply.get("value"):
         out["value_heard"] = reply["value"]
     return out
+
+
+# --- the caller's own task list ----------------------------------------------
+#
+# The Studio owns the list: it decides whose tasks these are from the call itself, reads
+# the dates the caller said, and refuses a task id that is not theirs. These four only
+# carry the question over and turn the answer into something the agent can say.
+
+_NO_LIST = {"what_to_do": "I cannot reach the task list on this call. Carry on."}
+_RANGES = ["today", "yesterday", "this_week", "overdue", "all"]
+
+
+async def _ask_studio(call: CallContext, name: str, **args) -> dict | None:
+    if call.run_tool is None:
+        return None
+    turn = call.turn_number() if callable(call.turn_number) else 0
+    return await call.run_tool(name, turn=turn, **args)
+
+
+@tool(
+    name="get_tasks",
+    description=(
+        "Read the person's own task list. Use it before saying anything about what they "
+        "have to do, and never answer from memory."
+    ),
+    properties={
+        "range": {"type": "string", "enum": _RANGES,
+                  "description": "Which days to look at. Leave out for all of them."},
+        "status": {"type": "string", "enum": ["pending", "done", "all"],
+                   "description": "Still to do, finished, or both. Defaults to still to do."},
+    },
+)
+async def get_tasks(args: dict, call: CallContext) -> dict:
+    reply = await _ask_studio(
+        call, "get_tasks",
+        range=args.get("range") or "all",
+        status=args.get("status") or "pending",
+    )
+    if reply is None:
+        return dict(_NO_LIST)
+    if not reply.get("ok"):
+        return {"what_to_do": reply.get("message") or "I could not read the list just now."}
+    return {"tasks": reply.get("tasks") or [], "count": reply.get("count", 0)}
+
+
+@tool(
+    name="add_task",
+    description="Add a task to the person's list, but only when they ask you to.",
+    properties={
+        "title": {"type": "string", "description": "The task, in the caller's own words."},
+        "due": {"type": "string",
+                "description": "When it is due, as they said it: \"next Friday\", \"the 15th\"."},
+    },
+    required=["title"],
+)
+async def add_task(args: dict, call: CallContext) -> dict:
+    reply = await _ask_studio(call, "add_task", title=str(args.get("title") or ""),
+                              due=str(args.get("due") or ""))
+    if reply is None:
+        return dict(_NO_LIST)
+    if not reply.get("ok"):
+        return {"added": False, "what_to_do": reply.get("message") or "I could not add it."}
+    return {"added": True, "task_id": reply.get("task_id"), "due": reply.get("due")}
+
+
+@tool(
+    name="reschedule_task",
+    description=(
+        "Move one of the person's tasks to a new date, when they ask. Read the list first "
+        "so you have the right task."
+    ),
+    properties={
+        "task_id": {"type": "string", "description": "The id from the task list."},
+        "due": {"type": "string", "description": "The new date, as they said it."},
+    },
+    required=["task_id", "due"],
+)
+async def reschedule_task(args: dict, call: CallContext) -> dict:
+    reply = await _ask_studio(call, "reschedule_task", task_id=str(args.get("task_id") or ""),
+                              due=str(args.get("due") or ""))
+    if reply is None:
+        return dict(_NO_LIST)
+    if not reply.get("ok"):
+        return {"moved": False, "what_to_do": reply.get("message") or "I could not move it."}
+    return {"moved": True, "due": reply.get("due")}
+
+
+@tool(
+    name="mark_task_done",
+    description="Tick a task off the person's list when they say it is finished.",
+    properties={"task_id": {"type": "string", "description": "The id from the task list."}},
+    required=["task_id"],
+)
+async def mark_task_done(args: dict, call: CallContext) -> dict:
+    reply = await _ask_studio(call, "mark_task_done", task_id=str(args.get("task_id") or ""))
+    if reply is None:
+        return dict(_NO_LIST)
+    if not reply.get("ok"):
+        return {"done": False, "what_to_do": reply.get("message") or "I could not tick it off."}
+    return {"done": True, "title": reply.get("title")}

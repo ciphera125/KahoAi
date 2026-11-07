@@ -8,6 +8,8 @@ import { config } from "./config/env.js";
 import { pool } from "./db/pool.js";
 import { logger } from "./utils/logger.js";
 import { apiHeaders, hostCheck, jsonOnly, originCheck } from "./middleware/security.js";
+import { requireApiKey } from "./middleware/apiKey.js";
+import publicApiRouter from "./routes/publicApi.js";
 import { ipLimiter, sessionLimiter } from "./middleware/rateLimit.js";
 import { requireServiceToken } from "./middleware/internal.js";
 import { errorHandler, notFound } from "./middleware/errors.js";
@@ -34,6 +36,9 @@ export function createApp() {
   // A bulk call's list (up to 5000 rows) is the one large body.
   const small = express.json({ limit: "64kb" }), large = express.json({ limit: "1mb" });
   const json = (req, res, next) => (req.method === "POST" && req.path === "/bulk-calls" ? large : small)(req, res, next);
+  // Another system's API, by key. Mounted before /api so it does not go through the
+  // browser's checks: a machine client sends no Origin and carries no cookies.
+  app.use("/api/v1", apiHeaders, ipLimiter, express.json({ limit: "256kb" }), requireApiKey, publicApiRouter);
   app.use("/api", apiHeaders, hostCheck, originCheck, ipLimiter, sessionLimiter, jsonOnly,
     json, cookieParser(), apiRouter);
 
