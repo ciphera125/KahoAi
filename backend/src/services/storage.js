@@ -34,3 +34,24 @@ export async function signRecording(path, downloadName) {
   const url = `${base}/storage/v1${signed}`;
   return { url, download_url: `${url}&download=${encodeURIComponent(downloadName)}` };
 }
+
+/** Removes one object from the bucket. true when it is gone (a 404 means it already was);
+ * false when Storage refused or could not be reached, so the caller keeps the link and retries. */
+export async function deleteRecording(path) {
+  if (!recordingsConfigured()) return false;
+  const base = config.SUPABASE_URL.replace(/\/+$/, "");
+  const key = config.SUPABASE_SECRET_KEY;
+  const object = path.split("/").map(encodeURIComponent).join("/");
+  try {
+    const r = await fetch(`${base}/storage/v1/object/${encodeURIComponent(config.SUPABASE_RECORDINGS_BUCKET)}/${object}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${key}`, apikey: key },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (r.ok || r.status === 404) return true;
+    throw new Error(`storage answered ${r.status}`);
+  } catch (err) {
+    logger.warn({ reason: String(err?.message ?? err).replaceAll(key, "[redacted]").slice(0, 200) }, "could not delete an expired recording");
+    return false;
+  }
+}

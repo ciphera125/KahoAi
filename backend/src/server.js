@@ -38,6 +38,7 @@ async function worker() {
   const { closeRedis } = await import("./middleware/rateLimit.js");
   const { startBulkRunner, stopBulkRunner } = await import("./services/bulkRunner.js");
   const { startPlivoSyncRunner, stopPlivoSyncRunner } = await import("./services/plivoSyncRunner.js");
+  const { startRecordingRetentionRunner, stopRecordingRetentionRunner } = await import("./services/recordingRetentionRunner.js");
   const server = createApp().listen(config.PORT, config.HOST);
   const internal = createInternalApp().listen(config.INTERNAL_PORT, config.INTERNAL_HOST);
   for (const s of [server, internal]) s.on("error", (err) => { logger.fatal({ err: err.message }, "could not listen"); process.exit(1); });
@@ -46,9 +47,11 @@ async function worker() {
   server.keepAliveTimeout = 5_000;
   startBulkRunner();
   startPlivoSyncRunner();
+  startRecordingRetentionRunner();
   const shutdown = async () => {
     stopBulkRunner();
     stopPlivoSyncRunner();
+    stopRecordingRetentionRunner();
     server.close();
     internal.close();
     server.closeIdleConnections();

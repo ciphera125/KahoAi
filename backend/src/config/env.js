@@ -56,6 +56,8 @@ const schema = z.object({
   SUPABASE_URL: z.url().or(z.literal("")).optional(),            // call recordings: signed links to the private Storage bucket
   SUPABASE_SECRET_KEY: z.string().optional(),
   SUPABASE_RECORDINGS_BUCKET: z.string().optional(),
+  RECORDING_RETENTION_DAYS: z.coerce.number().positive().default(60), // cloud copies are deleted after this many days
+  RECORDING_RETENTION_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
 });
 
 function load() {
