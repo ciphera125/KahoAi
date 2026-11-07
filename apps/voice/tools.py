@@ -652,3 +652,20 @@ async def mark_task_done(args: dict, call: CallContext) -> dict:
     if not reply.get("ok"):
         return {"done": False, "what_to_do": reply.get("message") or "I could not tick it off."}
     return {"done": True, "title": reply.get("title")}
+
+
+@tool(
+    name="look_up_contact",
+    description=(
+        "Look up what is already known about the person on this call: their name, what "
+        "your system has on record, and anything saved on an earlier call. Use it before "
+        "asking them for something they may already have told you."
+    ),
+)
+async def look_up_contact(args: dict, call: CallContext) -> dict:
+    reply = await _ask_studio(call, "look_up_contact")
+    if reply is None:
+        return {"what_to_do": "I cannot look anything up on this call. Ask them instead."}
+    if not reply.get("ok"):
+        return {"what_to_do": reply.get("message") or "I do not have their details."}
+    return {k: reply.get(k) for k in ("name", "tags", "details", "answers")}

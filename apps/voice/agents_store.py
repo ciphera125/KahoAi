@@ -37,7 +37,8 @@ from prompt_store import (
 DEFAULT_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "agents.json"
 # The tools in tools.REGISTRY, named here so the Studio need not import the pipeline.
 KNOWN_TOOLS = ("end_call", "capture_lead", "save_answer", "get_tasks", "add_task",
-    "reschedule_task", "mark_task_done", "transfer_to_human", "call_webhook")
+    "reschedule_task", "mark_task_done", "look_up_contact",
+    "transfer_to_human", "call_webhook")
 DEFAULT_TOOLS = ["end_call", "capture_lead"]
 AGENT_ID = re.compile(r"^ag_[0-9a-f]{12}$")
 PROMPT_ID = re.compile(r"^pr_[0-9a-f]{12}$")

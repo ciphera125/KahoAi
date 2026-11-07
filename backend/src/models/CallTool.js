@@ -10,6 +10,8 @@ import { asSystem } from "../db/pool.js";
 import { logger } from "../utils/logger.js";
 import { parseAnswer } from "./answerValue.js";
 import * as Task from "./Task.js";
+import * as Contact from "./Contact.js";
+import { latestForContact } from "./CallAnswer.js";
 
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const no = (message) => ({ ok: false, message });
@@ -33,6 +35,21 @@ function dueFrom(said) {
 }
 
 const HANDLERS = {
+  /** Who the agent is speaking to: their name, what the customer's own system knows, and
+   * the newest answer to each question ever saved about them. Deliberately no internal
+   * ids: everything here can be said out loud. */
+  async look_up_contact(subject) {
+    if (!subject.contact_id) {
+      return no("I do not have their details. Ask them for anything you need.");
+    }
+    const [contact, answers] = await Promise.all([
+      Contact.summaryFor(subject.org_id, subject.contact_id),
+      latestForContact(subject.org_id, subject.contact_id),
+    ]);
+    if (!contact) return no("I do not have their details. Ask them for anything you need.");
+    return { ok: true, name: contact.name, tags: contact.tags, details: contact.details, answers };
+  },
+
   async get_tasks(subject, args) {
     const tasks = await Task.forContactOnCall(subject.org_id, subject.contact_id, {
       range: ["today", "yesterday", "this_week", "overdue", "all"].includes(args.range) ? args.range : "all",

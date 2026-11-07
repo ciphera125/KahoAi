@@ -167,6 +167,29 @@ const TAG_COLOURS = ["marigold", "plum", "orchid", "teal", "silver", "rose"];
 
 // One place to change everything about a person: name, numbers, tags (pick or
 // create), and Do not call. Nothing is saved until "Save contact".
+/** What the customer's own system has sent us about this contact, and what agents have
+ * saved on calls. Read-only here: it comes from somewhere else. */
+function KnownAbout({ contact }) {
+  const [answers, setAnswers] = useState(null);
+  useEffect(() => { get(`/api/contacts/${contact.id}/answers`).then(setAnswers).catch(() => setAnswers([])); }, [contact.id]);
+  const details = Object.entries(contact.details ?? {});
+  if (details.length === 0 && !answers?.length) return null;
+  return (
+    <div className="answers" style={{ marginTop: "var(--s3)" }}>
+      <div className="card-title" style={{ marginBottom: 6 }}>What we know</div>
+      {details.map(([k, v]) => (
+        <div key={k} className="answer-line"><span className="muted">{k.replace(/_/g, " ")}</span><b>{String(v)}</b></div>
+      ))}
+      {answers?.map((a) => (
+        <div key={a.id} className="answer-line">
+          <span className="muted">{a.label}</span><b>{a.value}</b>
+          <span className="hint">said on a call, {new Date(a.at).toLocaleDateString()}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function EditContact({ contact, onClose, onSaved }) {
   const toast = useToast();
   const { tags, reload: reloadTags } = useTags();
@@ -233,6 +256,7 @@ function EditContact({ contact, onClose, onSaved }) {
           <div><b>Do not call</b><div className="hint">No agent will dial this person until this is turned off.</div></div>
           <label className="switch"><input type="checkbox" checked={dnc} onChange={(e) => setDnc(e.target.checked)} /><span /></label>
         </div>
+        {!isNew && <KnownAbout contact={contact} />}
       </div>
       <div className="actions" style={{ justifyContent: "flex-end" }}>
         <button className="ghost" onClick={onClose}>Cancel</button>

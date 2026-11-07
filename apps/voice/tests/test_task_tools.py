@@ -80,3 +80,31 @@ async def test_on_a_local_run_there_is_no_task_list_and_the_tools_say_so():
         out = await tools.REGISTRY[name].handler(
             {"title": "x", "task_id": "tk_1", "due": "tomorrow"}, call)
         assert "what_to_do" in out
+
+
+# --- looking the caller up ---------------------------------------------------
+
+
+async def test_looking_up_the_caller_hands_back_what_the_studio_knows():
+    log = []
+    call = context({"ok": True, "name": "Ravi Kumar", "tags": ["emi"],
+                    "details": {"loan_amount": 250000},
+                    "answers": {"payment_date": "2026-12-15"}}, log)
+    out = await tools.REGISTRY["look_up_contact"].handler({}, call)
+    assert log == [("look_up_contact", {"turn": 5})]
+    assert out["name"] == "Ravi Kumar"
+    assert out["details"] == {"loan_amount": 250000}
+    assert out["answers"] == {"payment_date": "2026-12-15"}
+
+
+async def test_an_unknown_caller_is_said_plainly_so_the_agent_asks_instead():
+    call = context({"ok": False, "message": "I do not have their details."})
+    out = await tools.REGISTRY["look_up_contact"].handler({}, call)
+    assert out == {"what_to_do": "I do not have their details."}
+
+
+def test_looking_up_takes_nothing_from_the_model():
+    # Who is on the call is decided by the call, never by an argument.
+    schema = next(s for s in build_tool_schemas(context(), ["look_up_contact"]))
+    assert schema.properties == {}
+    assert schema.required == []

@@ -25,4 +25,10 @@ router.get("/tasks", async (req, res) => {
   res.json(await Task.list(req.apiOrgId, { range: req.query.range ?? "all", status: req.query.status ?? "all" }));
 });
 
+/** Make or update a contact, found by phone number, inside this key's organization. */
+router.post("/contacts", async (req, res) => {
+  const { phone, name, details } = req.body ?? {};
+  res.json(await Contact.upsertByNumber(req.apiOrgId, { phone, name, details }));
+});
+
 export default router;

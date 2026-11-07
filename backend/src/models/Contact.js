@@ -10,7 +10,7 @@ const MAX_NAME = 80;
 const MAX_NUMBERS = 50;
 export const PAGE_SIZES = [10, 20, 25, 50, 100];
 
-const SHOW = `SELECT c.id, c.name, c.dnc, c.consent, c.created_at,
+const SHOW = `SELECT c.id, c.name, c.dnc, c.consent, c.created_at, c.details,
     coalesce((SELECT array_agg(ct.tag_id ORDER BY ct.position) FROM contact_tags ct WHERE ct.contact_id = c.id), '{}') AS tags,
     coalesce((SELECT json_agg(json_build_object('id', n.id, 'number', n.number, 'tags',
         coalesce((SELECT array_agg(nt.tag_id ORDER BY nt.position) FROM contact_number_tags nt WHERE nt.number_id = n.id), '{}'))
@@ -25,7 +25,7 @@ const CALL_STATS = `,
       ORDER BY k.started_at DESC NULLS LAST LIMIT 1) AS last_call`;
 
 const shape = (r) => ({ id: r.id, name: r.name, created_at: r.created_at.toISOString(), tags: r.tags, numbers: r.numbers,
-  dnc: r.dnc, consent: r.consent, ...(r.call_count !== undefined ? { call_count: r.call_count, last_call: r.last_call } : {}) });
+  dnc: r.dnc, consent: r.consent, details: r.details ?? {}, ...(r.call_count !== undefined ? { call_count: r.call_count, last_call: r.last_call } : {}) });
 
 const name = (raw) => cleanText(raw, MAX_NAME, "name");
 
@@ -215,6 +215,59 @@ export async function removeNumber(orgId, contactId, numberId) {
 }
 
 /** Do not call, within one organization: none of its people dial this number. */
+export const MAX_DETAIL_FIELDS = 50;
+
+/** Everything an agent may be told about a contact on a call. */
+export async function summaryFor(orgId, contactId) {
+  const { rows } = await inOrg(orgId, (db) => db.query(
+    `SELECT c.name, c.details,
+       coalesce((SELECT array_agg(t.name ORDER BY t.name) FROM contact_tags ct
+                 JOIN tags t ON t.id = ct.tag_id AND t.org_id = ct.org_id
+                 WHERE ct.contact_id = c.id AND ct.org_id = c.org_id), '{}') AS tags
+     FROM contacts c WHERE c.id = $1 AND c.org_id = $2`, [String(contactId), orgId]));
+  if (!rows[0]) return null;
+  return { name: rows[0].name, tags: rows[0].tags, details: rows[0].details ?? {} };
+}
+
+/** What another system may keep about a contact: a flat set of plain values. Checked
+ * because it is read out on a call, and because it is theirs, not ours. */
+export function checkDetails(raw) {
+  if (raw === undefined || raw === null) return null;
+  if (typeof raw !== "object" || Array.isArray(raw)) throw new ValidationError("details must be an object");
+  const keys = Object.keys(raw);
+  if (keys.length > MAX_DETAIL_FIELDS) throw new ValidationError(`at most ${MAX_DETAIL_FIELDS} details`);
+  const out = {};
+  for (const key of keys) {
+    const value = raw[key];
+    if (value === null || ["string", "number", "boolean"].includes(typeof value)) {
+      out[String(key).slice(0, 60)] = typeof value === "string" ? value.slice(0, 300) : value;
+    } else {
+      throw new ValidationError(`'${key}' must be text, a number or true/false`);
+    }
+  }
+  return out;
+}
+
+/** Make or update a contact from another system, found by phone number. */
+export async function upsertByNumber(orgId, { phone, name, details }) {
+  const number = normalizeNumber(String(phone ?? ""));
+  const clean = checkDetails(details);
+  const existing = await idForNumber(orgId, number);
+  if (!existing) {
+    const made = await create(orgId, { name: name || number, numbers: [number] });
+    if (clean) {
+      await inOrg(orgId, (db) => db.query("UPDATE contacts SET details = $1 WHERE id = $2 AND org_id = $3",
+        [JSON.stringify(clean), made.id, orgId]));
+    }
+    return { ...made, details: clean ?? {} };
+  }
+  await inOrg(orgId, (db) => db.query(
+    `UPDATE contacts SET name = coalesce($1, name), details = coalesce($2::jsonb, details)
+     WHERE id = $3 AND org_id = $4`,
+    [name ? String(name).slice(0, 120) : null, clean ? JSON.stringify(clean) : null, existing, orgId]));
+  return { id: existing };
+}
+
 /** The contact in this organization with that number, or null. */
 export async function idForNumber(orgId, number) {
   const { rows } = await inOrg(orgId, (db) => db.query(

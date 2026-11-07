@@ -13,9 +13,9 @@ expected (that database has no `anon` role); everything else must be green.
 |---|------|--------|--------|
 | 1 | Save vs Publish, with versions and rollback | done | `1e5b235` |
 | 2 | "Save What the Caller Says" (capture tool) | done | `4692c42` |
-| 3 | Tasks table, Tasks page, four task tools | done | `STEP3` |
-| 4 | "Look Up Contact Details" tool | in progress | |
-| 5 | The `{{` picker in the prompt editor | todo | |
+| 3 | Tasks table, Tasks page, four task tools | done | `c452beb` |
+| 4 | "Look Up Contact Details" tool | done | `STEP4` |
+| 5 | The `{{` picker in the prompt editor | in progress | |
 | 6 | Custom API tools ("Call My API") | todo | |
 | 7 | Tool-call History tree | todo | |
 | 8 | "Test this agent", with Publish gating | todo | |
@@ -89,6 +89,21 @@ expected (that database has no `anon` role); everything else must be green.
   a page and a parser away.
 - Tests must not start fake timers before the database pool has connected, or the run
   hangs: freeze the clock immediately before the one request that reads it.
+
+### Step 4
+
+- **Contacts gained a `details` JSON column** rather than a table of custom fields: what
+  a customer knows about a person ("age", "loan_amount", "branch") comes from their own
+  system, so it is kept as sent. Capped at 50 plain values, each a string, number or
+  true/false, because it is read out on a call.
+- **`POST /api/v1/contacts` upserts by phone number**, so the customer's system can keep
+  a contact current without knowing our ids.
+- **The tool takes no arguments at all.** Who is on the call is decided by the call, so
+  there is nothing for the model to get wrong, and the reply carries no internal ids.
+- **The contact editor shows "What we know"** read-only: details from their system and
+  every answer saved on a call.
+- The tools-list error message is now built from `KNOWN_TOOLS` in the test, so adding a
+  tool no longer breaks an unrelated assertion.
 
 ## Known limits / to revisit
 
