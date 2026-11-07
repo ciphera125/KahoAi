@@ -11,9 +11,9 @@ expected (that database has no `anon` role); everything else must be green.
 
 | # | Step | Status | Commit |
 |---|------|--------|--------|
-| 1 | Save vs Publish, with versions and rollback | done | `7af860f` |
-| 2 | "Save What the Caller Says" (capture tool) | in progress | |
-| 3 | Tasks table, Tasks page, four task tools | todo | |
+| 1 | Save vs Publish, with versions and rollback | done | `1e5b235` |
+| 2 | "Save What the Caller Says" (capture tool) | done | `STEP2` |
+| 3 | Tasks table, Tasks page, four task tools | in progress | |
 | 4 | "Look Up Contact Details" tool | todo | |
 | 5 | The `{{` picker in the prompt editor | todo | |
 | 6 | Custom API tools ("Call My API") | todo | |
@@ -49,6 +49,25 @@ expected (that database has no `anon` role); everything else must be green.
 - **Migration 009 was applied to the live Supabase database** after checking no call was
   in progress. The one existing agent (Ria) became published version 1 with the same
   prompt, tools and opening line, and `draft_changed` is false, so nothing looks changed.
+
+### Step 2
+
+- **The questions live in the agent's `settings.capture_fields`**, not a table of their own,
+  so they are drafted, published and rolled back with everything else for free.
+- **The Studio decides what an answer means, not the voice service.** The tool sends the
+  field and the words; Node parses the date or amount and replies with what to do. One
+  implementation of "next Friday", and the model never decides what gets stored.
+- **The read-back is enforced in code, as far as it can be.** For a date, amount or phone
+  number the tool refuses to save until `confirmed` is true, and hands back the value for
+  the agent to read out. A setting (`confirm_answers`, default on) turns it off.
+- **The tool is not offered at all when an agent has no questions**, so attaching it
+  before setting any up cannot misfire.
+- **Idempotency key is `call_id:field_key:turn`.** Same answer twice on one turn updates
+  one row; a correction on a later turn is a new row, so the change is visible.
+- **A past date is refused.** It is nearly always a mishearing, and silently storing one
+  is worse than asking again.
+- **`variablesOf` lives in `promptCheck.js`, not `Agent.js`** — putting it in Agent.js
+  made Prompt.js import Agent.js, which imports Prompt.js.
 
 ## Known limits / to revisit
 

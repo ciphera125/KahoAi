@@ -50,6 +50,9 @@ class CallTranscript:
         self.caller_text: list[str] = []
         # Both sides in order, masked, for end_call's goodbye check. Memory only.
         self.turns: list[tuple[str, str]] = []
+        # How many times the caller has spoken. The capture tool uses it so the same
+        # answer sent twice on one turn is stored once, while a correction later is new.
+        self.caller_turns = 0
         self.write({"event": "call_start"})
 
     def write(self, record: dict) -> None:
@@ -74,6 +77,7 @@ class CallTranscript:
             return
         self.caller_text.append(mask_sensitive(text))
         self.turns.append(("caller", self.caller_text[-1]))
+        self.caller_turns += 1
         if self._looks_like_fragment(text):
             self._held.append({"event": "turn", "role": "user", "text": text})
             if sum(r.get("role") == "user" for r in self._held) >= _MAX_HELD:

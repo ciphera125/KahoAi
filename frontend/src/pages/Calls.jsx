@@ -147,6 +147,25 @@ function History({ reload, onWatch }) {
   );
 }
 
+/** What the agent wrote down on this call, as a plain list. */
+function SavedAnswers({ callId }) {
+  const [answers, setAnswers] = useState(null);
+  useEffect(() => { get(`/api/calls/${encodeURIComponent(callId)}/answers`).then(setAnswers).catch(() => setAnswers([])); }, [callId]);
+  if (!answers?.length) return null;
+  return (
+    <div className="answers">
+      <div className="card-title" style={{ marginBottom: 6 }}>Saved on this call</div>
+      {answers.map((a) => (
+        <div key={a.id} className="answer-line">
+          <span className="muted">{a.label}</span>
+          <b>{a.value}</b>
+          {a.raw_text && a.raw_text !== a.value && <span className="hint">heard: “{a.raw_text}”</span>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TranscriptModal({ call, onClose }) {
   const [turns, setTurns] = useState(null);
   useEffect(() => { get(`/api/calls/${encodeURIComponent(call.call_id)}/transcript`).then(setTurns).catch(() => setTurns([])); }, [call.call_id]);
@@ -154,6 +173,7 @@ function TranscriptModal({ call, onClose }) {
     <Modal title={call.contact_name || call.peer || "Call"} onClose={onClose} wide>
       <div className="muted" style={{ marginBottom: "var(--s3)" }}>{[call.peer, whenShort(call.started_at), fmtDur(call.duration_secs), call.agent_name].filter(Boolean).join(" · ")}</div>
       {call.has_recording && <RecordingPlayer callId={call.call_id} />}
+      <SavedAnswers callId={call.call_id} />
       <div className="chat" style={{ maxHeight: "60vh", border: "1px solid var(--border)", borderRadius: "var(--r-md)" }}>
         {!turns && <div className="hint">Loading…</div>}
         {turns && turns.length === 0 && <div className="hint">Nothing was said on this call.</div>}

@@ -441,3 +441,10 @@ h1 { font-weight: 800; letter-spacing: -.03em; }
 .publish-state { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
 .problems { margin: var(--s3) 0 0; padding-left: 18px; font-size: 13px; color: var(--text-2); }
 .problems li { margin-top: 4px; }
+
+.answers { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s3); margin-bottom: var(--s3); }
+.answer-line { display: flex; gap: var(--s3); align-items: baseline; padding: 3px 0; flex-wrap: wrap; }
+.answer-line .muted { min-width: 140px; }
+.q-row { display: grid; grid-template-columns: 1.4fr 1fr auto auto; gap: var(--s3); align-items: end; margin-bottom: var(--s3); }
+@media (max-width: 720px) { .q-row { grid-template-columns: 1fr; } }
+.switch-inline { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; white-space: nowrap; padding-bottom: 8px; }

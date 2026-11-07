@@ -40,7 +40,7 @@ describe("agents", () => {
     expect(tools.body.tools).toEqual(["end_call", "transfer_to_human"]);
     const bad = await b.patch(`/api/agents/${a.id}`).send({ tools: ["rm_rf"] });
     expect(bad.status).toBe(400);
-    expect(bad.body.error).toBe("tools must be from: end_call, capture_lead, transfer_to_human, call_webhook");
+    expect(bad.body.error).toBe("tools must be from: end_call, capture_lead, save_answer, transfer_to_human, call_webhook");
     const s = await b.patch(`/api/agents/${a.id}`).send({ settings: { opening_line: " Hi  there ", max_minutes: "5", ring_secs: 20 } });
     expect(s.body.settings).toMatchObject({ opening_line: "Hi there", max_minutes: 5, ring_secs: 20 });
     expect(s.body.settings.call_window).toEqual({ enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" });

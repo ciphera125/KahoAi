@@ -1,6 +1,7 @@
 import { config } from "../config/env.js";
 import * as Agent from "../models/Agent.js";
 import * as Call from "../models/Call.js";
+import * as CallAnswer from "../models/CallAnswer.js";
 import * as Contact from "../models/Contact.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 import { OutsideWindowError, placeCall } from "../services/calling.js";
@@ -168,4 +169,15 @@ export async function stream(req, res) {
   }, 1000));
   req.on("close", finish);
   await pump();
+}
+
+/** What the agent saved on this call. */
+export async function answers(req, res) {
+  if (!(await Call.owns(req.user.org_id, req.params.callId))) throw new NotFoundError("call");
+  res.json(await CallAnswer.forCall(req.user.org_id, req.params.callId));
+}
+
+/** Everything ever saved about this contact, newest first. */
+export async function contactAnswers(req, res) {
+  res.json(await CallAnswer.forContact(req.user.org_id, req.params.contactId));
 }

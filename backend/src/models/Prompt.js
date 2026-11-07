@@ -4,7 +4,7 @@ import { inOrg } from "../db/pool.js";
 import { hexId } from "../utils/crypto.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { cleanText } from "../utils/text.js";
-import { promptProblems } from "./promptCheck.js";
+import { promptProblems, variablesOf } from "./promptCheck.js";
 import { KNOWN_TOOLS } from "./toolCatalog.js";
 
 // Every character is re-sent to the LLM on every turn, so a long prompt costs
@@ -65,9 +65,9 @@ export async function addVersion(db, orgId, promptId, text) {
  * against the tools that exist at all. */
 async function whatTheAgentCouldNotDo(db, orgId, promptId, text) {
   const { rows } = await db.query(
-    `SELECT a.tools FROM prompts p LEFT JOIN agents a ON a.id = p.agent_id AND a.org_id = p.org_id
+    `SELECT a.tools, a.settings FROM prompts p LEFT JOIN agents a ON a.id = p.agent_id AND a.org_id = p.org_id
      WHERE p.id = $1 AND p.org_id = $2`, [promptId, orgId]);
-  return promptProblems(text, rows[0]?.tools ?? KNOWN_TOOLS);
+  return promptProblems(text, rows[0]?.tools ?? KNOWN_TOOLS, variablesOf(rows[0]?.settings));
 }
 
 /** Inside a transaction: a new prompt with its first version. */

@@ -5,7 +5,8 @@ import { asSystem, inOrg } from "../db/pool.js";
 import { hexId } from "../utils/crypto.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { DEFAULT_TOOLS, KNOWN_TOOLS } from "./toolCatalog.js";
-import { promptProblems } from "./promptCheck.js";
+import { KINDS as CAPTURE_KINDS } from "./answerValue.js";
+import { promptProblems, variablesOf } from "./promptCheck.js";
 import { AGENT_ID, normalizeNumber } from "../utils/phone.js";
 import { cleanText } from "../utils/text.js";
 import { logger } from "../utils/logger.js";
@@ -13,6 +14,7 @@ import { addVersion as addPromptVersion, insert as insertPrompt, MAX_PROMPT_CHAR
 
 export { MAX_PROMPT_CHARS };
 export { KNOWN_TOOLS, DEFAULT_TOOLS, TOOL_CATALOG } from "./toolCatalog.js";
+export { variablesOf } from "./promptCheck.js";
 // The tools in the voice service's tools.REGISTRY.
 export const MAX_NAME = 60;
 export const MAX_DESCRIPTION = 300;
@@ -23,7 +25,40 @@ export const RING_SECS = [15, 60];
 // end, in the agent's time zone. Off by default; 09:00-21:00 India time when
 // switched on, the hours TRAI allows for commercial calls.
 export const DEFAULT_WINDOW = { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
-export const DEFAULT_SETTINGS = { opening_line: "", max_minutes: 10, ring_secs: 40, call_window: DEFAULT_WINDOW };
+export const MAX_CAPTURE_FIELDS = 20;
+export const DEFAULT_SETTINGS = { opening_line: "", max_minutes: 10, ring_secs: 40, call_window: DEFAULT_WINDOW,
+  capture_fields: [], confirm_answers: true };
+
+/** "Payment date" -> "payment_date". A field needs a short machine name: it is what the
+ * model names when it saves an answer, and what a prompt reads as {{answer.payment_date}}. */
+export function fieldKey(label) {
+  return String(label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40);
+}
+
+/** The questions this agent asks and saves. Kept in settings so they are drafted and
+ * published with everything else. */
+function checkCaptureFields(raw) {
+  if (!Array.isArray(raw)) throw new ValidationError("the questions to save must be a list");
+  if (raw.length > MAX_CAPTURE_FIELDS) throw new ValidationError(`at most ${MAX_CAPTURE_FIELDS} questions to save`);
+  const out = [];
+  for (const field of raw) {
+    if (!field || typeof field !== "object") throw new ValidationError("each question to save must be an object");
+    const label = cleanText(field.label, 60, "question label");
+    const key = fieldKey(field.key || label);
+    if (!key) throw new ValidationError(`'${label}' needs a short name made of letters`);
+    if (!CAPTURE_KINDS.includes(field.kind)) {
+      throw new ValidationError(`'${label}' must be one of: ${CAPTURE_KINDS.join(", ")}`);
+    }
+    const choices = Array.isArray(field.choices) ? field.choices.map((c) => cleanText(c, 60, "choice")).filter(Boolean) : [];
+    if (field.kind === "choice" && choices.length < 2) {
+      throw new ValidationError(`'${label}' is a choice question, so it needs at least two choices`);
+    }
+    if (out.some((f) => f.key === key)) throw new ValidationError(`two questions share the short name '${key}'`);
+    out.push({ key, label, kind: field.kind, choices, required: Boolean(field.required),
+      ask: cleanText(field.ask, 200, "example question", false) });
+  }
+  return out;
+}
 export const OUTSIDE_WINDOW = "This call is getting outside the call window that we had decided for this particular agent.";
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -79,6 +114,10 @@ function checkSettings(current, changes) {
   for (const [key, value] of Object.entries(changes)) {
     if (key === "call_window") {
       out.call_window = checkWindow(current?.call_window, value);
+    } else if (key === "capture_fields") {
+      out.capture_fields = checkCaptureFields(value);
+    } else if (key === "confirm_answers") {
+      out.confirm_answers = Boolean(value);
     } else if (key === "opening_line") {
       out[key] = cleanText(value, MAX_OPENING, "opening line", false);
     } else if (key === "max_minutes" || key === "ring_secs") {
@@ -102,7 +141,10 @@ const SHOW = `SELECT a.*,
               ORDER BY v.seq DESC LIMIT 1), '') AS draft_prompt,
     to_jsonb(lv) - 'prompt' AS live_version, lv.prompt AS live_prompt
   FROM agents a LEFT JOIN agent_versions lv ON lv.id = a.live_version_id`;
-const settingsOf = (stored) => ({ ...DEFAULT_SETTINGS, ...stored, call_window: { ...DEFAULT_WINDOW, ...stored?.call_window } });
+const settingsOf = (stored) => ({ ...DEFAULT_SETTINGS, ...stored,
+  call_window: { ...DEFAULT_WINDOW, ...stored?.call_window },
+  capture_fields: Array.isArray(stored?.capture_fields) ? stored.capture_fields : [],
+  confirm_answers: stored?.confirm_answers !== false });
 
 /** Whether the draft says anything the published version does not. Compared field by
  * field rather than by a timestamp, so re-saving the same words is not "a change". */
@@ -211,7 +253,7 @@ async function draftOf(db, orgId, agentId) {
 /** Everything that would stop this draft going live. */
 async function draftProblems(db, orgId, agentId) {
   const draft = await draftOf(db, orgId, agentId);
-  return promptProblems(draft.prompt, draft.tools);
+  return promptProblems(draft.prompt, draft.tools, variablesOf(draft.settings));
 }
 
 /** What the page shows beside the Publish button. */
@@ -342,7 +384,7 @@ export async function callConfig(agentId) {
     return { agent_id: a.id, org_id: a.org_id, name: a.name, prompt: a.prompt || null,
       tools: a.tools.filter((t) => KNOWN_TOOLS.includes(t)), opening_line: s.opening_line || null,
       max_secs: s.max_minutes * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
-      version: a.version };
+      capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, version: a.version };
   } catch (err) {
     logger.error({ err: err.message }, "agent unreadable, the call uses the default persona");
     return null;

@@ -160,6 +160,34 @@ async def report_lead(lead: dict, *, org_id: str | None = None) -> bool:
         return False
 
 
+async def save_answer(call_id: str, *, field_key: str, said: str, turn: int,
+                      confirmed: bool) -> dict:
+    """One answer the caller gave, for the Studio to read, check and store. Unlike the
+    other reports this one is ON the call path: the agent waits for the reply to know
+    whether to read the value back or move on. So it has the same short deadline as
+    everything else on the path, and a failure becomes something the agent can say
+    rather than an exception.
+
+    Only the field and the words go over; the Studio works out the organization and the
+    contact from the call itself, so nothing said on a call can point an answer
+    somewhere else."""
+    if not configured() or not _CALL_ID.match(call_id or ""):
+        return {"ok": False, "value": None, "message": "There is nowhere to save that. Carry on."}
+    body = {"field_key": field_key, "said": said, "turn": turn, "confirmed": confirmed}
+    try:
+        async with _client() as client:
+            r = await asyncio.wait_for(
+                client.post(f"/internal/v1/calls/{call_id}/answers", json=body), _timeout())
+        if r.status_code != 200:
+            return {"ok": False, "value": None,
+                    "message": "I could not save that just now. Please carry on."}
+        return r.json()
+    except (httpx.HTTPError, TimeoutError, ValueError) as e:
+        logger.warning(f"Could not save an answer on call {call_id}: {type(e).__name__}")
+        return {"ok": False, "value": None,
+                "message": "I could not save that just now. Please carry on."}
+
+
 async def report_recording(call_id: str, path: str, size: int, mime: str) -> bool:
     """Where a call's recording was stored (Supabase Storage object path, bytes, type),
     so the Studio can link and play it. Never raises; off the call path, like the other

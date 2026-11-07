@@ -5,6 +5,7 @@ import * as Call from "../models/Call.js";
 import * as Contact from "../models/Contact.js";
 import * as ErrorLog from "../models/ErrorLog.js";
 import * as Lead from "../models/Lead.js";
+import * as CallAnswer from "../models/CallAnswer.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 
 /** Never an error: a call must start even if this lookup fails. */
@@ -36,6 +37,12 @@ export async function ingest(req, res) {
 export async function recordingReport(req, res) {
   await Call.setRecording(req.params.callId, req.body ?? {});
   res.json({ ok: true });
+}
+
+/** The agent saving what the caller just said. Everything about who it belongs to comes
+ * from the call, never from the body. Always 200 with a line the agent can act on. */
+export async function saveAnswer(req, res) {
+  res.json(await CallAnswer.record(req.params.callId, req.body ?? {}));
 }
 
 export async function reportError(req, res) {

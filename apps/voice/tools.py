@@ -72,6 +72,15 @@ class CallContext:
     # (studio_link.report_lead). None on a local run, where the lead stays
     # only in leads/*.jsonl, as before.
     report_lead: Callable[[dict], Awaitable[None]] | None = None
+    # The questions this agent asks and saves, from the Studio's agent settings:
+    # {key, label, kind, choices, required, ask}. Empty on a local run.
+    capture_fields: list = field(default_factory=list)
+    # Set by the phone server: saves one answer through the Studio
+    # (studio_link.save_answer). None on a local run, where there is nowhere to put it.
+    save_answer: Callable[..., Awaitable[dict]] | None = None
+    # Which caller turn we are on, for the Studio's idempotency key: the same answer
+    # sent twice on one turn is one answer, a correction on a later turn is a new one.
+    turn_number: Callable[[], int] | None = None
     # Room for per-call state a deployment's tools want to share (a looked-up
     # customer, a chosen slot) without reaching for globals.
     state: dict = field(default_factory=dict)
@@ -84,6 +93,10 @@ class Tool:
     properties: dict
     required: list[str]
     handler: ToolHandler
+    # Some tools only make sense with what this particular agent was set up with: the
+    # capture tool's fields come from the Studio, so its schema is built per call and
+    # the tool is left out entirely when there is nothing for it to do.
+    schema_for: Callable[["CallContext"], tuple | None] | None = None
     # True for a tool that leaves no one to talk to next (end_call). Its result
     # is not handed back to the model for a follow-up reply: that reply is a
     # second LLM request, and one that hangs blocks the hang-up behind it
@@ -101,6 +114,7 @@ def tool(
     properties: dict | None = None,
     required=None,
     ends_call: bool = False,
+    schema_for=None,
 ):
     """Register an async function as a tool the model may call."""
 
@@ -108,7 +122,8 @@ def tool(
         if name in REGISTRY:
             raise ValueError(f"tool {name!r} is already registered")
         REGISTRY[name] = Tool(
-            name, description, properties or {}, list(required or []), fn, ends_call=ends_call
+            name, description, properties or {}, list(required or []), fn,
+            schema_for=schema_for, ends_call=ends_call
         )
         return fn
 
@@ -160,16 +175,24 @@ def build_tool_schemas(
             f"TOOLS_ENABLED names unknown tool(s): {', '.join(unknown)}. "
             f"Known: {', '.join(sorted(REGISTRY)) or 'none'}."
         )
-    return [
-        FunctionSchema(
-            name=t.name,
-            description=t.description,
-            properties=t.properties,
-            required=t.required,
-            handler=_wrap(t, call, timeout),
+    schemas = []
+    for t in (REGISTRY[n] for n in names):
+        properties, required = t.properties, t.required
+        if t.schema_for is not None:
+            built = t.schema_for(call)
+            if built is None:
+                continue  # nothing for it to do on this call: do not offer it at all
+            properties, required = built
+        schemas.append(
+            FunctionSchema(
+                name=t.name,
+                description=t.description,
+                properties=properties,
+                required=required,
+                handler=_wrap(t, call, timeout),
+            )
         )
-        for t in (REGISTRY[n] for n in names)
-    ]
+    return schemas
 
 
 # Words that end a call outright. "That's all" is not one: nova-3 has written it
@@ -454,3 +477,75 @@ async def call_webhook(args: dict, call: CallContext) -> dict:
         logger.error(f"Webhook for call {call.call_id} returned HTTP {status}")
         return {"error": f"the business system refused (HTTP {status}); tell the caller"}
     return {"status": "ok", "reply": mask_sensitive(text)}
+
+
+# --- saving what the caller says ---------------------------------------------
+
+
+def _capture_schema(call: CallContext):
+    """The fields this agent was given, as an enum the model must choose from. None when
+    the agent has no questions, so the tool is not offered at all."""
+    fields = list(getattr(call, "capture_fields", None) or [])
+    if not fields:
+        return None
+    described = "; ".join(
+        f"{f['key']} = {f['label']}" + (f" ({f['ask']})" if f.get("ask") else "") for f in fields
+    )
+    return (
+        {
+            "field_key": {
+                "type": "string",
+                "enum": [f["key"] for f in fields],
+                "description": f"Which answer this is. One of: {described}",
+            },
+            "said": {
+                "type": "string",
+                "description": ("Exactly what the caller said, in their own words. "
+                                "Do not tidy it up."),
+            },
+            "confirmed": {
+                "type": "boolean",
+                "description": ("True only after you read the value back to the caller "
+                                "and they agreed."),
+            },
+        },
+        ["field_key", "said"],
+    )
+
+
+@tool(
+    name="save_answer",
+    description=(
+        "Save an answer the caller has just given to one of the questions this call is "
+        "for. Call it once per answer, with what they actually said. If the reply says "
+        "it was not saved, do what it tells you and try again."
+    ),
+    schema_for=_capture_schema,
+)
+async def save_answer(args: dict, call: CallContext) -> dict:
+    """The Studio decides what the words mean and whether they can be saved: it owns the
+    field definitions, and a date or an amount is too easy to get wrong to leave to the
+    model. Everything about who the answer belongs to is worked out there too, from the
+    call itself, so nothing here can point it at another organization's contact."""
+    key = str(args.get("field_key") or "")
+    fields = {f["key"]: f for f in (getattr(call, "capture_fields", None) or [])}
+    if key not in fields:
+        return {"saved": False,
+                "what_to_do": "That is not one of this call's questions. Carry on."}
+    if call.save_answer is None:
+        return {"saved": False,
+                "what_to_do": "There is nowhere to save answers on this call. Carry on."}
+
+    turn = call.turn_number() if callable(call.turn_number) else 0
+    reply = await call.save_answer(
+        field_key=key,
+        said=str(args.get("said") or ""),
+        turn=turn,
+        confirmed=bool(args.get("confirmed")),
+    )
+    if reply.get("ok"):
+        return {"saved": True, "value": reply.get("value")}
+    out = {"saved": False, "what_to_do": reply.get("message") or "Please ask again."}
+    if reply.get("value"):
+        out["value_heard"] = reply["value"]
+    return out

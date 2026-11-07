@@ -31,9 +31,12 @@ function toolsNamedIn(text) {
 }
 
 /** Every reason this prompt cannot be used by an agent with these tools, in plain
- * language, each naming what to do about it. An empty list means it is fine. */
-export function promptProblems(text, attachedTools = []) {
+ * language, each naming what to do about it. An empty list means it is fine.
+ * `knownVariables` are the {{...}} this agent can actually fill in: the questions it
+ * saves ("answer.payment_date") and, later, the contact's own details. */
+export function promptProblems(text, attachedTools = [], knownVariables = []) {
   const attached = new Set(attachedTools);
+  const known = new Set(knownVariables);
   const problems = [];
 
   const variables = [];
@@ -57,6 +60,7 @@ export function promptProblems(text, attachedTools = []) {
   }
 
   for (const name of unique(variables)) {
+    if (known.has(name)) continue;
     problems.push({
       code: "unfilled_variable",
       found: name,
@@ -69,3 +73,8 @@ export function promptProblems(text, attachedTools = []) {
 
 /** The first problem, as one line, or null. */
 export const firstProblem = (text, attachedTools) => promptProblems(text, attachedTools)[0]?.message ?? null;
+
+/** The {{...}} an agent with these settings can fill in: one per question it saves.
+ * Lives here, not in Agent.js, so Prompt.js can use it without an import cycle. */
+export const variablesOf = (settings) =>
+  (Array.isArray(settings?.capture_fields) ? settings.capture_fields : []).map((f) => `answer.${f.key}`);

@@ -1210,6 +1210,8 @@ def build_worker(
     recording_sample_rate: int = 16000,
     persona_text: str | None = None,
     tool_names: list[str] | None = None,
+    capture_fields: list | None = None,
+    save_answer=None,
     opening_line: str | None = None,
     notice_prespoken: tuple | None = None,
     transcript_sink=None,
@@ -1323,6 +1325,9 @@ def build_worker(
     call = CallContext(call_id=call_id, transcript=transcript, caller_number=caller_number)
     call.transfer = transfer
     call.report_lead = report_lead
+    call.capture_fields = list(capture_fields or [])
+    call.save_answer = save_answer
+    call.turn_number = lambda: transcript.caller_turns
     call.hang_up = lambda: llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
     try:
         tool_schemas = build_tool_schemas(

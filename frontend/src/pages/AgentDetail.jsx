@@ -47,11 +47,12 @@ export default function AgentDetail() {
       </header>
       <PublishBar agent={agent} check={check} me={me} confirm={confirm} onChanged={load} />
       <div className="seg">
-        {["prompt", "tools", "settings", "versions"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "settings" ? "Call settings" : "Versions"}</button>)}
+        {["prompt", "tools", "questions", "settings", "versions"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "questions" ? "Questions to save" : t === "settings" ? "Call settings" : "Versions"}</button>)}
       </div>
       {tab === "prompt" && <PromptTab agent={agent} prompts={prompts} onChanged={load} />}
       {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} />}
       {tab === "settings" && <SettingsTab agent={agent} limits={limits} onChanged={load} />}
+      {tab === "questions" && <QuestionsTab agent={agent} onChanged={load} />}
       {tab === "versions" && <VersionsTab agent={agent} confirm={confirm} onChanged={load} />}
       {confirmNode}
     </section>
@@ -103,6 +104,66 @@ function PublishBar({ agent, check, me, confirm, onChanged }) {
           {!isAdmin(me) && <li className="hint">Only an owner or admin can publish over this.</li>}
         </ul>
       )}
+    </div>
+  );
+}
+
+const KINDS = [
+  ["text", "Anything they say"], ["date", "A date"], ["amount", "An amount in rupees"],
+  ["number", "A number"], ["yes_no", "Yes or no"], ["phone", "A phone number"], ["choice", "One of a list"],
+];
+
+/** The questions this agent asks and writes down. Deliberately a plain list: a label, what
+ * kind of answer it is, and optionally the words to ask it in. */
+function QuestionsTab({ agent, onChanged }) {
+  const toast = useToast();
+  const [fields, setFields] = useState(agent.settings.capture_fields ?? []);
+  const [confirmAnswers, setConfirmAnswers] = useState(agent.settings.confirm_answers !== false);
+
+  const set = (i, patch) => setFields((list) => list.map((f, j) => (j === i ? { ...f, ...patch } : f)));
+  const add = () => setFields((list) => [...list, { label: "", kind: "text", required: false, ask: "", choices: [] }]);
+  const remove = (i) => setFields((list) => list.filter((_, j) => j !== i));
+  const save = async () => {
+    try {
+      await patch(`/api/agents/${agent.id}`, { settings: { capture_fields: fields, confirm_answers: confirmAnswers } });
+      toast("Saved as a draft. Publish it when you are ready."); onChanged();
+    } catch (e) { toast(e.message, true); }
+  };
+
+  return (
+    <div className="card" style={{ maxWidth: 860 }}>
+      <div className="card-head"><span className="card-title">What the agent should write down</span></div>
+      <p className="hint" style={{ marginBottom: "var(--s4)" }}>
+        Each question here becomes something the agent can save when the caller answers it, like a payment date.
+        You still have to tell the agent to ask it, in the prompt. Switch on <b>Save what the caller says</b> on
+        the Tools tab for any of this to happen.
+      </p>
+      {fields.length === 0 && <p className="hint">No questions yet.</p>}
+      {fields.map((f, i) => (
+        <div key={i} className="q-row">
+          <div className="field"><label className="f">Question</label>
+            <input value={f.label} maxLength={60} placeholder="Payment date" onChange={(e) => set(i, { label: e.target.value })} /></div>
+          <div className="field"><label className="f">Kind of answer</label>
+            <select value={f.kind} onChange={(e) => set(i, { kind: e.target.value })}>
+              {KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select></div>
+          <label className="switch-inline"><input type="checkbox" checked={!!f.required} onChange={(e) => set(i, { required: e.target.checked })} /> Must have</label>
+          <button className="ghost" onClick={() => remove(i)} aria-label="Remove this question"><Icon name="trash" /></button>
+          <div className="field" style={{ gridColumn: "1 / -1" }}><label className="f">How to ask it (optional)</label>
+            <input value={f.ask || ""} maxLength={200} placeholder="On what exact date will you pay?" onChange={(e) => set(i, { ask: e.target.value })} /></div>
+          {f.kind === "choice" && (
+            <div className="field" style={{ gridColumn: "1 / -1" }}><label className="f">The options, separated by commas</label>
+              <input value={(f.choices || []).join(", ")} placeholder="UPI, Bank transfer, Cash"
+                onChange={(e) => set(i, { choices: e.target.value.split(",").map((c) => c.trim()).filter(Boolean) })} /></div>
+          )}
+        </div>
+      ))}
+      <button className="ghost" onClick={add}><Icon name="plus" />Add a question</button>
+      <div className="toggle-line" style={{ marginTop: "var(--s4)" }}>
+        <div><b>Read it back before saving</b><div className="hint">For dates, amounts and phone numbers, the agent repeats what it heard and waits for a yes. Strongly recommended.</div></div>
+        <label className="switch"><input type="checkbox" checked={confirmAnswers} onChange={(e) => setConfirmAnswers(e.target.checked)} /><span /></label>
+      </div>
+      <div className="actions"><button className="primary" onClick={save}>Save questions</button></div>
     </div>
   );
 }

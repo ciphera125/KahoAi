@@ -46,6 +46,24 @@ describe("what a prompt may say about tools (the 2026-11-07 bug)", () => {
   });
 });
 
+describe("variables the agent can actually fill in", () => {
+  it("accepts an answer the agent collects, and still catches one it does not", () => {
+    const known = ["answer.payment_date"];
+    expect(promptProblems("Remind them about {{answer.payment_date}}.", [], known)).toEqual([]);
+    const [problem] = promptProblems("Remind them about {{answer.bank_name}}.", [], known);
+    expect(problem).toMatchObject({ code: "unfilled_variable", found: "answer.bank_name" });
+  });
+
+  it("a prompt using a question this agent saves can be published", async () => {
+    const b = await owner();
+    const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." })).body;
+    await b.patch(`/api/agents/${a.id}`).send({ settings: { capture_fields: [{ label: "Payment date", kind: "date" }] } });
+    const saved = await b.patch(`/api/prompts/${a.active_prompt_id}`).send({ text: "Confirm {{answer.payment_date}} with them." });
+    expect(saved.body.warnings).toEqual([]);
+    expect((await b.post(`/api/agents/${a.id}/publish`).send({})).status).toBe(200);
+  });
+});
+
 describe("a prompt that calls for tools the agent lacks never reaches a call", () => {
   const save = (b, id, text) => b.patch(`/api/prompts/${id}`).send({ text });
 
