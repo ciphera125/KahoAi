@@ -57,3 +57,11 @@ export async function line(b) {
   const r = await b.post("/api/numbers").send({ provider: "plivo", number: OURS, credentials: { auth_id: "AID", auth_token: "tok" } });
   if (r.status !== 200) throw new Error(`adding our line failed: ${JSON.stringify(r.body)}`);
 }
+
+/** Settings and prompts are drafts until they are published (migration 009), so a test
+ * that wants a change to reach a call has to publish it, exactly as the Studio does. */
+export async function publish(b, agentId) {
+  const r = await b.post(`/api/agents/${agentId}/publish`).send({});
+  if (r.status !== 200) throw new Error(`publish failed: ${r.status} ${JSON.stringify(r.body)}`);
+  return r.body;
+}

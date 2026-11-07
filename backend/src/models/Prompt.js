@@ -51,7 +51,7 @@ export async function fixActive(db, orgId, agentId) {
        (SELECT 1 FROM prompts p WHERE p.id = a.active_prompt_id AND p.agent_id = a.id))`, [agentId, orgId]);
 }
 
-async function addVersion(db, orgId, promptId, text) {
+export async function addVersion(db, orgId, promptId, text) {
   await db.query("INSERT INTO prompt_versions (id, prompt_id, prompt, org_id) VALUES ($1, $2, $3, $4)", [`v_${hexId()}`, promptId, text, orgId]);
   await db.query(
     `DELETE FROM prompt_versions WHERE id IN (SELECT id FROM prompt_versions WHERE prompt_id = $1 AND org_id = $3
@@ -59,15 +59,15 @@ async function addVersion(db, orgId, promptId, text) {
   await db.query("UPDATE prompts SET updated_at = now() WHERE id = $1 AND org_id = $2", [promptId, orgId]);
 }
 
-/** A saved prompt goes live on the agent's next call, so a prompt that asks for a tool
- * the agent does not have is refused here rather than failing on a call (2026-11-07).
- * A prompt with no agent yet is only checked against the tools that exist at all. */
-async function refuseWhatTheAgentCannotDo(db, orgId, promptId, text) {
+/** What would stop this prompt going live: a tool the agent does not have, a variable
+ * nothing fills in (2026-11-07, call db32d982). Saving is a draft, so these are
+ * warnings; Publish is what refuses them. A prompt with no agent yet is only checked
+ * against the tools that exist at all. */
+async function whatTheAgentCouldNotDo(db, orgId, promptId, text) {
   const { rows } = await db.query(
     `SELECT a.tools FROM prompts p LEFT JOIN agents a ON a.id = p.agent_id AND a.org_id = p.org_id
      WHERE p.id = $1 AND p.org_id = $2`, [promptId, orgId]);
-  const problems = promptProblems(text, rows[0]?.tools ?? KNOWN_TOOLS);
-  if (problems.length) throw new ValidationError(problems[0].message);
+  return promptProblems(text, rows[0]?.tools ?? KNOWN_TOOLS);
 }
 
 /** Inside a transaction: a new prompt with its first version. */
@@ -100,16 +100,17 @@ export async function create(orgId, { name, text, agentId }) {
 export async function update(orgId, id, { name, text }) {
   if (name !== undefined && name !== null) name = cleanText(name, MAX_PROMPT_NAME, "prompt name");
   if (text !== undefined && text !== null) text = promptText(text);
+  let warnings = [];
   return inOrg(orgId, async (db) => {
     await lockPrompt(db, orgId, id);
     if (typeof name === "string") await db.query("UPDATE prompts SET name = $1, updated_at = now() WHERE id = $2 AND org_id = $3", [name, id, orgId]);
     if (typeof text === "string") {
-      await refuseWhatTheAgentCannotDo(db, orgId, id, text);
+      warnings = await whatTheAgentCouldNotDo(db, orgId, id, text);
       const { rows } = await db.query("SELECT prompt FROM prompt_versions WHERE prompt_id = $1 AND org_id = $2 ORDER BY seq DESC LIMIT 1", [id, orgId]);
       if (rows[0]?.prompt !== text) await addVersion(db, orgId, id, text);
     }
     await db.query("UPDATE prompts SET updated_at = now() WHERE id = $1 AND org_id = $2", [id, orgId]);
-    return show(db, orgId, id);
+    return { ...await show(db, orgId, id), warnings };
   });
 }
 

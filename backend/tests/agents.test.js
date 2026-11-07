@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { freshDb, internal, member, owner, db } from "./helpers.js";
+import { freshDb, internal, member, owner, db, publish } from "./helpers.js";
 
 beforeEach(freshDb);
 
@@ -158,6 +158,7 @@ describe("what a call reads (internal API)", () => {
     const b = await owner();
     const a = (await newAgent(b)).body;
     await b.patch(`/api/agents/${a.id}`).send({ settings: { opening_line: "Namaste", max_minutes: 3, ring_secs: 25 } });
+    await publish(b, a.id);
     const r = await internal("get", `/internal/v1/call-config?agent_id=${a.id}`);
     expect(r.body.config).toMatchObject({ agent_id: a.id, name: "EMI reminder", prompt: "You are Riya from Acme.",
       tools: ["end_call", "capture_lead"], opening_line: "Namaste", max_secs: 180, ring_secs: 25 });

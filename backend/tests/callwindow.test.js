@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { freshDb, line, owner } from "./helpers.js";
+import { freshDb, line, owner, publish } from "./helpers.js";
 import { startFakes } from "./fakes.js";
 import { inCallWindow } from "../src/models/Agent.js";
 
@@ -79,6 +79,7 @@ describe("the calling window blocks a call outside it", () => {
     await line(b);
     const a = (await b.post("/api/agents").send({ name: "EMI", prompt: "Hi" })).body;
     await b.patch(`/api/agents/${a.id}`).send({ settings: { call_window: { enabled: true, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" } } });
+    await publish(b, a.id);
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-25T01:00:00Z")); // 06:30 IST, before 09:00
     const r = await b.post("/api/calls").send({ to: "9876543210", consent: true, agent_id: a.id });

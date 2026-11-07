@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { freshDb, owner, db } from "./helpers.js";
+import { freshDb, owner, db, publish } from "./helpers.js";
 import { startFakes } from "./fakes.js";
 import { sign } from "../src/services/plivoSignature.js";
 
@@ -53,6 +53,7 @@ describe("placing a call", () => {
     const { b, n } = await setup();
     const a = (await b.post("/api/agents").send({ name: "EMI", prompt: "Hi" })).body;
     await b.patch(`/api/agents/${a.id}`).send({ settings: { max_minutes: 2, ring_secs: 20 } });
+    await publish(b, a.id);
     const r = await b.post("/api/calls").send({ from_id: n.id, to: "9876543210", consent: true, agent_id: a.id });
     expect(r.body.agent_name).toBe("EMI");
     const dial = fakes.plivo.requests.find((q) => q.method === "POST");

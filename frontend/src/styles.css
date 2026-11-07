@@ -435,3 +435,9 @@ h1 { font-weight: 800; letter-spacing: -.03em; }
 .rec-player .primary { justify-self: start; }
 
 .sys.warn-line { color: var(--warn, #b45309); }
+
+.publish-bar { margin-bottom: var(--s4); }
+.publish-bar.draft { border-color: var(--accent); }
+.publish-state { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
+.problems { margin: var(--s3) 0 0; padding-left: 18px; font-size: 13px; color: var(--text-2); }
+.problems li { margin-top: 4px; }

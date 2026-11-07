@@ -2,7 +2,7 @@ import * as Agent from "../models/Agent.js";
 import * as Call from "../models/Call.js";
 import { ceilingMinutes } from "./workspaceController.js";
 import { note } from "./notify.js";
-import { ValidationError } from "../utils/errors.js";
+import { forbidden, ValidationError } from "../utils/errors.js";
 
 export async function list(_req, res) {
   const org = _req.user.org_id;
@@ -14,6 +14,33 @@ export async function create(req, res) {
   const { name, description, prompt } = req.body ?? {};
   const agent = await Agent.create(req.user.org_id, { name, description, prompt });
   await note(req, "agent", `Created the agent ${agent.name}`, "agents", agent.id);
+  res.json(agent);
+}
+
+/** Make the draft live. Only an admin may publish over the checks. */
+export async function publish(req, res) {
+  const { note: why, override } = req.body ?? {};
+  if (override && !["owner", "admin"].includes(req.user.role)) {
+    throw forbidden("Only an owner or admin can publish a draft that has problems.");
+  }
+  const agent = await Agent.publish(req.user.org_id, req.params.agentId,
+    { user: req.user, note: why, override: Boolean(override) });
+  await note(req, "agent", `Published ${agent.name} version ${agent.live_version.number}`
+    + (override ? " (over the checks)" : ""), "agents", agent.id);
+  res.json(agent);
+}
+
+export async function check(req, res) {
+  res.json(await Agent.check(req.user.org_id, req.params.agentId));
+}
+
+export async function versions(req, res) {
+  res.json(await Agent.versions(req.user.org_id, req.params.agentId));
+}
+
+export async function restore(req, res) {
+  const agent = await Agent.restore(req.user.org_id, req.params.agentId, req.params.versionId, { user: req.user });
+  await note(req, "agent", `Rolled ${agent.name} back; it is now version ${agent.live_version.number}`, "agents", agent.id);
   res.json(agent);
 }
 

@@ -18,12 +18,14 @@ export default function AgentDetail() {
   const [prompts, setPrompts] = useState([]);
   const [tools, setTools] = useState([]);
   const [limits, setLimits] = useState({ max_minutes: 30, ring_secs: [15, 60] });
+  const [check, setCheck] = useState({ problems: [], can_publish: true });
   const [tab, setTab] = useState("prompt");
 
   const load = useCallback(async () => {
     try {
-      const [a, p, t, cfg] = await Promise.all([get(`/api/agents/${agentId}`), get("/api/prompts"), get("/api/tools"), get("/api/config")]);
-      setAgent(a); setPrompts(p.filter((x) => x.agent_id === a.id)); setTools(t); setLimits(cfg.limits);
+      const [a, p, t, cfg, c] = await Promise.all([get(`/api/agents/${agentId}`), get("/api/prompts"), get("/api/tools"),
+        get("/api/config"), get(`/api/agents/${agentId}/check`)]);
+      setAgent(a); setPrompts(p.filter((x) => x.agent_id === a.id)); setTools(t); setLimits(cfg.limits); setCheck(c);
     } catch (e) { toast(e.message, true); navigate("/agents"); }
   }, [agentId, navigate, toast]);
   useEffect(() => { load(); }, [load]);
@@ -43,14 +45,102 @@ export default function AgentDetail() {
           {isAdmin(me) && <Menu items={[["Delete agent", removeAgent, true]]} />}
         </div>
       </header>
+      <PublishBar agent={agent} check={check} me={me} confirm={confirm} onChanged={load} />
       <div className="seg">
-        {["prompt", "tools", "settings"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : "Call settings"}</button>)}
+        {["prompt", "tools", "settings", "versions"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "settings" ? "Call settings" : "Versions"}</button>)}
       </div>
       {tab === "prompt" && <PromptTab agent={agent} prompts={prompts} onChanged={load} />}
       {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} />}
       {tab === "settings" && <SettingsTab agent={agent} limits={limits} onChanged={load} />}
+      {tab === "versions" && <VersionsTab agent={agent} confirm={confirm} onChanged={load} />}
       {confirmNode}
     </section>
+  );
+}
+
+/** What is live, what is only saved, and the one button that changes that. */
+function PublishBar({ agent, check, me, confirm, onChanged }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const live = agent.live_version;
+  const blocked = check.problems.length > 0;
+
+  const publish = async (override = false) => {
+    setBusy(true);
+    try {
+      await post(`/api/agents/${agent.id}/publish`, override ? { override: true } : {});
+      toast(override ? "Published over the checks. It is live now." : "Published. New calls use it from now on.");
+      onChanged();
+    } catch (e) { toast(e.message, true); } finally { setBusy(false); }
+  };
+
+  const publishAnyway = async () => {
+    const ok = await confirm({ title: "Publish anyway?",
+      text: "We think this draft has a problem, listed above. If you know it is fine, you can publish it. "
+        + "What you overrode is kept on this version, with your name.",
+      ok: "I know this is not a tool, publish anyway" });
+    if (ok) await publish(true);
+  };
+
+  return (
+    <div className={`card publish-bar${agent.draft_changed ? " draft" : ""}`}>
+      <div className="publish-state">
+        <div>
+          <b>{agent.draft_changed ? "You have unpublished changes" : "Everything is published"}</b>
+          <div className="hint">
+            {live ? `Version ${live.number} is live${live.published_by_name ? `, published by ${live.published_by_name}` : ""} on ${new Date(live.published_at).toLocaleDateString()}.`
+              : "Nothing is live yet."}
+            {agent.draft_changed ? " Calls keep using the live version until you publish." : ""}
+          </div>
+        </div>
+        {agent.draft_changed && (blocked
+          ? <button className="ghost" disabled={busy || !isAdmin(me)} onClick={publishAnyway}>Publish anyway</button>
+          : <button className="primary" disabled={busy} onClick={() => publish(false)}>Publish</button>)}
+      </div>
+      {blocked && agent.draft_changed && (
+        <ul className="problems">
+          {check.problems.map((p) => <li key={p.code + p.found}>{p.message}</li>)}
+          {!isAdmin(me) && <li className="hint">Only an owner or admin can publish over this.</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function VersionsTab({ agent, confirm, onChanged }) {
+  const toast = useToast();
+  const [versions, setVersions] = useState(null);
+  const load = useCallback(() => get(`/api/agents/${agent.id}/versions`).then(setVersions).catch((e) => toast(e.message, true)), [agent.id, toast]);
+  useEffect(() => { load(); }, [load]);
+  if (!versions) return <Spinner />;
+
+  const restore = async (v) => {
+    if (!(await confirm({ title: `Go back to version ${v.number}?`,
+      text: "Its prompt, tools and settings become the live ones again, as a new version. Nothing in this list is lost.",
+      ok: `Make version ${v.number} live` }))) return;
+    try { await post(`/api/agents/${agent.id}/versions/${v.id}/restore`, {}); toast("Done. New calls use it from now on."); onChanged(); load(); }
+    catch (e) { toast(e.message, true); }
+  };
+
+  return (
+    <div className="card" style={{ maxWidth: 820 }}>
+      <div className="card-head"><span className="card-title">Every version that has been live</span></div>
+      <table className="rows">
+        <tbody>
+          {versions.map((v) => (
+            <tr key={v.id}>
+              <td style={{ width: 90 }}><b>Version {v.number}</b></td>
+              <td>
+                <div>{v.note || "Published"}{v.live ? <span className="pill live" style={{ marginLeft: 8 }}>Live</span> : null}</div>
+                <div className="hint">{new Date(v.published_at).toLocaleString()}{v.published_by_name ? ` · ${v.published_by_name}` : ""}</div>
+                {v.overrides?.length > 0 && <div className="hint" style={{ color: "var(--warn)" }}>Published over {v.overrides.length} warning{v.overrides.length > 1 ? "s" : ""}.</div>}
+              </td>
+              <td style={{ textAlign: "right" }}>{!v.live && <button className="ghost" onClick={() => restore(v)}>Make live again</button>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
@@ -65,9 +155,9 @@ function PromptTab({ agent, prompts, onChanged }) {
   if (!current) return <div className="card">This agent has no prompt.</div>;
 
   const save = async () => {
-    try { await patch(`/api/prompts/${current.id}`, { name, text }); toast("Saved. The next call uses it."); onChanged(); } catch (e) { toast(e.message, true); }
+    try { await patch(`/api/prompts/${current.id}`, { name, text }); toast("Saved as a draft. Publish it when you are ready."); onChanged(); } catch (e) { toast(e.message, true); }
   };
-  const use = async () => { try { await patch(`/api/agents/${agent.id}`, { active_prompt_id: current.id }); toast("Calls now use this prompt."); onChanged(); } catch (e) { toast(e.message, true); } };
+  const use = async () => { try { await patch(`/api/agents/${agent.id}`, { active_prompt_id: current.id }); toast("Saved as a draft. Publish it when you are ready."); onChanged(); } catch (e) { toast(e.message, true); } };
   const addPrompt = async () => {
     const r = prompt("Name the new prompt:"); if (!r) return;
     try { const p = await post("/api/prompts", { name: r, prompt: "You are…", agent_id: agent.id }); toast("Prompt created."); setSel(p.id); onChanged(); } catch (e) { toast(e.message, true); }
@@ -84,7 +174,7 @@ function PromptTab({ agent, prompts, onChanged }) {
         <div className="actions"><button className="primary" onClick={save}>Save prompt</button>{current.id !== agent.active_prompt_id && <button className="ghost" onClick={use}>Use on calls</button>}</div>
       </div>
       <div className="card"><div className="card-head"><span className="card-title">How it works</span></div>
-        <p className="hint">Calls use the prompt marked <b>in use</b>, read when each call starts, so a save applies from the next call. Every save is kept as a version.</p>
+        <p className="hint">Calls use the prompt marked <b>in use</b>. Saving keeps your work as a draft; calls carry on with the published version until you press <b>Publish</b> at the top. Every save is kept, and you can go back to any published version on the Versions tab.</p>
       </div>
     </div>
   );
@@ -94,7 +184,7 @@ function ToolsTab({ agent, tools, onChanged }) {
   const toast = useToast();
   const [picked, setPicked] = useState(agent.tools);
   const toggle = (name) => setPicked((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]));
-  const save = async () => { try { await patch(`/api/agents/${agent.id}`, { tools: picked }); toast("Tools saved. The next call uses them."); onChanged(); } catch (e) { toast(e.message, true); } };
+  const save = async () => { try { await patch(`/api/agents/${agent.id}`, { tools: picked }); toast("Saved as a draft. Publish it when you are ready."); onChanged(); } catch (e) { toast(e.message, true); } };
   return (
     <div className="card" style={{ maxWidth: 760 }}>
       <div className="card-head"><span className="card-title">What this agent can do on a call</span></div>
@@ -120,7 +210,7 @@ function SettingsTab({ agent, limits, onChanged }) {
   const save = async () => {
     try {
       await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw } });
-      toast("Settings saved. The next call uses them."); onChanged();
+      toast("Saved as a draft. Publish it when you are ready."); onChanged();
     } catch (e) { toast(e.message, true); }
   };
   return (

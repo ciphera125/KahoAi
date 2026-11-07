@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { freshDb, owner } from "./helpers.js";
 import { promptProblems } from "../src/models/promptCheck.js";
+import * as Agent from "../src/models/Agent.js";
 
 beforeEach(freshDb);
 
@@ -48,15 +49,19 @@ describe("what a prompt may say about tools (the 2026-11-07 bug)", () => {
 describe("a prompt that calls for tools the agent lacks never reaches a call", () => {
   const save = (b, id, text) => b.patch(`/api/prompts/${id}`).send({ text });
 
-  it("refuses the save and says which tool, in plain words", async () => {
+  it("saves as a draft with a warning, and refuses to publish it", async () => {
+    // Since migration 009 a save is a draft, so it is Publish that refuses. What must
+    // never happen is the prompt reaching a call, and it does not.
     const b = await owner();
     const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." })).body;
     const r = await save(b, a.active_prompt_id, RIA);
-    expect(r.status).toBe(400);
-    expect(r.body.error).toContain("get_tasks");
-    const live = (await b.get(`/api/prompts/${a.active_prompt_id}`)).body;
-    expect(live.prompt).toBe("You are Ria.");
-    expect(live.version_count).toBe(1);
+    expect(r.status).toBe(200);
+    expect(r.body.warnings.map((w) => w.found)).toContain("get_tasks");
+
+    const published = await b.post(`/api/agents/${a.id}/publish`).send({});
+    expect(published.status).toBe(400);
+    expect(published.body.error).toContain("get_tasks");
+    expect((await Agent.callConfig(a.id)).prompt).toBe("You are Ria.");
   });
 
   it("takes the same prompt once the tool is attached", async () => {
@@ -76,12 +81,16 @@ describe("a prompt that calls for tools the agent lacks never reaches a call", (
     expect((await b.get("/api/agents")).body).toEqual([]);
   });
 
-  it("refuses to take a tool away while the prompt still asks for it", async () => {
+  it("warns when a tool is taken away while the prompt still asks for it, and will not publish that", async () => {
     const b = await owner();
     const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "Use capture_lead for details." })).body;
     const r = await b.patch(`/api/agents/${a.id}`).send({ tools: ["end_call"] });
-    expect(r.status).toBe(400);
-    expect(r.body.error).toContain("capture_lead");
-    expect((await b.get(`/api/agents/${a.id}`)).body.tools).toEqual(["end_call", "capture_lead"]);
+    expect(r.status).toBe(200);
+    expect(r.body.warnings.map((w) => w.found)).toEqual(["capture_lead"]);
+
+    const published = await b.post(`/api/agents/${a.id}/publish`).send({});
+    expect(published.status).toBe(400);
+    expect(published.body.error).toContain("capture_lead");
+    expect((await Agent.callConfig(a.id)).tools).toEqual(["end_call", "capture_lead"]);
   });
 });

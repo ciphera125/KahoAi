@@ -9,7 +9,7 @@ import { promptProblems } from "./promptCheck.js";
 import { AGENT_ID, normalizeNumber } from "../utils/phone.js";
 import { cleanText } from "../utils/text.js";
 import { logger } from "../utils/logger.js";
-import { insert as insertPrompt, MAX_PROMPT_CHARS, promptText } from "./Prompt.js";
+import { addVersion as addPromptVersion, insert as insertPrompt, MAX_PROMPT_CHARS, promptText } from "./Prompt.js";
 
 export { MAX_PROMPT_CHARS };
 export { KNOWN_TOOLS, DEFAULT_TOOLS, TOOL_CATALOG } from "./toolCatalog.js";
@@ -97,13 +97,34 @@ function checkSettings(current, changes) {
 
 const SHOW = `SELECT a.*,
     coalesce((SELECT array_agg(p.id ORDER BY p.created_at, p.id) FROM prompts p WHERE p.agent_id = a.id AND p.org_id = a.org_id), '{}') AS prompt_ids,
-    coalesce((SELECT array_agg(r.number ORDER BY r.number) FROM routes r WHERE r.agent_id = a.id AND r.org_id = a.org_id), '{}') AS numbers
-  FROM agents a`;
+    coalesce((SELECT array_agg(r.number ORDER BY r.number) FROM routes r WHERE r.agent_id = a.id AND r.org_id = a.org_id), '{}') AS numbers,
+    coalesce((SELECT v.prompt FROM prompt_versions v WHERE v.prompt_id = a.active_prompt_id AND v.org_id = a.org_id
+              ORDER BY v.seq DESC LIMIT 1), '') AS draft_prompt,
+    to_jsonb(lv) - 'prompt' AS live_version, lv.prompt AS live_prompt
+  FROM agents a LEFT JOIN agent_versions lv ON lv.id = a.live_version_id`;
 const settingsOf = (stored) => ({ ...DEFAULT_SETTINGS, ...stored, call_window: { ...DEFAULT_WINDOW, ...stored?.call_window } });
+
+/** Whether the draft says anything the published version does not. Compared field by
+ * field rather than by a timestamp, so re-saving the same words is not "a change". */
+function draftChanged(a) {
+  const v = a.live_version;
+  if (!v) return true;
+  return a.name !== v.name
+    || (a.draft_prompt ?? "") !== (a.live_prompt ?? "")
+    || JSON.stringify(a.tools) !== JSON.stringify(v.tools)
+    || JSON.stringify(settingsOf(a.settings)) !== JSON.stringify(settingsOf(v.settings));
+}
+
+const versionShape = (v, liveId) => (v ? {
+  id: v.id, number: v.number, name: v.name, note: v.note ?? "", overrides: v.overrides ?? [],
+  published_by_name: v.published_by_name ?? "", live: v.id === liveId,
+  published_at: new Date(v.published_at).toISOString(),
+} : null);
 
 const shape = (a) => ({ id: a.id, name: a.name, description: a.description, active_prompt_id: a.active_prompt_id,
   tools: a.tools, settings: settingsOf(a.settings), created_at: a.created_at.toISOString(),
-  updated_at: a.updated_at.toISOString(), prompt_ids: a.prompt_ids, numbers: a.numbers });
+  updated_at: a.updated_at.toISOString(), prompt_ids: a.prompt_ids, numbers: a.numbers,
+  live_version: versionShape(a.live_version, a.live_version?.id), draft_changed: draftChanged(a) });
 
 async function show(db, orgId, id) {
   const { rows } = await db.query(`${SHOW} WHERE a.id = $1 AND a.org_id = $2`, [id, orgId]);
@@ -133,6 +154,9 @@ export async function create(orgId, { name, description, prompt }) {
       [id, name, description, DEFAULT_TOOLS, DEFAULT_SETTINGS, orgId]);
     const promptId = await insertPrompt(db, orgId, { name: cleanText(`${name} prompt`, MAX_NAME + 7, "prompt name"), text, agentId: id });
     await db.query("UPDATE agents SET active_prompt_id = $1 WHERE id = $2 AND org_id = $3", [promptId, id, orgId]);
+    // Live from the moment it is made: otherwise someone points a number at a new agent,
+    // calls it, and hears the default persona. Only later edits are drafts.
+    await snapshot(db, orgId, id, { note: "Created" });
     return show(db, orgId, id);
   });
 }
@@ -151,10 +175,6 @@ export async function update(orgId, id, { name, description, tools, settings, ac
         throw new ValidationError(`tools must be from: ${KNOWN_TOOLS.join(", ")}`);
       }
       next.tools = KNOWN_TOOLS.filter((t) => tools.includes(t));
-      const { rows: live } = await db.query(
-        `SELECT v.prompt FROM prompt_versions v WHERE v.prompt_id = $1 AND v.org_id = $2
-         ORDER BY v.seq DESC LIMIT 1`, [agent.active_prompt_id, orgId]);
-      if (live[0]) refusePromptProblems(live[0].prompt, next.tools, "unattached_tool");
     }
     if (settings !== undefined && settings !== null) next.settings = checkSettings(agent.settings, settings);
     if (activePromptId !== undefined && activePromptId !== null) {
@@ -164,7 +184,105 @@ export async function update(orgId, id, { name, description, tools, settings, ac
     }
     await db.query(`UPDATE agents SET name = $1, description = $2, tools = $3, settings = $4, active_prompt_id = $5,
       updated_at = now() WHERE id = $6 AND org_id = $7`, [next.name, next.description, next.tools, next.settings, next.active, id, orgId]);
-    return show(db, orgId, id);
+    const saved = await show(db, orgId, id);
+    // A draft may be half-finished; it is Publish that refuses. Say what is wrong now
+    // so nobody is surprised later.
+    return { ...saved, warnings: await draftProblems(db, orgId, id) };
+  });
+}
+
+// --- drafts and published versions -------------------------------------------
+//
+// The agents row is the draft. A published version is a snapshot of it, and a call reads
+// the snapshot (callConfig), so saving in the Studio no longer changes a call in progress
+// or the next one until somebody publishes.
+
+/** The draft as it stands: the agent's own fields plus its prompt's newest text. */
+async function draftOf(db, orgId, agentId) {
+  const { rows } = await db.query(
+    `SELECT a.id, a.name, a.tools, a.settings, a.active_prompt_id,
+       coalesce((SELECT v.prompt FROM prompt_versions v WHERE v.prompt_id = a.active_prompt_id AND v.org_id = a.org_id
+                 ORDER BY v.seq DESC LIMIT 1), '') AS prompt
+     FROM agents a WHERE a.id = $1 AND a.org_id = $2`, [typeof agentId === "string" ? agentId : "", orgId]);
+  if (!rows[0]) throw new NotFoundError("agent");
+  return rows[0];
+}
+
+/** Everything that would stop this draft going live. */
+async function draftProblems(db, orgId, agentId) {
+  const draft = await draftOf(db, orgId, agentId);
+  return promptProblems(draft.prompt, draft.tools);
+}
+
+/** What the page shows beside the Publish button. */
+export async function check(orgId, agentId) {
+  return inOrg(orgId, async (db) => {
+    const problems = await draftProblems(db, orgId, agentId);
+    return { problems, can_publish: problems.length === 0 };
+  });
+}
+
+/** Writes the draft into a new version and makes it live. Inside a transaction. */
+async function snapshot(db, orgId, agentId, { user = null, note = "", overrides = [] } = {}) {
+  const draft = await draftOf(db, orgId, agentId);
+  const { rows: [last] } = await db.query(
+    "SELECT max(number) AS n FROM agent_versions WHERE agent_id = $1 AND org_id = $2", [agentId, orgId]);
+  const id = `av_${hexId()}`;
+  await db.query(
+    `INSERT INTO agent_versions (id, agent_id, org_id, number, name, prompt, tools, settings,
+       published_by, published_by_name, note, overrides)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [id, agentId, orgId, (last?.n ?? 0) + 1, draft.name, draft.prompt, draft.tools, draft.settings,
+      user?.id ?? null, user?.name ?? "", String(note).slice(0, 300), JSON.stringify(overrides)]);
+  await db.query("UPDATE agents SET live_version_id = $1 WHERE id = $2 AND org_id = $3", [id, agentId, orgId]);
+  return id;
+}
+
+/** Make the draft live. Refuses a draft the agent could not follow, unless an admin says
+ * to publish it anyway, in which case what they overrode is kept on the version for good. */
+export async function publish(orgId, agentId, { user = null, note = "", override = false } = {}) {
+  return inOrg(orgId, async (db) => {
+    await db.query("SELECT 1 FROM agents WHERE id = $1 AND org_id = $2 FOR UPDATE",
+      [typeof agentId === "string" ? agentId : "", orgId]);
+    const current = await show(db, orgId, typeof agentId === "string" ? agentId : "");
+    if (!current.draft_changed) {
+      throw new ValidationError("There is nothing new to publish: the draft matches what is already live.");
+    }
+    const problems = await draftProblems(db, orgId, agentId);
+    if (problems.length && !override) throw new ValidationError(problems[0].message);
+    await snapshot(db, orgId, agentId, { user, note, overrides: override ? problems : [] });
+    return show(db, orgId, agentId);
+  });
+}
+
+/** Newest first. */
+export async function versions(orgId, agentId) {
+  return inOrg(orgId, async (db) => {
+    const { rows: [agent] } = await db.query("SELECT live_version_id FROM agents WHERE id = $1 AND org_id = $2",
+      [typeof agentId === "string" ? agentId : "", orgId]);
+    if (!agent) throw new NotFoundError("agent");
+    const { rows } = await db.query(
+      "SELECT * FROM agent_versions WHERE agent_id = $1 AND org_id = $2 ORDER BY number DESC", [agentId, orgId]);
+    return rows.map((v) => versionShape(v, agent.live_version_id));
+  });
+}
+
+/** Put an old version back: its words become the draft again and go live at once, as a
+ * new version. Nothing in the history is rewritten. */
+export async function restore(orgId, agentId, versionId, { user = null } = {}) {
+  return inOrg(orgId, async (db) => {
+    const { rows: [agent] } = await db.query("SELECT * FROM agents WHERE id = $1 AND org_id = $2 FOR UPDATE",
+      [typeof agentId === "string" ? agentId : "", orgId]);
+    if (!agent) throw new NotFoundError("agent");
+    const { rows: [version] } = await db.query(
+      "SELECT * FROM agent_versions WHERE id = $1 AND agent_id = $2 AND org_id = $3",
+      [typeof versionId === "string" ? versionId : "", agentId, orgId]);
+    if (!version) throw new NotFoundError("version");
+    await db.query("UPDATE agents SET name = $1, tools = $2, settings = $3, updated_at = now() WHERE id = $4 AND org_id = $5",
+      [version.name || agent.name, version.tools, version.settings, agentId, orgId]);
+    if (agent.active_prompt_id) await addPromptVersion(db, orgId, agent.active_prompt_id, version.prompt);
+    await snapshot(db, orgId, agentId, { user, note: `Rolled back to version ${version.number}` });
+    return show(db, orgId, agentId);
   });
 }
 
@@ -212,16 +330,19 @@ export async function agentForNumber(number) {
 export async function callConfig(agentId) {
   if (typeof agentId !== "string" || !AGENT_ID.test(agentId)) return null;
   try {
-    const { rows } = await asSystem((db) => db.query(`SELECT a.id, a.org_id, a.name, a.tools, a.settings,
-        (SELECT v.prompt FROM prompt_versions v WHERE v.prompt_id = a.active_prompt_id AND v.org_id = a.org_id
-         ORDER BY v.seq DESC LIMIT 1) AS prompt
-      FROM agents a WHERE a.id = $1`, [agentId]));
+    // The published version, never the draft: what someone is still working on in the
+    // Studio must not reach a caller (2026-11-07).
+    const { rows } = await asSystem((db) => db.query(`SELECT a.id, a.org_id,
+        lv.name, lv.tools, lv.settings, lv.prompt, lv.number AS version
+      FROM agents a JOIN agent_versions lv ON lv.id = a.live_version_id
+      WHERE a.id = $1`, [agentId]));
     const a = rows[0];
     if (!a) return null;
     const s = settingsOf(a.settings);
-    return { agent_id: a.id, org_id: a.org_id, name: a.name, prompt: a.prompt ?? null,
+    return { agent_id: a.id, org_id: a.org_id, name: a.name, prompt: a.prompt || null,
       tools: a.tools.filter((t) => KNOWN_TOOLS.includes(t)), opening_line: s.opening_line || null,
-      max_secs: s.max_minutes * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window };
+      max_secs: s.max_minutes * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
+      version: a.version };
   } catch (err) {
     logger.error({ err: err.message }, "agent unreadable, the call uses the default persona");
     return null;

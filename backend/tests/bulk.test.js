@@ -1,6 +1,6 @@
 // Bulk calls: a list of names and numbers, called through one agent, a few at a time.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { db, freshDb, internal, member, owner } from "./helpers.js";
+import { db, freshDb, internal, member, owner, publish } from "./helpers.js";
 import { startFakes } from "./fakes.js";
 import { runOnce } from "../src/services/bulkRunner.js";
 
@@ -126,6 +126,7 @@ describe("running a bulk call", () => {
   it("waits outside the agent's calling window instead of dialling", async () => {
     const { b, n, a } = await setup();
     await b.patch(`/api/agents/${a.id}`).send({ settings: { call_window: { enabled: true, start: "14:00", end: "15:00" } } });
+    await publish(b, a.id);
     const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(2) })).body;
     await tick();
     expect(dials()).toHaveLength(0);
