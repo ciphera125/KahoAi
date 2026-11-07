@@ -4,15 +4,16 @@
 import { asSystem, inOrg } from "../db/pool.js";
 import { hexId } from "../utils/crypto.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
+import { DEFAULT_TOOLS, KNOWN_TOOLS } from "./toolCatalog.js";
+import { promptProblems } from "./promptCheck.js";
 import { AGENT_ID, normalizeNumber } from "../utils/phone.js";
 import { cleanText } from "../utils/text.js";
 import { logger } from "../utils/logger.js";
 import { insert as insertPrompt, MAX_PROMPT_CHARS, promptText } from "./Prompt.js";
 
 export { MAX_PROMPT_CHARS };
+export { KNOWN_TOOLS, DEFAULT_TOOLS, TOOL_CATALOG } from "./toolCatalog.js";
 // The tools in the voice service's tools.REGISTRY.
-export const KNOWN_TOOLS = ["end_call", "capture_lead", "transfer_to_human", "call_webhook"];
-export const DEFAULT_TOOLS = ["end_call", "capture_lead"];
 export const MAX_NAME = 60;
 export const MAX_DESCRIPTION = 300;
 export const MAX_OPENING = 200;
@@ -61,16 +62,14 @@ export function inCallWindow(window, now = new Date()) {
 }
 const SETTING_LABELS = { max_minutes: "Longest call (minutes)", ring_secs: "Ring for (seconds)" };
 
-export const TOOL_CATALOG = [
-  { name: "end_call", label: "End the call",
-    description: "Hangs up once the person says goodbye, or says no to “anything else?”.", needs: null },
-  { name: "capture_lead", label: "Save details",
-    description: "Saves the person's name, number and what they need, for a follow-up.", needs: null },
-  { name: "transfer_to_human", label: "Transfer to a person",
-    description: "Hands the call to your team's number when the person asks for a human.", needs: "TRANSFER_NUMBER" },
-  { name: "call_webhook", label: "Your system (webhook)",
-    description: "Looks something up or saves it in your own system, through a webhook.", needs: "TOOL_WEBHOOK_URL" },
-];
+
+/** Refuses a prompt an agent could not actually follow. Called wherever a prompt or an
+ * agent's tools change, because either side can break the pair. `only` narrows it to one
+ * kind of problem (changing tools says nothing about the prompt's variables). */
+export function refusePromptProblems(text, tools, only = null) {
+  const problems = promptProblems(text, tools).filter((p) => !only || p.code === only);
+  if (problems.length) throw new ValidationError(problems[0].message);
+}
 
 function checkSettings(current, changes) {
   if (changes === null || typeof changes !== "object" || Array.isArray(changes)) {
@@ -127,6 +126,7 @@ export async function create(orgId, { name, description, prompt }) {
   name = cleanText(name, MAX_NAME, "agent name");
   description = cleanText(description, MAX_DESCRIPTION, "description", false);
   const text = promptText(prompt);
+  refusePromptProblems(text, DEFAULT_TOOLS);
   return inOrg(orgId, async (db) => {
     const id = `ag_${hexId()}`;
     await db.query("INSERT INTO agents (id, name, description, tools, settings, org_id) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -151,6 +151,10 @@ export async function update(orgId, id, { name, description, tools, settings, ac
         throw new ValidationError(`tools must be from: ${KNOWN_TOOLS.join(", ")}`);
       }
       next.tools = KNOWN_TOOLS.filter((t) => tools.includes(t));
+      const { rows: live } = await db.query(
+        `SELECT v.prompt FROM prompt_versions v WHERE v.prompt_id = $1 AND v.org_id = $2
+         ORDER BY v.seq DESC LIMIT 1`, [agent.active_prompt_id, orgId]);
+      if (live[0]) refusePromptProblems(live[0].prompt, next.tools, "unattached_tool");
     }
     if (settings !== undefined && settings !== null) next.settings = checkSettings(agent.settings, settings);
     if (activePromptId !== undefined && activePromptId !== null) {

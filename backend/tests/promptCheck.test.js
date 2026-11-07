@@ -1,0 +1,87 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { freshDb, owner } from "./helpers.js";
+import { promptProblems } from "../src/models/promptCheck.js";
+
+beforeEach(freshDb);
+
+const RIA = `# TOOLS
+Use these to get facts.
+- get_tasks(date_range, status): returns tasks for "today".
+- mark_task_done(task_id): marks a task as completed.
+Greet {{user_name}} and remind them about {{task_title}}.`;
+
+describe("what a prompt may say about tools (the 2026-11-07 bug)", () => {
+  it("names every tool the prompt asks for that the agent does not have", () => {
+    const problems = promptProblems(RIA, ["end_call", "capture_lead"]);
+    expect(problems.filter((p) => p.code === "unattached_tool").map((p) => p.found))
+      .toEqual(["get_tasks", "mark_task_done"]);
+    expect(problems[0].message).toContain("get_tasks");
+    expect(problems[0].message).toContain("not one of this agent's tools");
+  });
+
+  it("names every variable nothing fills in", () => {
+    expect(promptProblems(RIA, []).filter((p) => p.code === "unfilled_variable").map((p) => p.found))
+      .toEqual(["user_name", "task_title"]);
+  });
+
+  it("is happy with a prompt that only uses the tools it has", () => {
+    expect(promptProblems("Say goodbye, then use end_call. Save details with capture_lead.",
+      ["end_call", "capture_lead"])).toEqual([]);
+  });
+
+  it("says nothing about ordinary prose, Hindi or punctuation", () => {
+    expect(promptProblems("You are Ria. मैं कर सकती हूँ. Ask one question at a time; be warm.", [])).toEqual([]);
+  });
+
+  it("reports a tool once however often the prompt repeats it", () => {
+    const problems = promptProblems("call get_tasks, then get_tasks again, then get_tasks", []);
+    expect(problems.map((p) => p.found)).toEqual(["get_tasks"]);
+  });
+
+  it("tells the user how to fix an unattached tool we do have", () => {
+    const [problem] = promptProblems("use transfer_to_human when asked", ["end_call"]);
+    expect(problem.message).toContain("Transfer to a person");
+    expect(problem.message).toContain("attach");
+  });
+});
+
+describe("a prompt that calls for tools the agent lacks never reaches a call", () => {
+  const save = (b, id, text) => b.patch(`/api/prompts/${id}`).send({ text });
+
+  it("refuses the save and says which tool, in plain words", async () => {
+    const b = await owner();
+    const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." })).body;
+    const r = await save(b, a.active_prompt_id, RIA);
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain("get_tasks");
+    const live = (await b.get(`/api/prompts/${a.active_prompt_id}`)).body;
+    expect(live.prompt).toBe("You are Ria.");
+    expect(live.version_count).toBe(1);
+  });
+
+  it("takes the same prompt once the tool is attached", async () => {
+    const b = await owner();
+    const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." })).body;
+    await b.patch(`/api/agents/${a.id}`).send({ tools: ["end_call", "transfer_to_human"] });
+    const r = await save(b, a.active_prompt_id, "Use transfer_to_human when they ask for a person.");
+    expect(r.status).toBe(200);
+    expect(r.body.prompt).toContain("transfer_to_human");
+  });
+
+  it("refuses a new agent whose first prompt asks for a tool it will not have", async () => {
+    const b = await owner();
+    const r = await b.post("/api/agents").send({ name: "Ria", prompt: RIA });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain("get_tasks");
+    expect((await b.get("/api/agents")).body).toEqual([]);
+  });
+
+  it("refuses to take a tool away while the prompt still asks for it", async () => {
+    const b = await owner();
+    const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "Use capture_lead for details." })).body;
+    const r = await b.patch(`/api/agents/${a.id}`).send({ tools: ["end_call"] });
+    expect(r.status).toBe(400);
+    expect(r.body.error).toContain("capture_lead");
+    expect((await b.get(`/api/agents/${a.id}`)).body.tools).toEqual(["end_call", "capture_lead"]);
+  });
+});
