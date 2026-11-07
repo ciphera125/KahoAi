@@ -84,6 +84,25 @@ def _clean_fields(raw) -> list[dict]:
     return out
 
 
+def _clean_custom_tools(raw) -> list[dict]:
+    """Tools this organization defined itself. One malformed entry is dropped rather
+    than taking the whole call's config with it."""
+    out = []
+    for tool in raw if isinstance(raw, list) else []:
+        if not isinstance(tool, dict) or not isinstance(tool.get("name"), str) or not tool["name"]:
+            continue
+        inputs = tool.get("inputs")
+        out.append({
+            "name": tool["name"],
+            "label": str(tool.get("label") or tool["name"]),
+            "description": str(tool.get("description") or ""),
+            "inputs": [i for i in inputs if isinstance(i, dict) and i.get("key")]
+            if isinstance(inputs, list) else [],
+            "say_while_waiting": str(tool.get("say_while_waiting") or ""),
+        })
+    return out
+
+
 def _clean_config(raw) -> dict | None:
     """The Studio's config in the shape agents_store.call_config gives, or None
     if anything in it is malformed (it decides what a live call does)."""
@@ -105,6 +124,7 @@ def _clean_config(raw) -> dict | None:
                 "prompt": prompt or None, "tools": tools, "opening_line": opening or None,
                 "max_secs": float(raw["max_secs"]), "ring_secs": int(raw["ring_secs"]),
                 "capture_fields": _clean_fields(raw.get("capture_fields")),
+                "custom_tools": _clean_custom_tools(raw.get("custom_tools")),
                 "confirm_answers": raw.get("confirm_answers") is not False,
                 "version": int(version) if version is not None else None}
     except (KeyError, TypeError, ValueError):
@@ -234,6 +254,25 @@ async def run_tool(call_id: str, name: str, **args) -> dict:
         return r.json()
     except (httpx.HTTPError, TimeoutError, ValueError) as e:
         logger.warning(f"Tool {name} failed for call {call_id}: {type(e).__name__}")
+        return {"ok": False, "message": "I could not do that just now. Please carry on."}
+
+
+async def run_custom_tool(call_id: str, name: str, values: dict) -> dict:
+    """One of the organization's own tools. Only the values the agent collected go over;
+    the address, the headers and any key stay in the Studio, which makes the request."""
+    if not configured() or not _CALL_ID.match(call_id or ""):
+        return {"ok": False, "message": "I cannot do that just now. Carry on."}
+    try:
+        async with _client() as client:
+            r = await asyncio.wait_for(
+                client.post(f"/internal/v1/calls/{call_id}/tools/custom/{name}",
+                            json={"values": values}),
+                _timeout())
+        if r.status_code != 200:
+            return {"ok": False, "message": "I could not do that just now. Please carry on."}
+        return r.json()
+    except (httpx.HTTPError, TimeoutError, ValueError) as e:
+        logger.warning(f"Custom tool {name} failed for call {call_id}: {type(e).__name__}")
         return {"ok": False, "message": "I could not do that just now. Please carry on."}
 
 

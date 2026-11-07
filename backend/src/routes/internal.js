@@ -9,6 +9,7 @@ router.get("/dnc", internal.dnc);
 router.post("/calls/:callId/events", internal.ingest);
 router.post("/calls/:callId/recording", internal.recordingReport);
 router.post("/calls/:callId/answers", internal.saveAnswer);
+router.post("/calls/:callId/tools/custom/:name", internal.runCustomTool);
 router.post("/calls/:callId/tools/:tool", internal.runTool);
 router.post("/errors", internal.reportError);
 router.post("/leads", internal.reportLead);

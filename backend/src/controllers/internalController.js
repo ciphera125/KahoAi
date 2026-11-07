@@ -56,6 +56,11 @@ export async function runTool(req, res) {
   res.json(await CallTool.run(req.params.callId, req.params.tool, req.body ?? {}));
 }
 
+/** One the organization defined itself. */
+export async function runCustomTool(req, res) {
+  res.json(await CallTool.runCustom(req.params.callId, req.params.name, req.body ?? {}));
+}
+
 export async function reportError(req, res) {
   const { level, source, message, call_id, org_id } = req.body ?? {};
   await ErrorLog.add(org_id || null, { level, source, message, call_id });

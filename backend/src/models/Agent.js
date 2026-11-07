@@ -8,6 +8,7 @@ import { DEFAULT_TOOLS, KNOWN_TOOLS } from "./toolCatalog.js";
 import { KINDS as CAPTURE_KINDS } from "./answerValue.js";
 import { fill as fillVariables, offered } from "./variables.js";
 import { idForNumber as contactIdForNumber } from "./Contact.js";
+import { namesFor as customToolNames, forCall as customToolsForCall } from "./CustomTool.js";
 import { promptProblems, variablesOf } from "./promptCheck.js";
 import { AGENT_ID, normalizeNumber } from "../utils/phone.js";
 import { cleanText } from "../utils/text.js";
@@ -215,10 +216,13 @@ export async function update(orgId, id, { name, description, tools, settings, ac
     if (name !== undefined && name !== null) next.name = cleanText(name, MAX_NAME, "agent name");
     if (description !== undefined && description !== null) next.description = cleanText(description, MAX_DESCRIPTION, "description", false);
     if (tools !== undefined && tools !== null) {
-      if (!Array.isArray(tools) || tools.some((t) => !KNOWN_TOOLS.includes(t))) {
+      // Built-in tools, plus any this organization has defined itself.
+      const theirOwn = await customToolNames(orgId);
+      const allowed = [...KNOWN_TOOLS, ...theirOwn];
+      if (!Array.isArray(tools) || tools.some((t) => !allowed.includes(t))) {
         throw new ValidationError(`tools must be from: ${KNOWN_TOOLS.join(", ")}`);
       }
-      next.tools = KNOWN_TOOLS.filter((t) => tools.includes(t));
+      next.tools = allowed.filter((t) => tools.includes(t));
     }
     if (settings !== undefined && settings !== null) next.settings = checkSettings(agent.settings, settings);
     if (activePromptId !== undefined && activePromptId !== null) {
@@ -409,7 +413,8 @@ export async function callConfig(agentId, { caller = null } = {}) {
       phone: caller, agentName: a.name,
     }).catch(() => a.prompt || "");
     return { agent_id: a.id, org_id: a.org_id, name: a.name, prompt: prompt || null,
-      tools: a.tools.filter((t) => KNOWN_TOOLS.includes(t)), opening_line: s.opening_line || null,
+      tools: a.tools, opening_line: s.opening_line || null,
+      custom_tools: await customToolsForCall(a.org_id, a.tools.filter((t) => !KNOWN_TOOLS.includes(t))),
       max_secs: s.max_minutes * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
       capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, version: a.version };
   } catch (err) {

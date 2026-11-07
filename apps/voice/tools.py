@@ -81,6 +81,12 @@ class CallContext:
     # Set by the phone server: runs one of the Studio's own tools for this call
     # (studio_link.run_tool). None on a local run, where there is no task list.
     run_tool: Callable[..., Awaitable[dict]] | None = None
+    # Tools this organization defined itself, as the Studio describes them:
+    # {name, label, description, inputs, say_while_waiting}. Never the address or the
+    # key: the Studio makes the request, so neither is on this side at all.
+    custom_tools: list = field(default_factory=list)
+    # Set by the phone server: runs one of those (studio_link.run_custom_tool).
+    run_custom_tool: Callable[..., Awaitable[dict]] | None = None
     # Which caller turn we are on, for the Studio's idempotency key: the same answer
     # sent twice on one turn is one answer, a correction on a later turn is a new one.
     turn_number: Callable[[], int] | None = None
@@ -169,17 +175,24 @@ def enabled_names(raw: str | None) -> list[str]:
 
 
 def build_tool_schemas(
-    call: CallContext, names: list[str], timeout: float = DEFAULT_TIMEOUT_SECS
+    call: CallContext, names: list[str], timeout: float = DEFAULT_TIMEOUT_SECS,
+    strict: bool = True,
 ) -> list[FunctionSchema]:
     """Schemas for the named tools, each carrying its wrapped handler."""
-    unknown = [n for n in names if n not in REGISTRY]
-    if unknown:
+    theirs = {d["name"]: d for d in (getattr(call, "custom_tools", None) or []) if d.get("name")}
+    unknown = [n for n in names if n not in REGISTRY and n not in theirs]
+    if unknown and strict:
+        # TOOLS_ENABLED naming a tool that does not exist is a mistake worth stopping
+        # for. A Studio agent's list is not: a custom tool deleted while it was still
+        # attached should leave the call working without it, not refuse to answer.
         raise ValueError(
             f"TOOLS_ENABLED names unknown tool(s): {', '.join(unknown)}. "
             f"Known: {', '.join(sorted(REGISTRY)) or 'none'}."
         )
-    schemas = []
-    for t in (REGISTRY[n] for n in names):
+    if unknown:
+        logger.warning(f"Ignoring tool(s) this call cannot do: {', '.join(unknown)}")
+    schemas = [_custom_schema(theirs[n], call, timeout) for n in names if n in theirs]
+    for t in (REGISTRY[n] for n in names if n in REGISTRY):
         properties, required = t.properties, t.required
         if t.schema_for is not None:
             built = t.schema_for(call)
@@ -669,3 +682,60 @@ async def look_up_contact(args: dict, call: CallContext) -> dict:
     if not reply.get("ok"):
         return {"what_to_do": reply.get("message") or "I do not have their details."}
     return {k: reply.get(k) for k in ("name", "tags", "details", "answers")}
+
+
+# --- tools a customer defined themselves -------------------------------------
+#
+# The Studio holds the address, the headers and the key, and makes the request. All that
+# reaches this side is a name, what the tool is for, and what to collect from the caller,
+# so there is nothing here for a caller to talk the model into reading out.
+
+_INPUT_TYPES = {"text": "string", "number": "number", "yes_no": "boolean"}
+
+
+def _custom_schema(definition: dict, call: "CallContext", timeout: float):
+    properties, required = {}, []
+    for item in definition.get("inputs") or []:
+        key = item.get("key")
+        if not key:
+            continue
+        properties[key] = {
+            "type": _INPUT_TYPES.get(item.get("type"), "string"),
+            "description": item.get("description") or item.get("label") or key,
+        }
+        if item.get("example"):
+            properties[key]["description"] += f" (for example: {item['example']})"
+        if item.get("required"):
+            required.append(key)
+
+    name = definition["name"]
+
+    async def handler(params: FunctionCallParams) -> None:
+        args = dict(params.arguments or {})
+        started = time.monotonic()
+        values = {k: v for k, v in args.items() if k in properties}
+        if call.run_custom_tool is None:
+            result = {"ok": False, "what_to_do": "I cannot do that on this call. Carry on."}
+        else:
+            try:
+                reply = await asyncio.wait_for(call.run_custom_tool(name, values), timeout)
+            except TimeoutError:
+                logger.error(f"Custom tool {name} timed out after {timeout}s")
+                reply = {"ok": False, "message": "That took too long. Tell them you will check."}
+            except Exception as e:  # noqa: BLE001 -- a caller must never hear a traceback
+                logger.error(f"Custom tool {name} failed: {type(e).__name__}")
+                reply = {"ok": False, "message": "I could not do that just now."}
+            if reply.get("ok"):
+                result = {"ok": True, **(reply.get("values") or {})}
+            else:
+                result = {"ok": False, "what_to_do": reply.get("message") or "I could not do that."}
+        _log(call, name, values, result, time.monotonic() - started)
+        await params.result_callback(result)
+
+    return FunctionSchema(
+        name=name,
+        description=definition.get("description") or definition.get("label") or name,
+        properties=properties,
+        required=required,
+        handler=handler,
+    )

@@ -12,6 +12,7 @@ import bulkRoutes from "./bulk.js";
 import errorRoutes from "./errors.js";
 import leadRoutes from "./leads.js";
 import taskRoutes from "./tasks.js";
+import customToolRoutes from "./customTools.js";
 
 const router = Router();
 router.use("/auth", authRoutes);
@@ -26,4 +27,5 @@ router.use("/bulk-calls", bulkRoutes);
 router.use(errorRoutes);
 router.use(leadRoutes);
 router.use(taskRoutes);
+router.use(customToolRoutes);
 export default router;

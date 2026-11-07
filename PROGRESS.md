@@ -15,9 +15,9 @@ expected (that database has no `anon` role); everything else must be green.
 | 2 | "Save What the Caller Says" (capture tool) | done | `4692c42` |
 | 3 | Tasks table, Tasks page, four task tools | done | `c452beb` |
 | 4 | "Look Up Contact Details" tool | done | `2f1c298` |
-| 5 | The `{{` picker in the prompt editor | done | `STEP5` |
-| 6 | Custom API tools ("Call My API") | in progress | |
-| 7 | Tool-call History tree | todo | |
+| 5 | The `{{` picker in the prompt editor | done | `59680d3` |
+| 6 | Custom API tools ("Call My API") | done | `STEP6` |
+| 7 | Tool-call History tree | in progress | |
 | 8 | "Test this agent", with Publish gating | todo | |
 
 ## Already done before this run (committed)
@@ -122,6 +122,30 @@ expected (that database has no `anon` role); everything else must be green.
   than taking the whole config down.
 - `variables.js` queries the latest answers itself rather than importing `CallAnswer.js`,
   which would have made Agent.js and CallAnswer.js import each other through it.
+
+### Step 6
+
+- **The Studio makes the request, not the voice service.** The address, the headers and
+  any key stay in one process; the voice service is told only the name, what the tool is
+  for and what to collect. There is nothing on the call path a caller could talk the
+  model into reading out.
+- **`outbound.js` refuses private addresses**, including after resolving the hostname, so
+  a tool cannot be pointed at the cloud metadata service or at something else on our own
+  network. https only, no redirects followed, a hard deadline, and a capped reply.
+- **Retried once, and only when nothing came back** (timeout or refused connection). A
+  request that was received may already have done something.
+- **The template carries its own quotes** (`"order_id": "{{input.order_number}}"`), and a
+  string goes in escaped without adding a pair, so what the caller said cannot change the
+  shape of the body. Covered by a test.
+- **The machine name is fixed once made.** A prompt and an agent's tool list both point
+  at it, so renaming the label leaves the name alone.
+- **Only an admin may make, edit, test or delete one**, since it carries a key and calls
+  out of our network. The saved headers are kept when the form does not send them again.
+- **A failure never tells the agent why**: the caller would hear it. The person setting
+  the tool up sees the full answer in the Test panel, which is their own API.
+- `build_tool_schemas` gained `strict`: TOOLS_ENABLED naming an unknown tool still stops
+  startup, but a Studio agent listing a custom tool that has since been deleted only logs
+  and carries on, rather than refusing to answer the call.
 
 ## Known limits / to revisit
 

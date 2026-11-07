@@ -1213,6 +1213,8 @@ def build_worker(
     capture_fields: list | None = None,
     save_answer=None,
     run_tool=None,
+    custom_tools: list | None = None,
+    run_custom_tool=None,
     opening_line: str | None = None,
     notice_prespoken: tuple | None = None,
     transcript_sink=None,
@@ -1329,13 +1331,19 @@ def build_worker(
     call.capture_fields = list(capture_fields or [])
     call.save_answer = save_answer
     call.run_tool = run_tool
+    call.custom_tools = list(custom_tools or [])
+    call.run_custom_tool = run_custom_tool
     call.turn_number = lambda: transcript.caller_turns
     call.hang_up = lambda: llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
     try:
+        from_studio = tool_names is not None
         tool_schemas = build_tool_schemas(
             call,
             enabled_names(env("TOOLS_ENABLED")) if tool_names is None else list(tool_names),
             env_float("TOOL_TIMEOUT_SECS", DEFAULT_TIMEOUT_SECS),
+            # A Studio agent's list may name a tool that has since been deleted; that
+            # must not stop the call. A typo in TOOLS_ENABLED should still be loud.
+            strict=not from_studio,
         )
     except ValueError as e:
         logger.error(str(e))

@@ -11,6 +11,7 @@ import { logger } from "../utils/logger.js";
 import { parseAnswer } from "./answerValue.js";
 import * as Task from "./Task.js";
 import * as Contact from "./Contact.js";
+import * as CustomTool from "./CustomTool.js";
 import { latestForContact } from "./CallAnswer.js";
 
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -91,6 +92,20 @@ const HANDLERS = {
 };
 
 export const TOOLS = Object.keys(HANDLERS);
+
+/** One of the organization's own tools. The definition and its key stay here; only the
+ * values the agent collected come in. */
+export async function runCustom(callId, name, args = {}) {
+  if (typeof callId !== "string" || !CALL_ID.test(callId)) return no("I could not do that. Carry on.");
+  const subject = await callSubject(callId);
+  if (!subject?.org_id) return no("I could not do that just now. Carry on with the call.");
+  try {
+    return await CustomTool.run(subject.org_id, name, args.values ?? {});
+  } catch (err) {
+    logger.warn({ err: err.message, tool: name }, "a custom tool failed during a call");
+    return no("I could not do that just now. Please carry on.");
+  }
+}
 
 export async function run(callId, tool, args = {}) {
   if (typeof callId !== "string" || !CALL_ID.test(callId)) return no("I could not do that. Carry on.");
