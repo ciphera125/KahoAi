@@ -1,3 +1,4 @@
+import { LANGUAGES } from "../models/language.js";
 import { config } from "../config/env.js";
 import * as User from "../models/User.js";
 import * as Activity from "../models/Activity.js";
@@ -38,7 +39,7 @@ function ourNumber() {
 
 export function settings(_req, res) {
   res.json({ our_number: ourNumber(), max_chars: MAX_PROMPT_CHARS, tools: TOOL_CATALOG,
-    limits: { max_minutes: ceilingMinutes(), ring_secs: [...RING_SECS] } });
+    languages: LANGUAGES, limits: { max_minutes: ceilingMinutes(), ring_secs: [...RING_SECS] } });
 }
 
 /** Everything an agent can be given: the built-in tools, then this organization's own. */

@@ -121,6 +121,15 @@ backup on the first voice error, never switches back to the one that failed, and
 a reply the caller was still owed (`reply_retried` in the transcript). Sarvam is ruled out
 (owner, 2026-10-02); Deepgram Aura is English-only.
 
+**Language (2026-11-08).** `language.py` has four modes: `auto` (default: answer in whatever the
+caller said last, voice retuned each turn), `english`, `hindi` and `mix` (Hinglish), which pin both
+what the model is told and the voice. Set on the agent (published like its prompt) and overridden
+for one call on the Calls page, through the signed answer URL (`&language=`); anything that is not
+one of the four is ignored, since it ends up in the prompt. Measured on the real model, 3 repeats:
+107 of 108 replies in the language asked for. `SMART_TURN_STOP_SECS` (default 1.5, Pipecat's own is
+3) is how long the turn model waits on a short answer it thinks is unfinished; that 3s was the
+late first replies on real calls. The model connection is opened at pipeline start (`warm_connection`).
+
 Text between the model and the voice: `CapReplyLength` speaks at most `REPLY_MAX_SENTENCES`
 (default 3) per reply; `RepeatedSentenceFilter` drops a sentence said twice in a row (sentence
 aggregation only). Transcripts are cleaned before the model reads them (`NormalizeTranscripts`):

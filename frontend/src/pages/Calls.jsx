@@ -15,14 +15,18 @@ export default function Calls() {
   const [windowWarn, setWindowWarn] = useState(null);
   const [reload, setReload] = useState(0);
 
+  const [languages, setLanguages] = useState([]);
+
   useEffect(() => {
     get("/api/agents").then(setAgents).catch(() => {});
     get("/api/numbers").then(setNumbers).catch(() => {});
+    get("/api/config").then((c) => setLanguages(c.languages ?? [])).catch(() => {});
   }, []);
 
-  const place = async ({ fromId, to, agentId }) => {
+  const place = async ({ fromId, to, agentId, language }) => {
     try {
-      const r = await post("/api/calls", { from_id: fromId, to, consent: true, agent_id: agentId || undefined });
+      const r = await post("/api/calls", { from_id: fromId, to, consent: true, agent_id: agentId || undefined,
+        language: language || undefined });
       toast(`Ringing ${r.to}.`);
       if (r.request_uuid) setWatch({ uuid: r.request_uuid, label: r.to, sub: [r.to, r.agent_name].filter(Boolean).join(" · ") });
       setReload((n) => n + 1);
@@ -37,7 +41,7 @@ export default function Calls() {
       <header className="page"><div><h1>Calls</h1><div className="sub">Call anyone with one of your agents, and follow the conversation live.</div></div></header>
       <div className="grid-side" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1.15fr)" }}>
         <div className="stack">
-          <NewCall agents={agents} numbers={numbers} onPlace={place} />
+          <NewCall agents={agents} numbers={numbers} languages={languages} onPlace={place} />
           <History reload={reload} onWatch={setWatch} />
         </div>
         <LiveTranscript watch={watch} onEnded={() => setReload((n) => n + 1)} />
@@ -53,10 +57,11 @@ export default function Calls() {
   );
 }
 
-function NewCall({ agents, numbers, onPlace }) {
+function NewCall({ agents, numbers, languages, onPlace }) {
   const toast = useToast();
   const [agentId, setAgentId] = useState("");
   const [fromId, setFromId] = useState("");
+  const [language, setLanguage] = useState("");
   const [to, setTo] = useState("");
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -74,7 +79,7 @@ function NewCall({ agents, numbers, onPlace }) {
     if (!to.trim()) return toast("Type a number to call.", true);
     if (!consent) return toast("Confirm that this person agreed to be called.", true);
     setBusy(true);
-    try { await onPlace({ fromId, to: to.trim(), agentId }); setTo(""); setConsent(false); }
+    try { await onPlace({ fromId, to: to.trim(), agentId, language }); setTo(""); setConsent(false); }
     catch (e) { toast(e.message, true); } finally { setBusy(false); }
   };
 
@@ -86,6 +91,14 @@ function NewCall({ agents, numbers, onPlace }) {
           <option value="">Default persona (no agent)</option>
           {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
+      </div>
+      <div className="field"><label className="f">Language on this call</label>
+        <select value={language} onChange={(e) => setLanguage(e.target.value)}>
+          <option value="">Whatever the agent is set to</option>
+          {languages.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+        </select>
+        <span className="hint">{languages.find((l) => l.value === language)?.hint
+          ?? "Leave it to use the language set on the agent."}</span>
       </div>
       <div className="field"><label className="f">Call from</label>
         <select value={fromId} onChange={(e) => setFromId(e.target.value)}>

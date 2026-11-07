@@ -1912,3 +1912,16 @@ server was restarted at the end so the voice-side changes are live.
 4. Not built, by design or for lack of a decision: CSV task upload; a diff between versions; a
    warning when "Save what the caller says" is attached with no questions set; the Test does not
    include the live call's voice rules.
+
+### 2026-11-08 (later): language modes, and the late first replies
+
+Owner: the agent should follow the caller's language each turn, there should be an English / Hindi /
+mix option in the call section, and the first two replies were late. Done and live (both services
+restarted): **`language.py`** with four modes, set on the agent (Call settings tab, published like the
+prompt) and per call on the Calls page; **`SMART_TURN_STOP_SECS`** (1.5, was Pipecat's 3) and a warm
+model connection for the late replies. Measured on the real model: 107 of 108 replies in the right
+language over 3 repeats; the one miss was Hindi-only mode saying a quoted English closing line.
+**Not verified on a real call:** the new reply timing (expected: the 3.0s waits become at most 1.5s, so
+about 2.1s instead of 3.6s at worst), and how the pinned voice sounds for Hindi-only and Hinglish.
+`turns.jsonl` stopped being written after 2026-11-03, so the Nov 7 calls had no timing; not
+investigated. Not committed until the end of this entry's session.

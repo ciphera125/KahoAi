@@ -364,3 +364,11 @@ def test_malformed_questions_are_dropped_rather_than_passed_to_a_live_call():
                               {"key": "ok_one", "label": "Fine", "kind": "text"}]}
     out = studio_link._clean_config(raw)
     assert [f["key"] for f in out["capture_fields"]] == ["ok_one"]
+
+
+def test_the_agents_language_reaches_the_call_and_a_bad_one_does_not():
+    base = {"agent_id": "ag_1", "org_id": None, "name": "", "prompt": None, "tools": [],
+            "opening_line": None, "max_secs": 600.0, "ring_secs": 40}
+    assert studio_link._clean_config({**base, "language": "hindi"})["language"] == "hindi"
+    assert studio_link._clean_config({**base, "language": "klingon"})["language"] == "auto"
+    assert studio_link._clean_config(base)["language"] == "auto"

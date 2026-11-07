@@ -34,6 +34,7 @@ from urllib.parse import parse_qs, quote
 import agents_store
 import aiohttp
 import call_outcomes
+import language
 import notice_audio
 import numbers_store
 import personas
@@ -343,9 +344,19 @@ async def answer(request: Request, token: str | None = Query(None)):
     apology = env("FAILURE_MESSAGE") or DEFAULT_APOLOGY
     stream_token = issue_stream({"caller": caller, "agent": agent, "max_secs": max_secs,
                                  "studio_agent": config["agent_id"] if config else None,
-                                 "agent_config": config})
+                                 "agent_config": config,
+                                 "language": call_language(first("language"), config)})
     return Response(answer_xml(env("PUBLIC_HOST"), stream_token, apology),
                     media_type="text/xml")
+
+
+def call_language(requested: str | None, config: dict | None) -> str:
+    """The language mode for this call: the one the call was placed with, else its agent's,
+    else follow the caller. A value that is not one of the four modes is ignored rather
+    than obeyed or refused: it ends up inside the prompt, and a call must still ring."""
+    if isinstance(requested, str) and requested.strip().lower() in language.MODES:
+        return requested.strip().lower()
+    return language.clean_mode((config or {}).get("language"))
 
 
 MAX_WEBHOOK_BODY = 16 * 1024  # Plivo's form posts are well under 2KB
@@ -514,9 +525,13 @@ async def stream(websocket: WebSocket, stream: str | None = Query(None)):
         agent_config = agents_store.default_store().call_config(studio_agent)
     if agent_config:
         limit = min(limit, agent_config["max_secs"])
+    # Only passed when it is not the default, so a call with nothing to say about language
+    # is run exactly as it was before there was a choice.
+    chosen = language.clean_mode(call.get("language"))
+    extra = {"language": chosen} if chosen != language.DEFAULT else {}
     try:
         await _run_call(websocket, env("WEBHOOK_SECRET"), caller, persona_path, limit,
-                        agent_config=agent_config)
+                        agent_config=agent_config, **extra)
     finally:
         ws_limiter().release()
 
@@ -563,6 +578,7 @@ async def _run_call(
     persona_path: str | None,
     limit: float,
     agent_config: dict | None = None,
+    language: str = "auto",
 ) -> None:
     await websocket.accept()
 
@@ -643,6 +659,7 @@ async def _run_call(
         persona_text=persona_text_for_call(agent_config),
         tool_names=agent_config["tools"] if agent_config else None,
         opening_line=agent_config["opening_line"] if agent_config else None,
+        language_mode=language,
         capture_fields=(agent_config.get("capture_fields") if agent_config else None),
         save_answer=save_answer,
         run_tool=run_studio_tool,

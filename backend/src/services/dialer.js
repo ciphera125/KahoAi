@@ -48,10 +48,12 @@ const base = () => `${config.PUBLIC_SCHEME}://${config.PUBLIC_HOST}`;
 // of the URL entirely is a planned, separately tested voice-server change (see
 // HANDOFF): until server.py accepts the signature alone, dropping it here would
 // make every call 403 against the running server.
-export function answerUrl({ agent = "default", to, maxSecs, studioAgent }) {
+export function answerUrl({ agent = "default", to, maxSecs, studioAgent, language }) {
   return `${base()}/answer?token=${encodeURIComponent(config.WEBHOOK_SECRET || "")}&agent=${encodeURIComponent(agent)}`
     + `&peer=${encodeURIComponent(to)}&max=${Number(maxSecs)}`
-    + (studioAgent ? `&studio_agent=${encodeURIComponent(studioAgent)}` : "");
+    + (studioAgent ? `&studio_agent=${encodeURIComponent(studioAgent)}` : "")
+    // Part of the signed address, so nothing between here and the phone server can change it.
+    + (language ? `&language=${encodeURIComponent(language)}` : "");
 }
 
 export function hangupUrl({ to, studioAgent }) {

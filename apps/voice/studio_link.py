@@ -23,6 +23,7 @@ import os
 import re
 
 import httpx
+import language
 from loguru import logger
 
 DEFAULT_TIMEOUT_SECS = 1.5
@@ -125,6 +126,8 @@ def _clean_config(raw) -> dict | None:
                 "max_secs": float(raw["max_secs"]), "ring_secs": int(raw["ring_secs"]),
                 "capture_fields": _clean_fields(raw.get("capture_fields")),
                 "custom_tools": _clean_custom_tools(raw.get("custom_tools")),
+                # Always one of the four modes: it ends up inside the prompt the model reads.
+                "language": language.clean_mode(raw.get("language")),
                 "confirm_answers": raw.get("confirm_answers") is not False,
                 "version": int(version) if version is not None else None}
     except (KeyError, TypeError, ValueError):

@@ -19,13 +19,14 @@ export default function AgentDetail() {
   const [tools, setTools] = useState([]);
   const [limits, setLimits] = useState({ max_minutes: 30, ring_secs: [15, 60] });
   const [check, setCheck] = useState({ problems: [], can_publish: true });
+  const [languages, setLanguages] = useState([]);
   const [tab, setTab] = useState("prompt");
 
   const load = useCallback(async () => {
     try {
       const [a, p, t, cfg, c] = await Promise.all([get(`/api/agents/${agentId}`), get("/api/prompts"), get("/api/tools"),
         get("/api/config"), get(`/api/agents/${agentId}/check`)]);
-      setAgent(a); setPrompts(p.filter((x) => x.agent_id === a.id)); setTools(t); setLimits(cfg.limits); setCheck(c);
+      setAgent(a); setPrompts(p.filter((x) => x.agent_id === a.id)); setTools(t); setLimits(cfg.limits); setLanguages(cfg.languages ?? []); setCheck(c);
     } catch (e) { toast(e.message, true); navigate("/agents"); }
   }, [agentId, navigate, toast]);
   useEffect(() => { load(); }, [load]);
@@ -51,7 +52,7 @@ export default function AgentDetail() {
       </div>
       {tab === "prompt" && <PromptTab agent={agent} prompts={prompts} onChanged={load} />}
       {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} />}
-      {tab === "settings" && <SettingsTab agent={agent} limits={limits} onChanged={load} />}
+      {tab === "settings" && <SettingsTab agent={agent} limits={limits} languages={languages} onChanged={load} />}
       {tab === "questions" && <QuestionsTab agent={agent} onChanged={load} />}
       {tab === "versions" && <VersionsTab agent={agent} confirm={confirm} onChanged={load} />}
       {confirmNode}
@@ -384,23 +385,31 @@ function ToolsTab({ agent, tools, onChanged }) {
   );
 }
 
-function SettingsTab({ agent, limits, onChanged }) {
+function SettingsTab({ agent, limits, languages, onChanged }) {
   const toast = useToast();
   const s = agent.settings;
   const [opening, setOpening] = useState(s.opening_line || "");
   const [maxMin, setMaxMin] = useState(s.max_minutes);
   const [ring, setRing] = useState(s.ring_secs);
+  const [lang, setLang] = useState(s.language || "auto");
   const w = s.call_window || { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
   const [cw, setCw] = useState(w);
   const save = async () => {
     try {
-      await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw } });
+      await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw, language: lang } });
       toast("Saved as a draft. Publish it when you are ready."); onChanged();
     } catch (e) { toast(e.message, true); }
   };
   return (
     <div className="grid-side">
       <div className="card">
+        <div className="field"><label className="f">Language</label>
+          <select value={lang} onChange={(e) => setLang(e.target.value)}>
+            {languages.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
+          </select>
+          <span className="hint">{languages.find((l) => l.value === lang)?.hint}
+            {" "}You can still choose a different one for a single call on the Calls page.</span>
+        </div>
         <div className="field"><label className="f">Opening line</label><input value={opening} onChange={(e) => setOpening(e.target.value)} maxLength={200} placeholder="Leave empty to let the agent introduce itself" /></div>
         <div className="field"><label className="f">Longest call (minutes)</label><input type="number" value={maxMin} min={1} max={limits.max_minutes} onChange={(e) => setMaxMin(e.target.value)} /><span className="hint">Up to {limits.max_minutes} minutes on this server.</span></div>
         <div className="field"><label className="f">Ring for (seconds)</label><input type="number" value={ring} min={limits.ring_secs[0]} max={limits.ring_secs[1]} onChange={(e) => setRing(e.target.value)} /></div>

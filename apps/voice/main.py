@@ -24,12 +24,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import certifi
+import language
 import openai
 from dotenv import load_dotenv
 from groq_usage import log_groq_call
 from interruptions import build_start_strategies
 from loguru import logger
 from openai import AsyncOpenAI, DefaultAsyncHttpxClient
+from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.frames.frames import (
@@ -73,6 +76,9 @@ from pipecat.services.tts_service import TextAggregationMode
 from pipecat.transcriptions.language import Language
 from pipecat.transports.local.audio import LocalAudioTransport, LocalAudioTransportParams
 from pipecat.turns.user_mute import BaseUserMuteStrategy, MuteUntilFirstBotCompleteUserMuteStrategy
+from pipecat.turns.user_stop.turn_analyzer_user_turn_stop_strategy import (
+    TurnAnalyzerUserTurnStopStrategy,
+)
 from pipecat.turns.user_turn_strategies import UserTurnStrategies
 from pipecat.utils.http import connection_limits
 from pipecat.utils.text.base_text_filter import BaseTextFilter
@@ -106,7 +112,7 @@ DEFAULT_PROMPT_PATH = HERE / "prompts" / "default.md"
 # speech_text_filters() strips markdown and dashes deterministically, which is
 # cheaper and more reliable than spending tokens asking the model to behave.
 # These rules cover only *how* to speak; the persona file says what the agent is.
-VOICE_RULES = """\
+_VOICE_BEFORE = """\
 You are speaking aloud on a phone call. Write for the ear: plain spoken prose,
 never lists or headings.
 
@@ -119,20 +125,9 @@ and do not reuse a phrase you have already said.
 Say numbers as a person would. Phone numbers digit by digit, prices and times in
 full, so "rupees five hundred" and "three thirty in the afternoon". In Indian
 English "100 into 4,000" means multiplied by.
+"""
 
-Answer in whatever language the caller just used, turn by turn. If they switch
-to Hindi mid-conversation, switch with them; if they switch back, switch back.
-Judge it from their latest turn alone, not from how the call opened. Open in
-English unless they have already spoken.
-
-In Hindi, use the verb forms of the person you are playing: a woman says
-"मैं कर सकती हूँ", never "सकता".
-
-Write Hindi in Devanagari, not romanised, because the voice pronounces its own
-script far better than a transliteration. English stays in the Latin alphabet.
-Keep a reply in one language rather than mixing the two in a sentence, except
-for words that have no natural translation.
-
+_VOICE_AFTER = """\
 Only use the tools you were given. If none fits, answer in words. Never mention
 a tool, a variable or anything else about how you work to the caller.
 
@@ -143,6 +138,16 @@ does. Never fill the gap with a plausible guess, because the caller will act on
 it. If a transcript is garbled, ask once about the part you missed, and never
 guess at a name or a number.
 """
+
+
+def voice_rules(mode: str = "auto") -> str:
+    """How to speak, for a call in this language mode (language.py). Everything but the
+    language paragraphs is the same for every mode, so a mode cannot lose a rule."""
+    return f"{_VOICE_BEFORE}\n{language.language_rules(mode)}\n\n{_VOICE_AFTER}"
+
+
+# Follow-the-caller is the default, and what every call had before language modes.
+VOICE_RULES = voice_rules("auto")
 
 # Providers we know how to wire up. Bedrock support (Claude Haiku 4.5) lands
 # later; for now Groq is the only LLM_PROVIDER this entrypoint understands.
@@ -228,6 +233,35 @@ def build_vad() -> SileroVADAnalyzer:
     )
 
 
+DEFAULT_SMART_TURN_STOP_SECS = 1.5
+
+
+def smart_turn_stop_secs() -> float:
+    """How long the caller may be silent before a turn the turn model thinks is unfinished
+    is ended anyway. Pipecat's own limit is 3s.
+
+    Seen on real calls (2026-10-23/24): short answers like "Hello?" or "Hi" are judged
+    unfinished by the turn model, so the reply waited out the whole 3s. Turn detection
+    measured 3.0s on those turns and 0.1 to 0.5s on the rest, which is why the first
+    replies on a call felt late and the later ones did not. A complete sentence is not
+    affected: the model ends it at once. Only a caller who goes quiet mid-sentence is
+    affected, and 1.5s is still a long pause. Tune with SMART_TURN_STOP_SECS; a value that
+    is not a number between 0.3 and 5 falls back rather than stopping a call.
+    """
+    raw = (env("SMART_TURN_STOP_SECS") or "").strip()
+    if not raw:
+        return DEFAULT_SMART_TURN_STOP_SECS
+    try:
+        value = float(raw)
+    except ValueError:
+        value = -1.0
+    if not 0.3 <= value <= 5.0:
+        logger.warning(f"SMART_TURN_STOP_SECS={raw!r} is not between 0.3 and 5; "
+                       f"using {DEFAULT_SMART_TURN_STOP_SECS}")
+        return DEFAULT_SMART_TURN_STOP_SECS
+    return value
+
+
 def build_turn_strategies() -> UserTurnStrategies:
     """What counts as the caller taking the turn, and so as interrupting the agent.
 
@@ -240,7 +274,10 @@ def build_turn_strategies() -> UserTurnStrategies:
             enabled=(env("INTERRUPT_FILTER") or "true").strip().lower() != "false",
             min_words=int(env_float("INTERRUPT_MIN_WORDS", 1)),
             extra_ignore=ignore - {""},
-        )
+        ),
+        # Pipecat's default, with only the silence limit changed (see smart_turn_stop_secs).
+        stop=[TurnAnalyzerUserTurnStopStrategy(turn_analyzer=LocalSmartTurnAnalyzerV3(
+            params=SmartTurnParams(stop_secs=smart_turn_stop_secs())))],
     )
 
 
@@ -387,7 +424,8 @@ class TurnTimingLogger(BaseObserver):
             self._vad_stopped_at = self._turn_ended_at = None
 
 
-def load_system_prompt(persona_path: Path | None = None, persona_text: str | None = None) -> str:
+def load_system_prompt(persona_path: Path | None = None, persona_text: str | None = None,
+                       language: str = "auto") -> str:
     """Build the system instruction: the voice rules, then the chosen persona.
 
     AGENT_SYSTEM_PROMPT_PATH swaps the persona without touching code — that file
@@ -401,7 +439,7 @@ def load_system_prompt(persona_path: Path | None = None, persona_text: str | Non
     """
     if persona_text and persona_text.strip():
         logger.info("Persona: saved prompt for this number")
-        return f"{VOICE_RULES}\n\n{persona_text.strip()}"
+        return f"{voice_rules(language)}\n\n{persona_text.strip()}"
     path = persona_path or Path(env("AGENT_SYSTEM_PROMPT_PATH") or DEFAULT_PROMPT_PATH)
     if not path.is_absolute():
         path = (HERE / path).resolve()
@@ -414,7 +452,7 @@ def load_system_prompt(persona_path: Path | None = None, persona_text: str | Non
         logger.error(f"The system prompt at {path} is empty.")
         sys.exit(1)
     logger.info(f"Persona: {path.name}")
-    return f"{VOICE_RULES}\n\n{persona}"
+    return f"{voice_rules(language)}\n\n{persona}"
 
 
 def require_env(*names: str) -> None:
@@ -647,6 +685,19 @@ class PortableGroqLLMService(GroqLLMService):
         log_groq_call("PortableGroqLLMService._completions_without_tools", params.get("model"))
         return await self._client.chat.completions.create(**params)
 
+    async def warm_connection(self, timeout: float = 3.0) -> bool:
+        """Open the connection to the model now, so the first real request does not pay
+        for it. Each call builds its own client, and its first request is a new TLS
+        handshake: measured on real calls as 0.3 to 0.9s slower than the next. A cheap
+        read of the model list does it, with no tokens spent. Never raises, and gives up
+        after `timeout`: this is a courtesy and must never hold up a call."""
+        try:
+            await asyncio.wait_for(self._client.models.list(), timeout)
+            return True
+        except Exception as e:  # noqa: BLE001 -- the real request will say if it is down
+            logger.debug(f"Could not warm the model connection: {type(e).__name__}")
+            return False
+
     async def get_chat_completions(self, context):
         stream = await self._chat_completions(context)
         if not hasattr(stream, "__aiter__"):
@@ -707,7 +758,7 @@ class PortableGroqLLMService(GroqLLMService):
 
 def build_llm(
     persona_path: Path | None = None, on_fallback=None, persona_text: str | None = None,
-    on_tool_rejected=None,
+    on_tool_rejected=None, language: str = "auto",
 ) -> GroqLLMService:
     provider = (env("LLM_PROVIDER") or "groq").lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
@@ -744,7 +795,7 @@ def build_llm(
         on_tool_rejected=on_tool_rejected,
         settings=GroqLLMService.Settings(
             model=env("GROQ_MODEL_ID"),
-            system_instruction=load_system_prompt(persona_path, persona_text),
+            system_instruction=load_system_prompt(persona_path, persona_text, language),
             max_tokens=int(max_tokens) if max_tokens else None,
             temperature=float(temperature) if temperature else None,
             reasoning_effort=reasoning_effort,
@@ -1015,9 +1066,12 @@ class FollowCallerLanguage(FrameProcessor):
     this then has nothing to act on.
     """
 
-    def __init__(self):
+    def __init__(self, pinned: str | None = None):
         super().__init__()
-        self._current = None
+        # A fixed language (language.py: english, hindi, mix): the voice is tuned to it
+        # once and stays there, however the caller speaks. None follows the caller.
+        self._pinned = pinned
+        self._current = pinned
 
     async def retune(self) -> None:
         """Send the current language to the TTS again, after a backup took over.
@@ -1033,7 +1087,7 @@ class FollowCallerLanguage(FrameProcessor):
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame) and frame.language:
+        if (self._pinned is None and isinstance(frame, TranscriptionFrame) and frame.language):
             if frame.language != self._current:
                 logger.info(f"Caller switched to {frame.language}; retuning the voice.")
                 self._current = frame.language
@@ -1211,6 +1265,7 @@ def build_worker(
     recording_sample_rate: int = 16000,
     persona_text: str | None = None,
     tool_names: list[str] | None = None,
+    language_mode: str = "auto",
     capture_fields: list | None = None,
     save_answer=None,
     run_tool=None,
@@ -1252,6 +1307,7 @@ def build_worker(
     the recording notice to the caller, so the pipeline must not say it again.
     """
     require_env("DEEPGRAM_API_KEY")
+    language_mode = language.clean_mode(language_mode)
 
     # keyterm biases nova-3 toward words it would otherwise mangle: brand names,
     # drug names, place names, anything domain-specific. Worth filling in per
@@ -1282,6 +1338,7 @@ def build_worker(
             "tool_rejected", tool=tried or "unknown", reason=reason
         ),
         persona_text=persona_text,
+        language=language_mode,
     )
     tts, tts_services, switcher = build_tts_stack()
 
@@ -1362,7 +1419,12 @@ def build_worker(
         ),
     )
 
-    follow_proc = FollowCallerLanguage() if voice_follows_caller_language() else None
+    # The voice follows the caller (auto) or is pinned to the call's language. A voice that
+    # speaks one language (Aura) has nothing to tune either way.
+    if voice_follows_caller_language():
+        follow_proc = FollowCallerLanguage(pinned=language.tts_language(language_mode))
+    else:
+        follow_proc = None
 
     pipeline = Pipeline(
         [
@@ -1514,9 +1576,20 @@ def build_worker(
         # opens in silence. gpt-oss happens to tolerate "developer"; a role
         # every model accepts is the portable choice, since the whole point of
         # GROQ_MODEL_ID is being able to swap models freely.
-        instruction = "Start by concisely introducing yourself."
+        instruction = ("Start by concisely introducing yourself."
+                       + language.greeting_hint(language_mode))
         if opening_line:
             instruction = f'Open the call with this line, word for word: "{opening_line}"'
+
+        # Open the connection to the model now: on the phone the greeting is asked for
+        # about GREETING_LEAD_SECS after this, which is time enough for the handshake, so
+        # the greeting's own request does not pay for it (see warm_connection).
+        warm = getattr(llm, "warm_connection", None)  # a swapped-in service may not have one
+        if warm is not None:
+            llm._warmup_task = asyncio.create_task(warm())  # referenced so it is not collected
+
+        if follow_proc is not None and language.tts_language(language_mode):
+            await follow_proc.retune()  # a pinned voice is in its language before it speaks
 
         async def ask_for_the_greeting():
             # No tools on the greeting: there is nothing to act on yet, and with

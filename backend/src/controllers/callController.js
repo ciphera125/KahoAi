@@ -24,7 +24,8 @@ export async function place(req, res) {
   if (body.consent !== true) throw new ValidationError("confirm that this person has agreed to be called");
   let placed;
   try {
-    placed = await placeCall(org, { fromId: body.from_id, to: body.to, agentId: body.agent_id });
+    placed = await placeCall(org, { fromId: body.from_id, to: body.to, agentId: body.agent_id,
+      language: typeof body.language === "string" ? body.language : null });
   } catch (err) {
     if (err instanceof OutsideWindowError) return res.status(400).json({ error: err.message, code: err.code, call_window: err.window });
     throw err;

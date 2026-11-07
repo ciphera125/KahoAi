@@ -7,6 +7,7 @@ import { hexId } from "../utils/crypto.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { DEFAULT_TOOLS, KNOWN_TOOLS } from "./toolCatalog.js";
 import { KINDS as CAPTURE_KINDS } from "./answerValue.js";
+import { DEFAULT_LANGUAGE, LANGUAGE_CHOICES, LANGUAGE_VALUES } from "./language.js";
 import { fill as fillVariables, offered } from "./variables.js";
 import { standing as testStanding } from "./AgentTest.js";
 import { idForNumber as contactIdForNumber } from "./Contact.js";
@@ -32,7 +33,7 @@ export const RING_SECS = [15, 60];
 export const DEFAULT_WINDOW = { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
 export const MAX_CAPTURE_FIELDS = 20;
 export const DEFAULT_SETTINGS = { opening_line: "", max_minutes: 10, ring_secs: 40, call_window: DEFAULT_WINDOW,
-  capture_fields: [], confirm_answers: true };
+  capture_fields: [], confirm_answers: true, language: DEFAULT_LANGUAGE };
 
 /** "Payment date" -> "payment_date". A field needs a short machine name: it is what the
  * model names when it saves an answer, and what a prompt reads as {{answer.payment_date}}. */
@@ -123,6 +124,9 @@ function checkSettings(current, changes) {
       out.capture_fields = checkCaptureFields(value);
     } else if (key === "confirm_answers") {
       out.confirm_answers = Boolean(value);
+    } else if (key === "language") {
+      if (!LANGUAGE_VALUES.includes(value)) throw new ValidationError(`Language must be one of: ${LANGUAGE_CHOICES}`);
+      out.language = value;
     } else if (key === "opening_line") {
       out[key] = cleanText(value, MAX_OPENING, "opening line", false);
     } else if (key === "max_minutes" || key === "ring_secs") {
@@ -149,7 +153,8 @@ const SHOW = `SELECT a.*,
 const settingsOf = (stored) => ({ ...DEFAULT_SETTINGS, ...stored,
   call_window: { ...DEFAULT_WINDOW, ...stored?.call_window },
   capture_fields: Array.isArray(stored?.capture_fields) ? stored.capture_fields : [],
-  confirm_answers: stored?.confirm_answers !== false });
+  confirm_answers: stored?.confirm_answers !== false,
+  language: LANGUAGE_VALUES.includes(stored?.language) ? stored.language : DEFAULT_LANGUAGE });
 
 /** Whether the draft says anything the published version does not. Compared field by
  * field rather than by a timestamp, so re-saving the same words is not "a change". */
@@ -434,7 +439,8 @@ export async function callConfig(agentId, { caller = null } = {}) {
       tools: a.tools, opening_line: s.opening_line || null,
       custom_tools: await customToolsForCall(a.org_id, a.tools.filter((t) => !KNOWN_TOOLS.includes(t))),
       max_secs: s.max_minutes * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
-      capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, version: a.version };
+      capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, language: s.language,
+      version: a.version };
   } catch (err) {
     logger.error({ err: err.message }, "agent unreadable, the call uses the default persona");
     return null;

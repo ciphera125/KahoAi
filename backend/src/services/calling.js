@@ -1,5 +1,6 @@
 // Placing one call: every rule a call must pass, in one place, for a call from
 // the Calls page and for each row of a bulk call alike.
+import { LANGUAGE_CHOICES, LANGUAGE_VALUES } from "../models/language.js";
 import { config } from "../config/env.js";
 import * as Agent from "../models/Agent.js";
 import * as Call from "../models/Call.js";
@@ -21,7 +22,11 @@ export class OutsideWindowError extends HttpError {
 /** Dial `to` once from one of the organization's numbers, through an agent if
  * given. Throws (ValidationError, OutsideWindowError, or the dialler's 502)
  * when the call is not placed; a dial is never retried. */
-export async function placeCall(org, { fromId, to: raw, agentId, now = new Date() }) {
+export async function placeCall(org, { fromId, to: raw, agentId, language = null, now = new Date() }) {
+  // Chosen for this one call, over the agent's own. Empty means the agent's applies.
+  if (language && !LANGUAGE_VALUES.includes(language)) {
+    throw new ValidationError(`Language must be one of: ${LANGUAGE_CHOICES}`);
+  }
   const rows = await PhoneNumber.listPublic(org);
   const row = fromId ? rows.find((r) => r.id === fromId) : rows.find((r) => r.is_default);
   if (!row) throw new ValidationError("choose a number to call from");
@@ -42,7 +47,7 @@ export async function placeCall(org, { fromId, to: raw, agentId, now = new Date(
   if (missing.length) throw new ValidationError(`missing in the server settings: ${missing.join(", ")}`);
   const creds = await PhoneNumber.credentials(org, row.id);
   const maxSecs = dialer.resolveMaxDuration(agent ? agent.max_secs : null);
-  const answer = dialer.answerUrl({ to, maxSecs, studioAgent: agent?.agent_id });
+  const answer = dialer.answerUrl({ to, maxSecs, studioAgent: agent?.agent_id, language: language || undefined });
   await dialer.preflight(answer, creds.auth_token);
   const result = await dialer.dial({ authId: creds.auth_id, authToken: creds.auth_token, from: row.number, to, answer,
     hangup: dialer.hangupUrl({ to, studioAgent: agent?.agent_id }), maxSecs,
