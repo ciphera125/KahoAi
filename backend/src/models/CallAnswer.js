@@ -13,10 +13,12 @@ import { callConfig } from "./Agent.js";
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const say = (message, value = null) => ({ ok: false, value, message });
 
-/** The call's organization, and the contact whose number it was. */
+/** The call's organization, the agent that answered it, and the contact whose number it
+ * was. All three come from the call itself and nothing else: the request is the model's
+ * word, and a model can say anything. */
 async function whose(db, callId) {
   const { rows } = await db.query(
-    `SELECT c.org_id, c.peer,
+    `SELECT c.org_id, c.peer, c.agent_id,
        (SELECT cn.contact_id FROM contact_numbers cn
         WHERE cn.number = c.peer AND cn.org_id = c.org_id LIMIT 1) AS contact_id
      FROM calls c WHERE c.call_id = $1`, [callId]);
@@ -27,10 +29,15 @@ async function whose(db, callId) {
  * Save one answer. Always answers the agent with something it can say; never throws at a
  * live call. `confirmed` is the caller having heard the value read back and agreed.
  */
-export async function record(callId, { agent_id: agentId, field_key: fieldKey, said, turn, confirmed } = {}) {
+export async function record(callId, { field_key: fieldKey, said, turn, confirmed } = {}) {
   if (typeof callId !== "string" || !CALL_ID.test(callId)) return say("I could not save that. Please carry on.");
 
-  const config = await callConfig(agentId);
+  // Which agent's questions apply is the agent that answered this call. The voice service
+  // does not say, and nothing in the request is allowed to: an agent named in the body
+  // would let a call save into another agent's fields.
+  const call = await asSystem((db) => whose(db, callId));
+  if (!call?.agent_id) return say("I could not save that just now. Please carry on.");
+  const config = await callConfig(call.agent_id);
   const field = (config?.capture_fields ?? []).find((f) => f.key === fieldKey);
   if (!field) {
     // The model asked for a field this agent does not have: the same class of mistake as
@@ -52,7 +59,6 @@ export async function record(callId, { agent_id: agentId, field_key: fieldKey, s
   const idem = `${callId}:${field.key}:${Number.isFinite(Number(turn)) ? Number(turn) : 0}`;
 
   await asSystem(async (db) => {
-    const call = await whose(db, callId);
     await db.query(
       `INSERT INTO call_answers (org_id, call_id, contact_id, field_key, label, kind, value, raw_text, source, idem)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'tool_call', $9)

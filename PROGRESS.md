@@ -18,7 +18,7 @@ expected (that database has no `anon` role); everything else must be green.
 | 5 | The `{{` picker in the prompt editor | done | `59680d3` |
 | 6 | Custom API tools ("Call My API") | done | `8219771` |
 | 7 | Tool-call History tree | done | `3dd6fab` |
-| 8 | "Test this agent", with Publish gating | done (key needed for live use) | `bc01bb5` |
+| 8 | "Test this agent", with Publish gating | done (key needed for live use) | `794ba9d` |
 
 ## Already done before this run (committed)
 
@@ -191,6 +191,24 @@ expected (that database has no `anon` role); everything else must be green.
   `main.py`), so it can miss a problem only those rules cause. Said in the code, and here.
 - **No Groq key was copied into `backend/.env`.** The key sits in the voice service's `.env`;
   moving it is your call, not something I did on my own.
+
+## Final review (2026-11-08)
+
+**Found by the end-to-end run and fixed (test-first):**
+- **The capture tool never worked on a real call.** The voice service sends the field and the
+  words; the Studio read the agent from the request body, so every answer on a live call was
+  refused. Every test passed because each one supplied `agent_id` by hand. The Studio now takes
+  the agent from the call itself (and an agent named in the request is ignored, with a test).
+  This is the kind of bug only an end-to-end run finds, and it is why that run was worth doing.
+- A customer's own tool could be attached through the API but did not appear on the agent's Tools
+  tab, so it could not be attached from the page. It does now.
+- A prompt naming a custom tool that was not attached was told "there is no such tool in Kaho
+  AI", which was wrong. It is now told to attach it.
+- Groq's real wording for a refused tool is `attempted to call tool 'x'`; both parsers only
+  found the name through a fallback. Both read it directly now.
+
+**Pen-test of the new surfaces (CLAUDE.md: reported, not fixed).** 21 attacks run live against the
+Studio; 17 held. See the final report for the four that did not. Throwaway orgs were removed.
 
 ## Known limits / to revisit
 

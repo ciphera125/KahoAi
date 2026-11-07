@@ -38,9 +38,10 @@ describe("filling a prompt in before the call", () => {
     await b.patch(`/api/agents/${a.id}`).send({ settings: { capture_fields: [{ label: "Payment date", kind: "date" }] } });
     await publish(b, a.id);
     const callId = "44444444-4444-4444-4444-444444444444";
-    await internal("put", `/internal/v1/calls/${callId}`).send({ status: "answered", peer: "+919876543210", ours: OURS });
+    await internal("put", `/internal/v1/calls/${callId}`)
+      .send({ status: "answered", peer: "+919876543210", ours: OURS, agent_id: a.id });
     await internal("post", `/internal/v1/calls/${callId}/answers`)
-      .send({ agent_id: a.id, field_key: "payment_date", said: "2026-12-15", turn: 1, confirmed: true });
+      .send({ field_key: "payment_date", said: "2026-12-15", turn: 1, confirmed: true });
 
     const out = await fill(
       "Hello {{customer_name}}, about your {{detail.loan_amount}} loan, due {{answer.payment_date}}.",

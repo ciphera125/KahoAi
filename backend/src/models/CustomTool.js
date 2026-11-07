@@ -136,6 +136,17 @@ export async function namesFor(orgId) {
   return rows.map((r) => r.name);
 }
 
+/** {machine name: label}, so a prompt that names one can be told to attach it. Never
+ * throws: a check must not break saving. */
+export async function labelsFor(orgId) {
+  try {
+    const { rows } = await inOrg(orgId, (db) => db.query("SELECT name, label FROM custom_tools WHERE org_id = $1", [orgId]));
+    return Object.fromEntries(rows.map((r) => [r.name, r.label]));
+  } catch {
+    return {};
+  }
+}
+
 /** What the voice service is told: enough to offer the tool to the model, and nothing
  * that could be read out or leaked. No url, no headers. */
 export async function forCall(orgId, names) {

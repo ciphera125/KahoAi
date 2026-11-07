@@ -34,7 +34,7 @@ function toolsNamedIn(text) {
  * language, each naming what to do about it. An empty list means it is fine.
  * `knownVariables` are the {{...}} this agent can actually fill in: the questions it
  * saves ("answer.payment_date") and, later, the contact's own details. */
-export function promptProblems(text, attachedTools = [], knownVariables = []) {
+export function promptProblems(text, attachedTools = [], knownVariables = [], customLabels = {}) {
   const attached = new Set(attachedTools);
   const known = new Set(knownVariables);
   const problems = [];
@@ -47,7 +47,7 @@ export function promptProblems(text, attachedTools = [], knownVariables = []) {
 
   for (const name of toolsNamedIn(prose)) {
     if (attached.has(name)) continue;
-    const label = labelOf(name);
+    const label = labelOf(name) ?? customLabels[name] ?? null;
     problems.push({
       code: "unattached_tool",
       found: name,

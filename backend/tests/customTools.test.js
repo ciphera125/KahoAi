@@ -229,3 +229,46 @@ describe("an agent using one on a call", () => {
     expect(seen).toHaveLength(0);
   });
 });
+
+describe("a customer's own tool, from the agent's page", () => {
+  it("is listed beside the built-in ones, so it can be attached", async () => {
+    const b = await owner();
+    await make(b);
+    const r = await b.get("/api/tools");
+    const names = r.body.map((t) => t.name);
+    expect(names).toContain("end_call");
+    expect(names).toContain("check_order_status");
+    const own = r.body.find((t) => t.name === "check_order_status");
+    expect(own).toMatchObject({ label: "Check order status", ready: true, custom: true });
+    expect(own.description).toMatch(/where their order is/);
+  });
+
+  it("is not listed for another organization", async () => {
+    const b = await owner();
+    await make(b);
+    const other = await owner({ email: "zoya@other.in", organization: "Other" });
+    expect((await other.get("/api/tools")).body.map((t) => t.name)).not.toContain("check_order_status");
+  });
+
+  it("a prompt naming it before it is attached is told to attach it, not that it does not exist", async () => {
+    const b = await owner();
+    await make(b);
+    const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." })).body;
+    const saved = await b.patch(`/api/prompts/${a.active_prompt_id}`)
+      .send({ text: "When they ask about an order, use check_order_status." });
+    const [warning] = saved.body.warnings;
+    expect(warning.message).toContain("Check order status");
+    expect(warning.message).toMatch(/attach/i);
+    expect(warning.message).not.toMatch(/no such tool/i);
+  });
+
+  it("the same prompt is fine once it is attached", async () => {
+    const b = await owner();
+    await make(b);
+    const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." })).body;
+    await b.patch(`/api/agents/${a.id}`).send({ tools: ["end_call", "check_order_status"] });
+    const saved = await b.patch(`/api/prompts/${a.active_prompt_id}`)
+      .send({ text: "When they ask about an order, use check_order_status." });
+    expect(saved.body.warnings).toEqual([]);
+  });
+});

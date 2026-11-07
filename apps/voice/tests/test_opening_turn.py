@@ -216,6 +216,17 @@ def test_the_tool_name_is_read_from_the_generation_when_the_message_has_none():
     assert main.rejected_tool_name(e) == "get_tasks"
 
 
+def test_the_tool_name_is_read_from_the_wording_groq_really_uses():
+    # Seen live 2026-11-08, the real model against the real API, when a tool was asked for
+    # that was not in the request: the name is in quotes, not after "for tool".
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    e = openai.APIError(
+        "Tool call validation failed: tool call validation failed: attempted to call tool "
+        "'get_balance' which was not in request.tools",
+        request=req, body={"code": "tool_use_failed"})
+    assert main.rejected_tool_name(e) == "get_balance"
+
+
 def test_an_unnamed_rejection_and_an_unrelated_error_give_no_name():
     assert main.rejected_tool_name(tool_use_failed_without_a_name()) is None
     assert main.rejected_tool_name(other_error()) is None

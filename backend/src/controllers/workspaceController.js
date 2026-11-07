@@ -2,6 +2,7 @@ import { config } from "../config/env.js";
 import * as User from "../models/User.js";
 import * as Activity from "../models/Activity.js";
 import * as Workspace from "../models/Workspace.js";
+import * as CustomTool from "../models/CustomTool.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 import { MAX_MINUTES, MAX_PROMPT_CHARS, RING_SECS, TOOL_CATALOG } from "../models/Agent.js";
 import { resolveMaxDuration } from "../services/dialer.js";
@@ -40,8 +41,14 @@ export function settings(_req, res) {
     limits: { max_minutes: ceilingMinutes(), ring_secs: [...RING_SECS] } });
 }
 
-export function tools(_req, res) {
-  res.json(TOOL_CATALOG.map((t) => ({ ...t, ready: !t.needs || Boolean(config[t.needs]) })));
+/** Everything an agent can be given: the built-in tools, then this organization's own. */
+export async function tools(req, res) {
+  const own = await CustomTool.list(req.user.org_id);
+  res.json([
+    ...TOOL_CATALOG.map((t) => ({ ...t, ready: !t.needs || Boolean(config[t.needs]) })),
+    ...own.map((t) => ({ name: t.name, label: t.label, description: t.description || "Calls your own system.",
+      needs: null, ready: true, custom: true })),
+  ]);
 }
 
 export function providers(_req, res) {

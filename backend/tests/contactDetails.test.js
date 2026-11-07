@@ -13,7 +13,8 @@ async function onACall(b, { number = "+919876543210" } = {}) {
   const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." })).body;
   await b.patch(`/api/agents/${a.id}`).send({ tools: ["end_call", "look_up_contact"] });
   await publish(b, a.id);
-  await internal("put", `/internal/v1/calls/${CALL}`).send({ status: "answered", peer: number, ours: OURS });
+  await internal("put", `/internal/v1/calls/${CALL}`)
+    .send({ status: "answered", peer: number, ours: OURS, agent_id: a.id });
   return contact;
 }
 
@@ -44,7 +45,7 @@ describe("what the agent can look up about the person it is calling", () => {
     await b.patch(`/api/agents/${a.id}`).send({ settings: { capture_fields: [{ label: "Payment date", kind: "date" }] } });
     await publish(b, a.id);
     await internal("post", `/internal/v1/calls/${CALL}/answers`)
-      .send({ agent_id: a.id, field_key: "payment_date", said: "2026-12-15", turn: 1, confirmed: true });
+      .send({ field_key: "payment_date", said: "2026-12-15", turn: 1, confirmed: true });
     const r = await lookUp();
     expect(r.body.answers).toEqual({ payment_date: "2026-12-15" });
     expect(r.body.contact_id).toBeUndefined(); // nothing internal for the agent to read out

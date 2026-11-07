@@ -6,6 +6,7 @@ import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { cleanText } from "../utils/text.js";
 import { promptProblems, variablesOf } from "./promptCheck.js";
 import { KNOWN_TOOLS } from "./toolCatalog.js";
+import { labelsFor as customToolLabels } from "./CustomTool.js";
 
 // Every character is re-sent to the LLM on every turn, so a long prompt costs
 // time and tokens on all of them.
@@ -67,7 +68,8 @@ async function whatTheAgentCouldNotDo(db, orgId, promptId, text) {
   const { rows } = await db.query(
     `SELECT a.tools, a.settings FROM prompts p LEFT JOIN agents a ON a.id = p.agent_id AND a.org_id = p.org_id
      WHERE p.id = $1 AND p.org_id = $2`, [promptId, orgId]);
-  return promptProblems(text, rows[0]?.tools ?? KNOWN_TOOLS, variablesOf(rows[0]?.settings));
+  return promptProblems(text, rows[0]?.tools ?? KNOWN_TOOLS, variablesOf(rows[0]?.settings),
+    await customToolLabels(orgId));
 }
 
 /** Inside a transaction: a new prompt with its first version. */

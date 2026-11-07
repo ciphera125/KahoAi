@@ -94,6 +94,18 @@ describe("testing an agent's draft", () => {
     expect(r.body.turns[0].reply).toBe("Sorry, I cannot check that.");
   });
 
+  it("reads the tool's name from the wording the real API uses", async () => {
+    // Seen live 2026-11-08: the name is in quotes, not after "for tool".
+    const b = await owner();
+    const a = (await newAgent(b)).body;
+    const real = Object.assign(new Error("Tool call validation failed: tool call validation failed: attempted to call tool 'get_balance' which was not in request.tools"),
+      { status: 400, code: "tool_use_failed" });
+    scripted(real, say("Sorry."));
+    const r = await test(b, a.id, { messages: ["What is my balance?"] });
+    expect(r.body.turns[0].tools[0].tool).toBe("get_balance");
+    expect(r.body.note).toContain("get_balance");
+  });
+
   it("answers a refused turn without tools, with the same line a real call sends", async () => {
     const b = await owner();
     const a = (await newAgent(b)).body;

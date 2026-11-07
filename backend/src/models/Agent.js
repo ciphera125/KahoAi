@@ -10,7 +10,7 @@ import { KINDS as CAPTURE_KINDS } from "./answerValue.js";
 import { fill as fillVariables, offered } from "./variables.js";
 import { standing as testStanding } from "./AgentTest.js";
 import { idForNumber as contactIdForNumber } from "./Contact.js";
-import { namesFor as customToolNames, forCall as customToolsForCall } from "./CustomTool.js";
+import { namesFor as customToolNames, forCall as customToolsForCall, labelsFor as customToolLabels } from "./CustomTool.js";
 import { promptProblems, variablesOf } from "./promptCheck.js";
 import { AGENT_ID, normalizeNumber } from "../utils/phone.js";
 import { cleanText } from "../utils/text.js";
@@ -261,7 +261,7 @@ async function draftOf(db, orgId, agentId) {
 /** Everything that would stop this draft going live. */
 async function draftProblems(db, orgId, agentId) {
   const draft = await draftOf(db, orgId, agentId);
-  return promptProblems(draft.prompt, draft.tools, variablesOf(draft.settings));
+  return promptProblems(draft.prompt, draft.tools, variablesOf(draft.settings), await customToolLabels(orgId));
 }
 
 /** What the page shows beside the Publish button. */

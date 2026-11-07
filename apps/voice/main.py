@@ -457,7 +457,8 @@ NO_TOOLS_LINE = "Answer in words only; do not call any tool."
 
 # Groq names the tool in the message ("parameters for tool capture_lead did not match
 # schema"); when it does not, the model's own refused output carries it.
-_TOOL_IN_MESSAGE = re.compile(r"\bfor tool ([A-Za-z0-9_-]+)")
+_TOOL_IN_MESSAGE = re.compile(
+    r"\bfor tool ([A-Za-z0-9_-]+)|attempted to call tool '([A-Za-z0-9_-]+)'")
 _TOOL_IN_GENERATION = re.compile(r'"name"\s*:\s*"([A-Za-z0-9_-]+)"')
 
 
@@ -467,7 +468,7 @@ def rejected_tool_name(exc: Exception) -> str | None:
     nothing, since this is what someone reads to find the cause."""
     found = _TOOL_IN_MESSAGE.search(str(exc))
     if found:
-        return found.group(1)
+        return found.group(1) or found.group(2)
     body = getattr(exc, "body", None)
     generation = body.get("failed_generation") if isinstance(body, dict) else None
     if isinstance(generation, str):

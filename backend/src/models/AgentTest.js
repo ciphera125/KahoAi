@@ -71,8 +71,9 @@ const model = () => injected ?? (config.GROQ_API_KEY ? groq : null);
 /** The tool the model reached for when the provider refused the turn, from its message
  * ("parameters for tool X") or the generation it refused. null if neither says. */
 export function refusedTool(error) {
-  const found = String(error?.message ?? "").match(/\bfor tool ([A-Za-z0-9_-]+)/);
-  if (found) return found[1];
+  const found = String(error?.message ?? "")
+    .match(/\bfor tool ([A-Za-z0-9_-]+)|attempted to call tool '([A-Za-z0-9_-]+)'/);
+  if (found) return found[1] ?? found[2];
   const generation = String(error?.generation ?? "").match(/"name"\s*:\s*"([A-Za-z0-9_-]+)"/);
   return generation ? generation[1] : null;
 }
