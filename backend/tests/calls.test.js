@@ -64,7 +64,12 @@ describe("what the voice service reports (internal API)", () => {
     expect(all).not.toMatch(/2345 6789|ABCDE1234F|9876543210/);
     expect(rows.find((r) => r.event === "turn").text).toBe("my aadhaar XXXX XXXX 0123");
     expect(rows.find((r) => r.event === "live").text).toBe("•••• ••");
-    expect(rows.find((r) => r.event === "tool")).toEqual({ event: "tool", text: null, name: "capture_lead" });
+    // Since the tool history (2026-11-08) what a tool was sent and answered is kept, so
+    // a failure can be explained. Phone numbers in it are masked like everything else.
+    const tool = rows.find((r) => r.event === "tool");
+    expect(tool.name).toBe("capture_lead");
+    expect(tool.text).toContain("XXXXXX3210");
+    expect(tool.text).toContain("saved");
   });
 
   it("refuses a bad call id, a non-list, and an oversized batch", async () => {
@@ -231,9 +236,9 @@ describe("tool calls endpoint", () => {
     ]);
     const r = await b.get("/api/calls/tools");
     expect(r.status).toBe(200);
-    expect(r.body.length).toBe(2);
-    expect(r.body[0].tool).toBe("end_call");
-    expect(r.body[1].tool).toBe("capture_lead");
+    // Grouped as call > turn > tool call since the history tree (2026-11-08).
+    const used = r.body.calls[0].turns.flatMap((t) => t.calls).map((c) => c.tool);
+    expect(used).toEqual(["capture_lead", "end_call"]);
   });
 });
 

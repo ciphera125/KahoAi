@@ -78,7 +78,8 @@ export async function transcriptCsv(req, res) {
 }
 
 export async function toolCallsList(req, res) {
-  res.json(await Call.toolCalls(req.user.org_id, { limit: req.query.limit }));
+  const { tool, status, agent_id: agentId, contact, from, to, limit } = req.query;
+  res.json(await Call.toolCalls(req.user.org_id, { tool, status, agentId, contact, from, to, limit }));
 }
 
 export async function activeCalls(req, res) {

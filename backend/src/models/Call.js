@@ -2,7 +2,8 @@
 import { createHash } from "node:crypto";
 import { asSystem, inOrg } from "../db/pool.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
-import { blankDigits, maskSensitive } from "../utils/masking.js";
+import { blankDigits, maskForAudit, maskSensitive } from "../utils/masking.js";
+import { TOOL_CATALOG } from "./toolCatalog.js";
 import { AGENT_ID, CALL_ID, normalizeNumber } from "../utils/phone.js";
 
 export const STATUSES = ["ringing", "answered", "declined", "no_answer", "failed"];
@@ -23,6 +24,8 @@ export function cleanOutcome(fields) {
     } else if (key === "request_uuid") { if (CALL_ID.test(String(value))) out.request_uuid = String(value); }
     else if (key === "agent_id") { if (AGENT_ID.test(String(value))) out.agent_id = String(value); }
     else if (key === "cause") out.cause = String(value).slice(0, 80);
+    // Which published version of the agent answered this call, for the history.
+    else if (key === "agent_version") { const n = Number(value); if (Number.isInteger(n) && n > 0) out.agent_version = n; }
     else if (key === "at") {
       const d = new Date(String(value));
       if (!Number.isNaN(d.getTime())) out.started_at = d.toISOString();
@@ -117,7 +120,7 @@ export async function ingest(callId, events) {
       if (!e || typeof e !== "object") continue;
       const event = String(e.event ?? "");
       const at = when(e.at);
-      let role = null, text = null, name = null;
+      let role = null, text = null, name = null, secs = null, turn = null, ok = null;
       let count = () => {}; // counters move only when the line is new: a resent batch must not double them
       if (event === "call_start") { call.started_at = at; call.has_transcript = true; }
       else if (event === "call_party") {
@@ -132,28 +135,43 @@ export async function ingest(callId, events) {
         text = maskSensitive(blankDigits(String(e.text ?? "").slice(0, 2000)));
       } else if (event === "tool") {
         name = String(e.name ?? "").slice(0, 40);
+        // What it was sent and what it answered, so the history can say why a call went
+        // wrong. Phone numbers go too: this is for showing whether a tool worked, not
+        // for keeping another copy of someone's number (tests/calls.test.js).
+        text = maskForAudit(String(e.text ?? "").slice(0, 4000));
+        secs = Number.isFinite(Number(e.seconds)) ? Number(e.seconds) : null;
+        turn = Number.isInteger(e.turn) ? e.turn : null;
+        ok = typeof e.ok === "boolean" ? e.ok : null;
         count = () => { call.lead = call.lead || leadSaved(e); };
       } else if (event === "tool_rejected") {
         // The tool the model tried to call when the provider refused the turn: the one
         // thing that says why a call went wrong (2026-11-07). "unknown" when it named none.
         name = String(e.tool ?? "unknown").slice(0, 40);
+        text = maskSensitive(String(e.reason ?? "").slice(0, 500));
+        ok = false;
+      } else if (event === "call_agent") {
+        // Which published version answered. Sent at the start of the call, since the
+        // hangup webhook is a separate request from Plivo and knows nothing about it.
+        const v = Number(e.version);
+        if (Number.isInteger(v) && v > 0) call.agent_version = v;
       } else if (event === "call_end") { call.ended_at = at; }
       else if (event === "summary") { call.summary = maskSensitive(String(e.summary ?? "").slice(0, 2000)); }
       if (SHOWN.has(event)) {
         call.has_transcript = true;
         const dedupe = createHash("md5").update([callId, at.getTime(), event, role ?? "", name ?? "", text ?? ""].join("|")).digest("hex");
-        const done = await db.query(`INSERT INTO call_events (call_id, at, event, role, text, name, org_id, dedupe)
-          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (dedupe) DO NOTHING`,
-        [callId, at, event, role, text, name, call.org_id, dedupe]);
+        const done = await db.query(`INSERT INTO call_events (call_id, at, event, role, text, name, org_id, dedupe, turn, secs, ok)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (dedupe) DO NOTHING`,
+        [callId, at, event, role, text, name, call.org_id, dedupe, turn, secs, ok]);
         if (done.rowCount) count();
       }
     }
     const duration = call.started_at && call.ended_at
       ? Math.round((new Date(call.ended_at) - new Date(call.started_at)) / 1000) : call.duration_secs;
     await db.query(`UPDATE calls SET started_at = $2, ended_at = $3, peer = $4, direction = $5, turns = $6,
-        caller_turns = $7, lead = $8, summary = $9, has_transcript = $10, duration_secs = $11, updated_at = now()
+        caller_turns = $7, lead = $8, summary = $9, has_transcript = $10, duration_secs = $11,
+        agent_version = coalesce($12, agent_version), updated_at = now()
       WHERE call_id = $1`, [callId, call.started_at, call.ended_at, call.peer, call.direction, call.turns,
-      call.caller_turns, call.lead, call.summary, call.has_transcript, duration]);
+      call.caller_turns, call.lead, call.summary, call.has_transcript, duration, call.agent_version ?? null]);
     await db.query("SELECT pg_notify('call_events', $1)", [callId]); // delivered on commit
   });
 }
@@ -219,14 +237,93 @@ export async function turns(orgId, callId) {
 }
 
 /** Tool calls across all calls, newest first. */
-export async function toolCalls(orgId, { limit = 50 } = {}) {
+/** One tool call, as a person reads it: what it was for, whether it worked, and only
+ * then the technical detail. A refused call (the model asked for a tool it does not
+ * have) is its own status, because it means something quite different from a failure. */
+function asToolCall(row, labels) {
+  const refused = row.event === "tool_rejected";
+  let sent = null, answer = null, why = null;
+  if (!refused) {
+    try {
+      const parsed = JSON.parse(row.text ?? "{}");
+      sent = parsed.args ?? null;
+      answer = parsed.result ?? null;
+      why = answer?.what_to_do ?? answer?.error ?? answer?.message ?? null;
+    } catch { /* kept as it was written */ }
+  } else {
+    why = `The agent tried to use '${row.name}', which is not one of this agent's tools.`;
+  }
+  return {
+    id: Number(row.id), tool: row.name, label: labels[row.name] ?? row.name,
+    status: refused ? "refused" : row.ok === false ? "failed" : "worked",
+    secs: row.secs === null || row.secs === undefined ? null : Math.round(row.secs * 1000) / 1000,
+    at: row.at?.toISOString() ?? null, why, sent, answer,
+    detail: refused ? row.text : null,
+  };
+}
+
+/**
+ * Every tool call, as Call > Turn > Tool call. Grouped here rather than in the page, so
+ * the same shape serves the history and one call's own view.
+ */
+export async function toolCalls(orgId, { limit = 50, tool = null, status = null, agentId = null,
+  contact = null, from = null, to = null } = {}) {
   const n = Math.min(Math.max(1, Number(limit) || 50), 200);
+  const where = ["e.org_id = $1", "e.event IN ('tool', 'tool_rejected')"];
+  const params = [orgId];
+  const at = () => "$" + params.length;
+  if (tool) { params.push(String(tool)); where.push(`e.name = ${at()}`); }
+  if (status === "failed") where.push("(e.ok IS FALSE OR e.event = 'tool_rejected')");
+  if (status === "worked") where.push("(e.ok IS NOT FALSE AND e.event = 'tool')");
+  if (agentId) { params.push(String(agentId)); where.push(`c.agent_id = ${at()}`); }
+  if (contact) {
+    params.push(`%${String(contact)}%`);
+    where.push(`(ct.name ILIKE ${at()} OR c.peer ILIKE ${at()})`);
+  }
+  if (from) { params.push(new Date(`${from}T00:00:00Z`)); where.push(`e.at >= ${at()}`); }
+  if (to) { params.push(new Date(`${to}T23:59:59Z`)); where.push(`e.at <= ${at()}`); }
+  params.push(n);
+  const limitAt = at();
+
   const { rows } = await inOrg(orgId, (db) => db.query(
-    `SELECT e.id, e.call_id, e.at, e.name, c.peer, c.agent_id FROM call_events e
+    `SELECT e.id, e.call_id, e.at, e.name, e.text, e.secs, e.ok, e.turn, e.event,
+       c.peer, c.agent_id, c.agent_version, c.started_at, a.name AS agent_name, ct.name AS contact_name
+     FROM call_events e
      JOIN calls c ON c.call_id = e.call_id AND c.org_id = e.org_id
-     WHERE e.event = 'tool' AND e.org_id = $1 ORDER BY e.id DESC LIMIT $2`, [orgId, n]));
-  return rows.map((r) => ({ id: Number(r.id), call_id: r.call_id, at: r.at?.toISOString() ?? null,
-    tool: r.name, peer: r.peer, agent_id: r.agent_id }));
+     LEFT JOIN agents a ON a.id = c.agent_id AND a.org_id = c.org_id
+     LEFT JOIN contact_numbers cn ON cn.number = c.peer AND cn.org_id = c.org_id
+     LEFT JOIN contacts ct ON ct.id = cn.contact_id AND ct.org_id = c.org_id
+     WHERE ${where.join(" AND ")} ORDER BY e.id DESC LIMIT ${limitAt}`, params));
+
+  // What the caller said on each turn, so a tool call can be read in context.
+  const callIds = [...new Set(rows.map((r) => r.call_id))];
+  const said = new Map();
+  if (callIds.length) {
+    const { rows: turns } = await inOrg(orgId, (db) => db.query(
+      `SELECT call_id, text, row_number() OVER (PARTITION BY call_id ORDER BY id) AS turn
+       FROM call_events WHERE org_id = $1 AND call_id = ANY($2) AND event = 'turn' AND role = 'user'`,
+      [orgId, callIds]));
+    for (const t of turns) said.set(`${t.call_id}:${t.turn}`, t.text);
+  }
+
+  const labels = Object.fromEntries(TOOL_CATALOG.map((t) => [t.name, t.label]));
+  const byCall = new Map();
+  for (const row of [...rows].reverse()) {
+    if (!byCall.has(row.call_id)) {
+      byCall.set(row.call_id, { call_id: row.call_id, peer: row.peer, contact_name: row.contact_name,
+        agent_id: row.agent_id, agent_name: row.agent_name, agent_version: row.agent_version,
+        started_at: row.started_at?.toISOString() ?? null, turns: [] });
+    }
+    const call = byCall.get(row.call_id);
+    const turn = row.turn ?? null;
+    let group = call.turns.find((t) => t.turn === turn);
+    if (!group) {
+      group = { turn, said: turn ? (said.get(`${row.call_id}:${turn}`) ?? null) : null, calls: [] };
+      call.turns.push(group);
+    }
+    group.calls.push(asToolCall(row, labels));
+  }
+  return { calls: [...byCall.values()].reverse() };
 }
 
 /** Transcript lines after `afterId` that the live view shows; tool lines carry only the tool's name. */

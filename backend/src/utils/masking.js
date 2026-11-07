@@ -18,3 +18,17 @@ export function maskSensitive(text) {
 /** Live captions are fragments, so a number split across them cannot be
  * recognised: every digit is blanked, as transcript.py does. */
 export const blankDigits = (text) => String(text ?? "").replace(/\p{Nd}/gu, "•");
+
+// A ten-digit Indian mobile, with or without +91. Used only for what a tool was sent
+// and what it answered: the history is there to show whether a tool worked, not to be
+// another copy of someone's number. The last four stay, so a wrong number is still
+// recognisable as the wrong one.
+const MOBILE = new RegExp(`(?<![\\p{Nd}])(?:\\+?91${SEP})?[6-9](?:${SEP}\\p{Nd}){9}(?!\\p{Nd})`, "gu");
+
+/** maskSensitive, plus phone numbers. For tool arguments and results. */
+export function maskForAudit(text) {
+  return maskSensitive(text).replace(MOBILE, (m) => {
+    const digits = m.replace(/\P{Nd}/gu, "");
+    return `XXXXXX${digits.slice(-4)}`;
+  });
+}

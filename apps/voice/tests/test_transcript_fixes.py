@@ -51,3 +51,23 @@ async def test_the_processor_fixes_final_and_interim_transcripts():
         await proc.process_frame(cls("Cairo AI से बात करनी है", "u1", "t"),
                                  FrameDirection.DOWNSTREAM)
     assert [f.text for f in fixed] == ["Kaho AI से बात करनी है"] * 2
+
+
+# --- whether a tool call worked, for the Studio's history --------------------
+
+
+def test_a_tool_that_did_what_was_asked_counts_as_working():
+    from transcript import tool_succeeded
+    assert tool_succeeded({"saved": True, "value": "2026-12-15"}) is True
+    assert tool_succeeded({"ok": True, "values": {}}) is True
+    assert tool_succeeded({"tasks": [], "count": 0}) is True
+    assert tool_succeeded("not a dict") is True
+
+
+def test_a_tool_that_could_not_is_marked_failed():
+    from transcript import tool_succeeded
+    assert tool_succeeded({"error": "the tool failed"}) is False
+    assert tool_succeeded({"saved": False, "what_to_do": "Read it back first."}) is False
+    assert tool_succeeded({"ok": False, "message": "no"}) is False
+    assert tool_succeeded({"added": False}) is False
+    assert tool_succeeded({"done": False}) is False

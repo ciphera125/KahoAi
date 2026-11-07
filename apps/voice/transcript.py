@@ -33,6 +33,21 @@ _MAX_HELD = 30
 _ANY_DIGIT = re.compile(r"\d")
 
 
+# Tools answer in their own shapes ({"saved": True}, {"ok": False, ...}, {"error": ...}),
+# so whether one worked is worked out in one place rather than guessed at by each reader
+# of the history.
+_FAILED_FLAGS = ("ok", "saved", "added", "moved", "done")
+
+
+def tool_succeeded(result) -> bool:
+    """False when the tool says it could not do what was asked."""
+    if not isinstance(result, dict):
+        return True
+    if "error" in result or "what_to_do" in result:
+        return False
+    return all(result.get(flag) is not False for flag in _FAILED_FLAGS)
+
+
 class CallTranscript:
     def __init__(self, call_id: str, directory: Path, sink=None):
         # The id comes from the network on a phone call, so it is not trusted to
@@ -125,6 +140,8 @@ class CallTranscript:
             "name": name,
             "text": json.dumps({"args": args, "result": result}, ensure_ascii=False, default=str),
             "seconds": round(seconds, 3),
+            "turn": self.caller_turns,
+            "ok": tool_succeeded(result),
         }
         if self._held:
             self._held.append(record)

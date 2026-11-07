@@ -655,7 +655,8 @@ async def _run_call(
         recording_upload=upload_recording,
     )
     if agent_config:
-        worker.transcript.event("call_agent", agent_id=agent_config["agent_id"])
+        worker.transcript.event("call_agent", agent_id=agent_config["agent_id"],
+                                version=agent_config.get("version"))
 
     async def cancel_pipeline() -> None:
         await worker.cancel(reason="maximum call duration")

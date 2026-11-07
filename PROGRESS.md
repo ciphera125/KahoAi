@@ -16,9 +16,9 @@ expected (that database has no `anon` role); everything else must be green.
 | 3 | Tasks table, Tasks page, four task tools | done | `c452beb` |
 | 4 | "Look Up Contact Details" tool | done | `2f1c298` |
 | 5 | The `{{` picker in the prompt editor | done | `59680d3` |
-| 6 | Custom API tools ("Call My API") | done | `STEP6` |
-| 7 | Tool-call History tree | in progress | |
-| 8 | "Test this agent", with Publish gating | todo | |
+| 6 | Custom API tools ("Call My API") | done | `8219771` |
+| 7 | Tool-call History tree | done | `STEP7` |
+| 8 | "Test this agent", with Publish gating | in progress | |
 
 ## Already done before this run (committed)
 
@@ -146,6 +146,26 @@ expected (that database has no `anon` role); everything else must be green.
 - `build_tool_schemas` gained `strict`: TOOLS_ENABLED naming an unknown tool still stops
   startup, but a Studio agent listing a custom tool that has since been deleted only logs
   and carries on, rather than refusing to answer the call.
+
+### Step 7
+
+- **The history is Call > Turn > Tool call, grouped on the server**, so one shape serves
+  the page and anything later. Plain reading first (what it was for, worked / did not
+  work / not one of its tools, how long); the raw request and reply sit behind a
+  "Show technical details" toggle.
+- **Three statuses, not two.** A refused call (the model asked for a tool it does not
+  have) is its own status: it means something quite different from a tool that failed,
+  and it is exactly the 2026-11-07 outage.
+- **Whether a tool worked is worked out in one place** (`tool_succeeded` in
+  `transcript.py`), because tools answer in their own shapes. The Studio never guesses.
+- **Ingest used to throw away what a tool was sent and answered.** It now keeps it,
+  plus the turn, the duration and whether it worked (migration 014). Phone numbers in it
+  are masked (`maskForAudit`): the history shows whether a tool worked, it is not another
+  copy of someone's number. Two older tests that documented the old behaviour were
+  updated to say so; neither was weakened.
+- **The agent version is sent by the call itself** (`call_agent` event), not by the hangup
+  webhook, which is a separate request from Plivo and knows nothing about it.
+- The old flat `/api/calls/tools` list is gone; its one consumer was this page.
 
 ## Known limits / to revisit
 

@@ -1,63 +1,131 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { get } from "../api.js";
-import { Icon, Modal, Spinner, useToast, whenShort } from "../ui.jsx";
+import { Icon, Spinner, useToast, whenShort } from "../ui.jsx";
 
+const STATUS_WORDS = { worked: "Worked", failed: "Did not work", refused: "Not one of its tools" };
+
+/**
+ * What the agents actually did, as a tree: a call, the turns in it, and the tools used
+ * on each turn. The plain reading comes first; the raw request and reply sit behind a
+ * toggle, because almost nobody needs them and they are noisy.
+ */
 export default function ToolCalls() {
   const toast = useToast();
   const [data, setData] = useState(null);
-  const [tool, setTool] = useState("");
-  const [view, setView] = useState(null);
-  useEffect(() => { get("/api/calls/tools?limit=100").then(setData).catch((e) => toast(e.message, true)); }, []);
-  const tools = useMemo(() => [...new Set((data || []).map((t) => t.tool))].sort(), [data]);
-  if (!data) return <Spinner />;
+  const [agents, setAgents] = useState([]);
+  const [filters, setFilters] = useState({ tool: "", status: "", agent_id: "", contact: "", from: "", to: "" });
+  const [technical, setTechnical] = useState(false);
 
-  const rows = tool ? data.filter((t) => t.tool === tool) : data;
+  const query = useMemo(() => {
+    const q = new URLSearchParams();
+    for (const [key, value] of Object.entries(filters)) if (value) q.set(key, value);
+    return q.toString();
+  }, [filters]);
+
+  const load = useCallback(() => {
+    get(`/api/calls/tools${query ? `?${query}` : ""}`).then(setData).catch((e) => toast(e.message, true));
+  }, [query, toast]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { get("/api/agents").then(setAgents).catch(() => {}); }, []);
+
+  const tools = useMemo(() => [...new Set(
+    (data?.calls ?? []).flatMap((c) => c.turns.flatMap((t) => t.calls.map((x) => x.tool))))].sort(), [data]);
+  const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
 
   return (
     <section>
       <header className="page">
-        <div><h1>Tool Calls</h1><div className="sub">Every tool an agent invoked during a call.</div></div>
-        {tools.length > 0 && (
-          <div className="head-actions">
-            <select value={tool} onChange={(e) => setTool(e.target.value)} style={{ width: 180 }}>
-              <option value="">All tools</option>
-              {tools.map((name) => <option key={name} value={name}>{name}</option>)}
-            </select>
-          </div>
-        )}
-      </header>
-      <div className="card list">
-        <div className="row head" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 120px" }}>
-          <span>Tool</span><span>Call</span><span>Contact</span><span>When</span>
+        <div><h1>Tools</h1><div className="sub">What your agents did on each call, and what happened when it did not work.</div></div>
+        <div className="head-actions">
+          <label className="switch-inline">
+            <input type="checkbox" checked={technical} onChange={(e) => setTechnical(e.target.checked)} />
+            Show technical details
+          </label>
         </div>
-        {rows.length === 0 && <div className="empty">No tool calls yet. Agents call tools like end_call, capture_lead and transfer_to_human during conversations.</div>}
-        {rows.map((t) => (
-          <div key={t.id} className="row" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) minmax(0,1fr) 120px" }}>
-            <span className="code">{t.tool}</span>
-            <button type="button" className="link ellip" onClick={() => setView(t)}>{t.call_id}</button>
-            <span className="ellip">{t.peer || "—"}</span>
-            <span className="muted">{t.at ? whenShort(t.at) : "—"}</span>
-          </div>
-        ))}
+      </header>
+
+      <div className="card" style={{ marginBottom: "var(--s3)" }}>
+        <div className="q-row" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", marginBottom: 0 }}>
+          <div className="field"><label className="f">Agent</label>
+            <select value={filters.agent_id} onChange={(e) => set({ agent_id: e.target.value })}>
+              <option value="">Any agent</option>
+              {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select></div>
+          <div className="field"><label className="f">Tool</label>
+            <select value={filters.tool} onChange={(e) => set({ tool: e.target.value })}>
+              <option value="">Any tool</option>
+              {tools.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select></div>
+          <div className="field"><label className="f">How it went</label>
+            <select value={filters.status} onChange={(e) => set({ status: e.target.value })}>
+              <option value="">Either way</option>
+              <option value="worked">Worked</option>
+              <option value="failed">Did not work</option>
+            </select></div>
+          <div className="field"><label className="f">Person</label>
+            <input value={filters.contact} placeholder="Name or number" onChange={(e) => set({ contact: e.target.value })} /></div>
+          <div className="field"><label className="f">From</label>
+            <input type="date" value={filters.from} onChange={(e) => set({ from: e.target.value })} /></div>
+          <div className="field"><label className="f">To</label>
+            <input type="date" value={filters.to} onChange={(e) => set({ to: e.target.value })} /></div>
+        </div>
       </div>
-      {view && <ToolCallCall callId={view.call_id} peer={view.peer} onClose={() => setView(null)} />}
+
+      {!data && <Spinner />}
+      {data?.calls.length === 0 && <div className="card"><p className="hint">
+        Nothing here yet. This fills up as agents use tools on calls.</p></div>}
+      {data?.calls.map((call) => <CallNode key={call.call_id} call={call} technical={technical} />)}
     </section>
   );
 }
 
-/** The transcript around a tool call, not the tool's own arguments or result:
- * those are never stored (they can carry the caller's PII), only its name. */
-function ToolCallCall({ callId, peer, onClose }) {
-  const [turns, setTurns] = useState(null);
-  useEffect(() => { get(`/api/calls/${encodeURIComponent(callId)}/transcript`).then(setTurns).catch(() => setTurns([])); }, [callId]);
+function CallNode({ call, technical }) {
+  const [open, setOpen] = useState(true);
+  const counts = call.turns.flatMap((t) => t.calls);
+  const failed = counts.filter((c) => c.status !== "worked").length;
   return (
-    <Modal title={peer || "Call"} onClose={onClose} wide>
-      <div className="chat" style={{ maxHeight: "60vh", border: "1px solid var(--border)", borderRadius: "var(--r-md)" }}>
-        {!turns && <div className="hint">Loading…</div>}
-        {turns && turns.length === 0 && <div className="hint">Nothing was said on this call.</div>}
-        {turns?.map((t, i) => <div key={i} className={`msg ${t.role}`}>{t.text}<time>{t.at ? new Date(t.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</time></div>)}
+    <div className="card" style={{ marginBottom: "var(--s3)" }}>
+      <button className="tree-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className={`twist${open ? " open" : ""}`}><Icon name="chevron" /></span>
+        <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
+          <b>{call.contact_name || call.peer || "Unknown caller"}</b>
+          <div className="hint">
+            {[call.agent_name && `${call.agent_name}${call.agent_version ? ` v${call.agent_version}` : ""}`,
+              call.started_at && whenShort(call.started_at),
+              `${counts.length} tool call${counts.length === 1 ? "" : "s"}`,
+              failed ? `${failed} did not work` : null].filter(Boolean).join(" · ")}
+          </div>
+        </div>
+      </button>
+      {open && call.turns.map((turn, i) => (
+        <div key={i} className="tree-turn">
+          <div className="hint tree-said">
+            {turn.turn ? <>Turn {turn.turn}{turn.said ? <> — they said “{turn.said}”</> : null}</> : "Outside any turn"}
+          </div>
+          {turn.calls.map((c) => <ToolNode key={c.id} call={c} technical={technical} />)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ToolNode({ call, technical }) {
+  return (
+    <div className={`tree-tool ${call.status}`}>
+      <div className="tree-tool-head">
+        <b>{call.label}</b>
+        <span className={`pill ${call.status === "worked" ? "live" : "muted"}`}>{STATUS_WORDS[call.status]}</span>
+        {call.secs !== null && <span className="hint">{call.secs}s</span>}
       </div>
-      <div className="actions"><a className="ghost" href={`/api/calls/${encodeURIComponent(callId)}/transcript.csv`} download><Icon name="download" />Download CSV</a></div>
-    </Modal>
+      {call.why && <div className="hint">{call.why}</div>}
+      {technical && (
+        <div className="answers" style={{ marginTop: 6 }}>
+          <div className="answer-line"><span className="muted">Tool</span><code>{call.tool}</code></div>
+          {call.sent && <div className="answer-line"><span className="muted">Sent</span><code>{JSON.stringify(call.sent)}</code></div>}
+          {call.answer && <div className="answer-line"><span className="muted">Answer</span><code>{JSON.stringify(call.answer)}</code></div>}
+          {call.detail && <div className="answer-line"><span className="muted">Error</span><code>{call.detail}</code></div>}
+        </div>
+      )}
+    </div>
   );
 }
