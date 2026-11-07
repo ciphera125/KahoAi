@@ -32,6 +32,23 @@ beforeAll(async () => {
 afterAll(() => new Promise((r) => fake.close(r)));
 beforeEach(async () => { await freshDb(); fakeLog.length = 0; });
 
+describe("a refused tool call is kept, so the cause is visible afterwards", () => {
+  it("stores the tool the model tried to call", async () => {
+    // 2026-11-07, call db32d982: Groq refused the turn and nothing recorded which tool
+    // the model reached for, so the cause had to be guessed from the prompt.
+    await events("call-rejected-1", [{ event: "tool_rejected", tool: "get_tasks",
+      reason: "Tool call validation failed", at: T }]);
+    const { rows } = await db.query("SELECT event, name FROM call_events WHERE call_id = $1", ["call-rejected-1"]);
+    expect(rows).toEqual([{ event: "tool_rejected", name: "get_tasks" }]);
+  });
+
+  it("stores one even when the error named no tool", async () => {
+    await events("call-rejected-2", [{ event: "tool_rejected", tool: "unknown", reason: "x", at: T }]);
+    const { rows } = await db.query("SELECT name FROM call_events WHERE call_id = $1", ["call-rejected-2"]);
+    expect(rows).toEqual([{ name: "unknown" }]);
+  });
+});
+
 describe("transcript writes are idempotent", () => {
   it("the same batch twice leaves identical lines and counters", async () => {
     await events("call-idem-1", batch());

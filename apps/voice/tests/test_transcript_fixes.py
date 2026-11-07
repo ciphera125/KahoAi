@@ -28,6 +28,17 @@ def test_bengali_letters_become_the_devanagari_ones():
     assert normalize_transcript("আমি") == "आमि"
 
 
+def test_other_indian_scripts_the_recogniser_cannot_hear_become_devanagari_too():
+    # 2026-11-07, call db32d982: "నాట్ రూమ్ వర్మ్ అండి" (Telugu) reached the model, which then
+    # called capture_lead on it. The multilingual model has no Telugu; it is a mis-script.
+    assert normalize_transcript("నాట్") == "नाट्"
+    assert normalize_transcript("ಹಲೋ") == "हलो"      # Kannada
+    assert normalize_transcript("ਹੈਲੋ") == "हैलो"      # Gurmukhi
+    assert normalize_transcript("હેલો") == "हेलो"      # Gujarati
+    assert normalize_transcript("നമസ്തേ") == "नमस्ते"   # Malayalam
+    assert normalize_transcript("Hello, कैसे हैं") == "Hello, कैसे हैं"
+
+
 async def test_the_processor_fixes_final_and_interim_transcripts():
     fixed = []
     proc = NormalizeTranscripts()

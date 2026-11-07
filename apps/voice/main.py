@@ -110,9 +110,11 @@ VOICE_RULES = """\
 You are speaking aloud on a phone call. Write for the ear: plain spoken prose,
 never lists or headings.
 
-Keep each turn to one or two sentences. Say the most useful thing and stop. Do
-not open with filler like "Sure" or "Got it", and do not reuse a phrase you have
-already said.
+Keep each turn to one or two sentences. Say the most useful thing and stop.
+Sound like a person, not a script: contractions, everyday words, and a brief
+natural acknowledgement ("Right", "Okay", "Achha", "Haan ji") when it fits, never
+the same one twice in a row. React to what the caller just said before moving on,
+and do not reuse a phrase you have already said.
 
 Say numbers as a person would. Phone numbers digit by digit, prices and times in
 full, so "rupees five hundred" and "three thirty in the afternoon". In Indian
@@ -123,10 +125,16 @@ to Hindi mid-conversation, switch with them; if they switch back, switch back.
 Judge it from their latest turn alone, not from how the call opened. Open in
 English unless they have already spoken.
 
+In Hindi, use the verb forms of the person you are playing: a woman says
+"मैं कर सकती हूँ", never "सकता".
+
 Write Hindi in Devanagari, not romanised, because the voice pronounces its own
 script far better than a transliteration. English stays in the Latin alphabet.
 Keep a reply in one language rather than mixing the two in a sentence, except
 for words that have no natural translation.
+
+Only use the tools you were given. If none fits, answer in words. Never mention
+a tool, a variable or anything else about how you work to the caller.
 
 Everything you say must come from these instructions or from what the caller
 just told you, and those facts are yours to give freely. Anything else, a price,
@@ -438,6 +446,46 @@ class DeepgramSTTService(PipecatDeepgramSTTService):
         self._connection_task = self.create_task(self._connection_handler())
 
 
+# What the caller hears when the model came back with nothing at all (2026-11-07, call
+# db32d982: filler, then the failure apology, over a reply that was simply empty).
+EMPTY_REPLY_LINE = "Sorry, could you say that once more?"
+
+# Sent with the retry after Groq refused a tool call. Without it the model reaches for
+# the same tool again (2026-11-07, call db32d982: a prompt named four tools the agent
+# did not have, and every retry was refused the same way), so the turn is lost twice.
+NO_TOOLS_LINE = "Answer in words only; do not call any tool."
+
+# Groq names the tool in the message ("parameters for tool capture_lead did not match
+# schema"); when it does not, the model's own refused output carries it.
+_TOOL_IN_MESSAGE = re.compile(r"\bfor tool ([A-Za-z0-9_-]+)")
+_TOOL_IN_GENERATION = re.compile(r'"name"\s*:\s*"([A-Za-z0-9_-]+)"')
+
+
+def rejected_tool_name(exc: Exception) -> str | None:
+    """The tool the model tried to call on a refused turn, for the log and the
+    transcript. None when the error names none: a guess here would be worse than
+    nothing, since this is what someone reads to find the cause."""
+    found = _TOOL_IN_MESSAGE.search(str(exc))
+    if found:
+        return found.group(1)
+    body = getattr(exc, "body", None)
+    generation = body.get("failed_generation") if isinstance(body, dict) else None
+    if isinstance(generation, str):
+        found = _TOOL_IN_GENERATION.search(generation)
+        if found:
+            return found.group(1)
+    return None
+
+
+def _spoken_chunk(text: str):
+    from openai.types.chat import ChatCompletionChunk
+    from openai.types.chat.chat_completion_chunk import Choice, ChoiceDelta
+
+    return ChatCompletionChunk(
+        id="kaho-empty-reply", object="chat.completion.chunk", created=int(time.time()),
+        model="kaho", choices=[Choice(index=0, delta=ChoiceDelta(content=text, role="assistant"))])
+
+
 class PortableGroqLLMService(GroqLLMService):
     """Groq, with message roles normalised to the ones every model accepts.
 
@@ -480,6 +528,7 @@ class PortableGroqLLMService(GroqLLMService):
         fallback_timeout_secs: float = DEFAULT_FALLBACK_TIMEOUT_SECS,
         request_timeout_secs: float = DEFAULT_REQUEST_TIMEOUT_SECS,
         on_fallback=None,
+        on_tool_rejected=None,
         **kwargs,
     ):
         # Read by create_client(), which the base __init__ calls below.
@@ -488,6 +537,7 @@ class PortableGroqLLMService(GroqLLMService):
         self._fallback_model = fallback_model
         self._fallback_timeout_secs = fallback_timeout_secs
         self._on_fallback = on_fallback
+        self._on_tool_rejected = on_tool_rejected
 
     def create_client(self, api_key=None, base_url=None, organization=None, project=None, **kwargs):
         # Same construction as the base class (pipecat.services.openai.base_llm),
@@ -537,20 +587,37 @@ class PortableGroqLLMService(GroqLLMService):
         them twice, so the error is raised as before.
         """
         spoke = False
+        produced = False  # words or a tool call came back, so there is something to act on
+
+        def note(chunk):
+            nonlocal spoke, produced
+            choices = getattr(chunk, "choices", None)
+            if choices:
+                delta = choices[0].delta
+                if getattr(delta, "content", None):
+                    spoke = produced = True
+                elif getattr(delta, "tool_calls", None):
+                    produced = True
+
         try:
             async for chunk in stream:
-                choices = getattr(chunk, "choices", None)
-                if choices and getattr(choices[0].delta, "content", None):
-                    spoke = True
+                note(chunk)
                 yield chunk
         except openai.APIError as e:
             if spoke or not self._rejected_tool_call(e):
                 raise
-            logger.warning(f"Groq rejected a tool call ({safe_reason(e)}); answering this turn "
-                           "again without tools")
+            tried = rejected_tool_name(e)
+            reason = safe_reason(e)
+            logger.warning(
+                f"Groq refused the tool call the model tried"
+                f"{f' ({tried})' if tried else ''}: {reason}. Answering this turn in words."
+            )
+            if self._on_tool_rejected:
+                self._on_tool_rejected(tried, reason)
             retry = await self._completions_without_tools(context)
             try:
                 async for chunk in retry:
+                    note(chunk)
                     yield chunk
             finally:
                 if hasattr(retry, "close"):
@@ -558,6 +625,9 @@ class PortableGroqLLMService(GroqLLMService):
         finally:
             if hasattr(stream, "close"):
                 await stream.close()
+        if not produced:
+            logger.warning("The model answered with nothing; asking the caller to repeat")
+            yield _spoken_chunk(EMPTY_REPLY_LINE)
 
     async def _completions_without_tools(self, context):
         adapter = self.get_llm_adapter()
@@ -570,6 +640,9 @@ class PortableGroqLLMService(GroqLLMService):
         )
         params.pop("tools", None)
         params.pop("tool_choice", None)
+        messages = list(params.get("messages") or [])
+        messages.append({"role": "system", "content": NO_TOOLS_LINE})
+        params["messages"] = messages
         log_groq_call("PortableGroqLLMService._completions_without_tools", params.get("model"))
         return await self._client.chat.completions.create(**params)
 
@@ -632,7 +705,8 @@ class PortableGroqLLMService(GroqLLMService):
 
 
 def build_llm(
-    persona_path: Path | None = None, on_fallback=None, persona_text: str | None = None
+    persona_path: Path | None = None, on_fallback=None, persona_text: str | None = None,
+    on_tool_rejected=None,
 ) -> GroqLLMService:
     provider = (env("LLM_PROVIDER") or "groq").lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
@@ -666,6 +740,7 @@ def build_llm(
             else PortableGroqLLMService.DEFAULT_REQUEST_TIMEOUT_SECS
         ),
         on_fallback=on_fallback,
+        on_tool_rejected=on_tool_rejected,
         settings=GroqLLMService.Settings(
             model=env("GROQ_MODEL_ID"),
             system_instruction=load_system_prompt(persona_path, persona_text),
@@ -685,11 +760,27 @@ _BRAND = re.compile(
 )
 
 
+# Indian scripts whose letters sit in the same order as Devanagari's, a fixed distance
+# away. The multilingual model hears no Bengali, Gurmukhi, Gujarati, Odia, Telugu, Kannada
+# or Malayalam, so text in them is Hindi or English mis-scripted; Tamil's layout differs.
+_SHIFTS = ((0x0980, 0x09FF, 0x80), (0x0A00, 0x0A7F, 0x100), (0x0A80, 0x0AFF, 0x180),
+           (0x0B00, 0x0B7F, 0x200), (0x0C00, 0x0C7F, 0x300), (0x0C80, 0x0CFF, 0x380),
+           (0x0D00, 0x0D7F, 0x400))
+
+
+def _to_devanagari(c: str) -> str:
+    code = ord(c)
+    for low, high, shift in _SHIFTS:
+        if low <= code <= high:
+            return chr(code - shift)
+    return c
+
+
 def normalize_transcript(text: str) -> str:
     """Fix what nova-3 predictably gets wrong before the model reads it: the brand
     name, and Bengali letters for Hindi words (its multilingual mode has no
     Bengali, so they are always a mis-script; the two blocks share a layout)."""
-    text = "".join(chr(ord(c) - 0x80) if "\u0981" <= c <= "\u09ff" else c for c in text)
+    text = "".join(_to_devanagari(c) for c in text)
     return _BRAND.sub("Kaho AI", text)
 
 
@@ -1180,6 +1271,9 @@ def build_worker(
         persona_path,
         on_fallback=lambda primary, backup, reason: transcript.event(
             "llm_fallback", primary=primary, to=backup, reason=reason
+        ),
+        on_tool_rejected=lambda tried, reason: transcript.event(
+            "tool_rejected", tool=tried or "unknown", reason=reason
         ),
         persona_text=persona_text,
     )

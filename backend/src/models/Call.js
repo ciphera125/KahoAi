@@ -90,7 +90,8 @@ export const SUCCESS_SQL = `((${STATUS_SQL}) = 'answered' AND (caller_turns >= $
 
 
 export const MAX_BATCH = 500;
-const SHOWN = new Set(["call_start", "recording_notice_played", "live", "turn", "tool", "filler_spoken", "call_failed", "call_end"]);
+const SHOWN = new Set(["call_start", "recording_notice_played", "live", "turn", "tool", "tool_rejected",
+  "filler_spoken", "call_failed", "call_end"]);
 
 const when = (raw) => {
   const d = raw ? new Date(String(raw)) : new Date();
@@ -132,6 +133,10 @@ export async function ingest(callId, events) {
       } else if (event === "tool") {
         name = String(e.name ?? "").slice(0, 40);
         count = () => { call.lead = call.lead || leadSaved(e); };
+      } else if (event === "tool_rejected") {
+        // The tool the model tried to call when the provider refused the turn: the one
+        // thing that says why a call went wrong (2026-11-07). "unknown" when it named none.
+        name = String(e.tool ?? "unknown").slice(0, 40);
       } else if (event === "call_end") { call.ended_at = at; }
       else if (event === "summary") { call.summary = maskSensitive(String(e.summary ?? "").slice(0, 2000)); }
       if (SHOWN.has(event)) {

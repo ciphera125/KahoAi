@@ -112,6 +112,7 @@ class Completions:
 def service(monkeypatch, completions):
     svc = object.__new__(main.PortableGroqLLMService)
     svc._fallback_model, svc._fallback_timeout_secs, svc._on_fallback = None, 3.0, None
+    svc._on_tool_rejected = None
     svc._settings = SimpleNamespace(model="openai/gpt-oss-20b", system_instruction="x")
     svc._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     svc._name = "GroqLLMService#test"
@@ -167,6 +168,77 @@ async def test_the_retry_happens_once(monkeypatch):
     with pytest.raises(openai.APIError):
         await drain(await svc.get_chat_completions(None))
     assert len(comp.params) == 2
+
+
+async def test_a_retry_that_says_nothing_still_gets_a_spoken_reply(monkeypatch):
+    # 2026-11-07, call db32d982: the retry came back empty and the caller heard filler, then the
+    # failure apology. An empty answer to a caller is turned into a short ask to repeat.
+    comp = Completions(Stream([chunk(reasoning="thinking")], error=tool_use_failed()),
+                       Stream([chunk(reasoning="still thinking")]))
+    svc = service(monkeypatch, comp)
+    got = await drain(await svc.get_chat_completions(None))
+    spoken = [c.choices[0].delta.content for c in got if c.choices[0].delta.content]
+    assert spoken == [main.EMPTY_REPLY_LINE]
+
+
+async def test_a_reply_with_words_is_not_given_the_fallback(monkeypatch):
+    comp = Completions(Stream([chunk(content="Hello.")]))
+    svc = service(monkeypatch, comp)
+    got = await drain(await svc.get_chat_completions(None))
+    assert [c.choices[0].delta.content for c in got] == ["Hello."]
+
+
+async def test_a_tool_call_without_words_is_not_given_the_fallback(monkeypatch):
+    call = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(
+        content=None, reasoning=None, tool_calls=[object()]))], usage=None, model="m")
+    comp = Completions(Stream([call]))
+    svc = service(monkeypatch, comp)
+    got = await drain(await svc.get_chat_completions(None))
+    assert all(not c.choices[0].delta.content for c in got)
+
+
+def tool_use_failed_without_a_name(generation=None):
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    body = {"code": "tool_use_failed", "type": "invalid_request_error"}
+    if generation is not None:
+        body["failed_generation"] = generation
+    return openai.APIError("Tool call validation failed", request=req, body=body)
+
+
+def test_the_tool_the_model_tried_to_call_is_read_from_the_error():
+    # 2026-11-07, call db32d982: four tool names the agent never had were in its prompt,
+    # and nothing recorded which one the model reached for. Groq names it in the message.
+    assert main.rejected_tool_name(tool_use_failed()) == "capture_lead"
+
+
+def test_the_tool_name_is_read_from_the_generation_when_the_message_has_none():
+    e = tool_use_failed_without_a_name('{"name": "get_tasks", "arguments": {"range": "monday"}}')
+    assert main.rejected_tool_name(e) == "get_tasks"
+
+
+def test_an_unnamed_rejection_and_an_unrelated_error_give_no_name():
+    assert main.rejected_tool_name(tool_use_failed_without_a_name()) is None
+    assert main.rejected_tool_name(other_error()) is None
+
+
+async def test_the_retry_tells_the_model_to_answer_in_words_only(monkeypatch):
+    # Without this line the model asks for the same missing tool again and the turn is lost.
+    comp = Completions(Stream([], error=tool_use_failed()), Stream([chunk(content="Of course.")]))
+    svc = service(monkeypatch, comp)
+    await drain(await svc.get_chat_completions(None))
+    assert comp.params[1]["messages"][-1] == {"role": "system", "content": main.NO_TOOLS_LINE}
+    assert "do not call any tool" in main.NO_TOOLS_LINE.lower()
+    assert comp.params[0].get("messages") == []  # the first request is left as it was
+
+
+async def test_the_rejected_tool_is_reported_so_the_transcript_can_show_it(monkeypatch):
+    seen = []
+    comp = Completions(Stream([], error=tool_use_failed()), Stream([chunk(content="Sure.")]))
+    svc = service(monkeypatch, comp)
+    svc._on_tool_rejected = lambda name, reason: seen.append((name, reason))
+    await drain(await svc.get_chat_completions(None))
+    assert [n for n, _ in seen] == ["capture_lead"]
+    assert "schema" in seen[0][1]
 
 
 # --- the pipeline does not wait for speech recognition to connect --------------------
