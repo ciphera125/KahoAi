@@ -8,6 +8,7 @@ router.post("/", agents.create);
 router.get("/:agentId", agents.get);
 router.patch("/:agentId", agents.update);
 router.get("/:agentId/check", agents.check);
+router.post("/:agentId/test", agents.test);
 router.post("/:agentId/publish", agents.publish);
 router.get("/:agentId/variables", agents.variables);
 router.get("/:agentId/versions", agents.versions);

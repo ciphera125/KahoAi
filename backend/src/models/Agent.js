@@ -1,12 +1,14 @@
 // Agents: a name, a description, the tools it may use, its call settings and
 // the one of its prompts it uses on calls. Numbers route to an agent, which is
 // what an inbound call on that number gets.
+import { config } from "../config/env.js";
 import { asSystem, inOrg } from "../db/pool.js";
 import { hexId } from "../utils/crypto.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { DEFAULT_TOOLS, KNOWN_TOOLS } from "./toolCatalog.js";
 import { KINDS as CAPTURE_KINDS } from "./answerValue.js";
 import { fill as fillVariables, offered } from "./variables.js";
+import { standing as testStanding } from "./AgentTest.js";
 import { idForNumber as contactIdForNumber } from "./Contact.js";
 import { namesFor as customToolNames, forCall as customToolsForCall } from "./CustomTool.js";
 import { promptProblems, variablesOf } from "./promptCheck.js";
@@ -266,7 +268,10 @@ async function draftProblems(db, orgId, agentId) {
 export async function check(orgId, agentId) {
   return inOrg(orgId, async (db) => {
     const problems = await draftProblems(db, orgId, agentId);
-    return { problems, can_publish: problems.length === 0 };
+    const test = await testStanding(db, orgId, agentId);
+    const testOk = !config.REQUIRE_AGENT_TEST || test.status === "passed";
+    return { problems, test, test_required: config.REQUIRE_AGENT_TEST,
+      can_publish: problems.length === 0 && testOk };
   });
 }
 
@@ -298,7 +303,20 @@ export async function publish(orgId, agentId, { user = null, note = "", override
     }
     const problems = await draftProblems(db, orgId, agentId);
     if (problems.length && !override) throw new ValidationError(problems[0].message);
-    await snapshot(db, orgId, agentId, { user, note, overrides: override ? problems : [] });
+    // A draft that has not passed a test of exactly these words is not published unless
+    // an admin says so, and then the fact that it was not tested is kept with the version.
+    const unmet = [];
+    if (config.REQUIRE_AGENT_TEST) {
+      const test = await testStanding(db, orgId, agentId);
+      if (test.status !== "passed") {
+        if (!override) throw new ValidationError(
+          test.status === "stale" ? test.message : test.status === "failed"
+            ? `The last test of this draft did not pass. ${test.message}`
+            : "This draft has not been tested yet. Use Test this agent first.");
+        unmet.push({ code: "untested", found: test.status, message: test.message });
+      }
+    }
+    await snapshot(db, orgId, agentId, { user, note, overrides: override ? [...problems, ...unmet] : [] });
     return show(db, orgId, agentId);
   });
 }

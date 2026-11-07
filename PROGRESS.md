@@ -17,8 +17,8 @@ expected (that database has no `anon` role); everything else must be green.
 | 4 | "Look Up Contact Details" tool | done | `2f1c298` |
 | 5 | The `{{` picker in the prompt editor | done | `59680d3` |
 | 6 | Custom API tools ("Call My API") | done | `8219771` |
-| 7 | Tool-call History tree | done | `STEP7` |
-| 8 | "Test this agent", with Publish gating | in progress | |
+| 7 | Tool-call History tree | done | `3dd6fab` |
+| 8 | "Test this agent", with Publish gating | done (key needed for live use) | `bc01bb5` |
 
 ## Already done before this run (committed)
 
@@ -166,6 +166,31 @@ expected (that database has no `anon` role); everything else must be green.
 - **The agent version is sent by the call itself** (`call_agent` event), not by the hangup
   webhook, which is a separate request from Plivo and knows nothing about it.
 - The old flat `/api/calls/tools` list is gone; its one consumer was this page.
+
+### Step 8
+
+- **A test is tied to the exact draft it ran on** (a fingerprint of name, prompt, tools and
+  settings). Change anything after a pass and Publish asks for a new test: a green tick
+  must never describe words that are no longer there.
+- **Tools are shown what they would be sent but never really run.** A test must not add a
+  task, place a call or hit a customer's API; each tool gets a canned answer, and the page
+  says "would have run (nothing was changed)".
+- **It tests for the class of failure that cost a call**: it offers the model exactly the
+  draft's tools and watches for a refusal, which fails the test and names the tool. Silence
+  fails it too. A refused turn is answered in words with the same "words only" line a real
+  call sends.
+- **The tool schemas are shared** (`backend/src/models/toolSchemas.json`, generated from
+  the voice service's registry) and a Python test fails if the two ever differ.
+  Regenerate with the one-liner in this file's history: dump `tools.REGISTRY` to that JSON.
+- **Admin override is recorded** with code `untested`, beside any prompt-check override.
+- **Only an owner or admin can run it**, since it costs tokens; lines and length are capped.
+- **`REQUIRE_AGENT_TEST` defaults to true.** This is the behaviour change you asked for.
+  Until a `GROQ_API_KEY` is in `backend/.env`, the Test button answers "needs a model" and
+  an admin has to publish with the override.
+- **The test does not include the voice rules** the live call prepends (they live in
+  `main.py`), so it can miss a problem only those rules cause. Said in the code, and here.
+- **No Groq key was copied into `backend/.env`.** The key sits in the voice service's `.env`;
+  moving it is your call, not something I did on my own.
 
 ## Known limits / to revisit
 

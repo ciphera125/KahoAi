@@ -1,0 +1,146 @@
+{
+  "add_task": {
+    "description": "Add a task to the person's list, but only when they ask you to.",
+    "per_call": false,
+    "properties": {
+      "due": {
+        "description": "When it is due, as they said it: \"next Friday\", \"the 15th\".",
+        "type": "string"
+      },
+      "title": {
+        "description": "The task, in the caller's own words.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "title"
+    ]
+  },
+  "call_webhook": {
+    "description": "Save or look something up in the business's own system. Use it only for what the persona says it is for. The answer comes back as text for you to use.",
+    "per_call": false,
+    "properties": {
+      "action": {
+        "description": "What to do, as the persona names it, e.g. 'check_order'.",
+        "type": "string"
+      },
+      "details": {
+        "description": "The facts the action needs, in one short line.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "action"
+    ]
+  },
+  "capture_lead": {
+    "description": "Save a caller's details so a person can follow up. Use it whenever the caller wants to leave contact information, asks for a callback, or shows interest in something, as soon as you have their name and what they want, not only at the end of the call. Read the details back and save only after the caller confirms.",
+    "per_call": false,
+    "properties": {
+      "name": {
+        "description": "The caller's name.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "phone": {
+        "description": "Number to reach them on, only if they gave one different from the one they are calling from.",
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "reason": {
+        "description": "One line on what they want, in their own terms.",
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": []
+  },
+  "end_call": {
+    "description": "Hang up. Use only when the caller says goodbye ('bye', 'alvida', 'hang up') or answers no when you have just asked whether there is anything else. Anything short of that, including 'that's all' or 'okay' on their own, is not a goodbye: ask whether there is anything else instead. Never use it for a question, including one about the call itself, recording, or privacy ('are you recording this?', 'is this legal?', 'who am I talking to?') -- answer the question and keep talking. Never use it just because the conversation stalled, a reply was delayed, or the caller repeated themselves ('I wanted to tell you something.') -- that is impatience, not a goodbye; let them speak. If it is unclear whether they want to end the call, ask them; do not guess by ending it. The text you speak in this same turn must itself be that goodbye -- never call this tool alongside text that invites the caller to continue or answers a question ('sure, go ahead', 'what did you want to tell me?'): if your own words are not a goodbye, do not call this tool.",
+    "per_call": false,
+    "properties": {},
+    "required": []
+  },
+  "get_tasks": {
+    "description": "Read the person's own task list. Use it before saying anything about what they have to do, and never answer from memory.",
+    "per_call": false,
+    "properties": {
+      "range": {
+        "description": "Which days to look at. Leave out for all of them.",
+        "enum": [
+          "today",
+          "yesterday",
+          "this_week",
+          "overdue",
+          "all"
+        ],
+        "type": "string"
+      },
+      "status": {
+        "description": "Still to do, finished, or both. Defaults to still to do.",
+        "enum": [
+          "pending",
+          "done",
+          "all"
+        ],
+        "type": "string"
+      }
+    },
+    "required": []
+  },
+  "look_up_contact": {
+    "description": "Look up what is already known about the person on this call: their name, what your system has on record, and anything saved on an earlier call. Use it before asking them for something they may already have told you.",
+    "per_call": false,
+    "properties": {},
+    "required": []
+  },
+  "mark_task_done": {
+    "description": "Tick a task off the person's list when they say it is finished.",
+    "per_call": false,
+    "properties": {
+      "task_id": {
+        "description": "The id from the task list.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id"
+    ]
+  },
+  "reschedule_task": {
+    "description": "Move one of the person's tasks to a new date, when they ask. Read the list first so you have the right task.",
+    "per_call": false,
+    "properties": {
+      "due": {
+        "description": "The new date, as they said it.",
+        "type": "string"
+      },
+      "task_id": {
+        "description": "The id from the task list.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "task_id",
+      "due"
+    ]
+  },
+  "save_answer": {
+    "description": "Save an answer the caller has just given to one of the questions this call is for. Call it once per answer, with what they actually said. If the reply says it was not saved, do what it tells you and try again.",
+    "per_call": true,
+    "properties": {},
+    "required": []
+  },
+  "transfer_to_human": {
+    "description": "Hand the call to a person. Use it when the caller asks for a human, or has a need you cannot meet. Say one short line that you are connecting them, in the same turn.",
+    "per_call": false,
+    "properties": {},
+    "required": []
+  }
+}

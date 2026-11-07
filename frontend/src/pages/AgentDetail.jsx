@@ -59,12 +59,74 @@ export default function AgentDetail() {
   );
 }
 
+const TEST_WORDS = {
+  none: "Not tested yet.", stale: "Changed since it was last tested.",
+  passed: "Passed.", failed: "Did not pass.",
+};
+
+/** A short simulated conversation with the draft, so a problem shows up here rather than
+ * on a caller. Tools are shown but never really run. */
+function TestPanel({ agent, check, onChanged }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(null);
+  const [lines, setLines] = useState("");
+  if (!check.test_required && !result) return null;
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const said = lines.split("\n").map((l) => l.trim()).filter(Boolean);
+      setResult(await post(`/api/agents/${agent.id}/test`, said.length ? { messages: said } : {}));
+      onChanged();
+    } catch (e) { toast(e.message, true); } finally { setBusy(false); }
+  };
+
+  const standing = check.test?.status ?? "none";
+  return (
+    <div className="answers" style={{ marginTop: "var(--s3)" }}>
+      <div className="publish-state">
+        <div>
+          <b>Test this agent</b>
+          <div className="hint">{TEST_WORDS[standing]} {standing === "failed" || standing === "stale" ? check.test.message : ""}</div>
+        </div>
+        <button className="ghost" onClick={run} disabled={busy}>{busy ? "Testing…" : standing === "none" ? "Test this agent" : "Test again"}</button>
+      </div>
+      <details style={{ marginTop: 6 }}>
+        <summary className="hint">Choose what to say to it</summary>
+        <textarea rows={3} value={lines} placeholder={"One line per turn. Leave empty to use a few ordinary ones."}
+          onChange={(e) => setLines(e.target.value)} />
+      </details>
+      {result && (
+        <div style={{ marginTop: "var(--s3)" }}>
+          <div className="card-title" style={{ marginBottom: 6 }}>{result.passed ? "It held a conversation" : "It did not pass"}</div>
+          {!result.passed && <div className="hint" style={{ color: "var(--warn)" }}>{result.note}</div>}
+          {result.turns.map((t, i) => (
+            <div key={i} className="tree-turn">
+              <div className="hint tree-said">They say: “{t.said}”</div>
+              {(t.tools ?? []).map((c, j) => (
+                <div key={j} className={`tree-tool ${c.status}`}>
+                  <b>{c.label}</b> <span className="hint">{c.status === "refused" ? "not one of its tools" : "would have run (nothing was changed)"}</span>
+                  {c.sent && <div className="hint"><code>{JSON.stringify(c.sent)}</code></div>}
+                  {c.why && <div className="hint">{c.why}</div>}
+                </div>
+              ))}
+              <div className="msg agent" style={{ maxWidth: "100%" }}>{t.reply || <i>said nothing</i>}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** What is live, what is only saved, and the one button that changes that. */
 function PublishBar({ agent, check, me, confirm, onChanged }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const live = agent.live_version;
-  const blocked = check.problems.length > 0;
+  const untested = check.test_required && check.test?.status !== "passed";
+  const blocked = check.problems.length > 0 || untested;
 
   const publish = async (override = false) => {
     setBusy(true);
@@ -77,7 +139,7 @@ function PublishBar({ agent, check, me, confirm, onChanged }) {
 
   const publishAnyway = async () => {
     const ok = await confirm({ title: "Publish anyway?",
-      text: "We think this draft has a problem, listed above. If you know it is fine, you can publish it. "
+      text: "We think this draft has a problem, or has not passed a test. If you know it is fine, you can publish it. "
         + "What you overrode is kept on this version, with your name.",
       ok: "I know this is not a tool, publish anyway" });
     if (ok) await publish(true);
@@ -101,9 +163,11 @@ function PublishBar({ agent, check, me, confirm, onChanged }) {
       {blocked && agent.draft_changed && (
         <ul className="problems">
           {check.problems.map((p) => <li key={p.code + p.found}>{p.message}</li>)}
+          {untested && check.problems.length === 0 && <li>Test this agent first. Publishing needs a test of exactly these words to have passed.</li>}
           {!isAdmin(me) && <li className="hint">Only an owner or admin can publish over this.</li>}
         </ul>
       )}
+      {agent.draft_changed && <TestPanel agent={agent} check={check} onChanged={onChanged} />}
     </div>
   );
 }

@@ -21,3 +21,6 @@ process.env.MAX_STREAMS_PER_USER = "2";
 process.env.SUPABASE_URL = "http://127.0.0.1:18767";
 process.env.SUPABASE_SECRET_KEY = "sb_secret_test_key_never_real";
 process.env.SUPABASE_RECORDINGS_BUCKET = "call-recordings";
+// Publishing normally needs a passing test of the draft; most tests are about something
+// else and publish freely. tests/agentTest.test.js turns it on where it is the point.
+process.env.REQUIRE_AGENT_TEST = "false";

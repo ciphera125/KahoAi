@@ -1,4 +1,5 @@
 import * as Agent from "../models/Agent.js";
+import * as AgentTest from "../models/AgentTest.js";
 import * as Call from "../models/Call.js";
 import { ceilingMinutes } from "./workspaceController.js";
 import { note } from "./notify.js";
@@ -32,6 +33,15 @@ export async function publish(req, res) {
 
 export async function check(req, res) {
   res.json(await Agent.check(req.user.org_id, req.params.agentId));
+}
+
+/** Try the draft in a short simulated conversation. Costs tokens, so it is not open to
+ * every member: an owner or admin runs it. */
+export async function test(req, res) {
+  if (!["owner", "admin"].includes(req.user.role)) throw forbidden("Only an owner or admin can test an agent.");
+  const result = await AgentTest.run(req.user.org_id, req.params.agentId,
+    { messages: req.body?.messages ?? null, user: req.user });
+  res.json(result);
 }
 
 export async function variables(req, res) {

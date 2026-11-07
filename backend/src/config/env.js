@@ -58,6 +58,12 @@ const schema = z.object({
   SUPABASE_RECORDINGS_BUCKET: z.string().optional(),
   RECORDING_RETENTION_DAYS: z.coerce.number().positive().default(60), // cloud copies are deleted after this many days
   RECORDING_RETENTION_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
+  // "Test this agent": a short simulated conversation with the draft. Optional, and kept
+  // separate from the voice service's key so the Studio's own use of it is visible.
+  GROQ_API_KEY: z.string().optional(),
+  GROQ_MODEL_ID: z.string().default("openai/gpt-oss-20b"),
+  // Publish needs a passing test of the same draft. An admin can still publish over it.
+  REQUIRE_AGENT_TEST: bool(true),
 });
 
 function load() {

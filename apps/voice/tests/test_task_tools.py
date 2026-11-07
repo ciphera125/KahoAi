@@ -108,3 +108,23 @@ def test_looking_up_takes_nothing_from_the_model():
     schema = next(s for s in build_tool_schemas(context(), ["look_up_contact"]))
     assert schema.properties == {}
     assert schema.required == []
+
+
+# --- the Studio's "Test this agent" offers the model these same tools --------
+
+
+def test_the_studios_copy_of_every_tool_schema_matches_the_real_one():
+    # backend/src/models/toolSchemas.json is what "Test this agent" shows the model, so a
+    # tool changed here and not there would be tested against something it is not.
+    # Regenerate it with the one-liner in PROGRESS.md under step 8.
+    import json
+    from pathlib import Path
+
+    shared = json.loads(
+        (Path(__file__).resolve().parents[3] / "backend/src/models/toolSchemas.json").read_text())
+    assert set(shared) == set(tools.REGISTRY)
+    for name, t in tools.REGISTRY.items():
+        assert shared[name]["description"] == t.description, name
+        assert shared[name]["properties"] == t.properties, name
+        assert shared[name]["required"] == t.required, name
+        assert shared[name]["per_call"] == (t.schema_for is not None), name
