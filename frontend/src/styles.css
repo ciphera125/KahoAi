@@ -418,3 +418,18 @@ h1 { font-weight: 800; letter-spacing: -.03em; }
 .shell:not(.rail-wide) .logo { justify-content: center; padding: 0; }
 .shell:not(.rail-wide) .logo .brand, .shell:not(.rail-wide) .logo .rail-pin { display: none; }
 .logo .parrot { filter: none; }
+
+/* ---- recording player and call search ---- */
+.call-search { display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 10px; margin-bottom: var(--s3); border: 1px solid var(--border-strong); border-radius: var(--r-md); background: var(--surface); color: var(--text-3); }
+.call-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.call-search input { border: 0; height: 34px; padding: 0; box-shadow: none !important; background: transparent; }
+.call-meta { display: inline-flex; align-items: center; gap: 8px; flex: none; }
+.rec-badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: 999px; font-size: 12px; font-weight: 600; color: var(--gold-ink); background: var(--gold-soft); }
+.rec-badge svg.i { width: 12px; height: 12px; }
+.rec-player { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); margin-bottom: var(--s3); border: 1px solid var(--border); border-left: 4px solid var(--gold); border-radius: var(--r-md); background: linear-gradient(90deg, var(--gold-soft), transparent 60%), var(--surface); }
+.rec-head { display: flex; align-items: center; gap: 8px; color: var(--text); }
+.rec-head svg.i { color: var(--gold-ink); }
+.rec-head .muted { margin-left: auto; font-family: var(--mono); }
+.rec-audio { display: flex; align-items: center; gap: var(--s3); overflow: hidden; }
+.rec-audio audio { flex: 1; min-width: 0; height: 40px; accent-color: var(--accent); border-radius: 999px; }
+.rec-player .primary { justify-self: start; }

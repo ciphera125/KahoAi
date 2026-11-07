@@ -9,6 +9,8 @@ test("static host headers forbid framing, sniffing, referrers and foreign script
   assert.match(h["Content-Security-Policy"], /script-src 'self'(;|$)/);
   assert.match(h["Content-Security-Policy"], /frame-ancestors 'none'/);
   assert.match(h["Content-Security-Policy"], /object-src 'none'/);
+  assert.match(h["Content-Security-Policy"], /(^|; )media-src 'self' https:\/\/\*\.supabase\.co(;|$)/);
+  assert.doesNotMatch(h["Content-Security-Policy"], /media-src[^;]*(\*(?!\.supabase)|http:)/);
   assert.equal(h["X-Content-Type-Options"], "nosniff");
   assert.equal(h["Referrer-Policy"], "no-referrer");
   assert.match(h["Strict-Transport-Security"], /max-age=\d{7,}/);

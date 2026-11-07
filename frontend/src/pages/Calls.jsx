@@ -1,5 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { ApiError, get, post } from "../api.js";
+import { debounce } from "../debounce.js";
+import { fmtBytes } from "../format.js";
+import { callsUrl, recordingMessage } from "../recording.js";
 import { fmtDur, Icon, initials, Modal, OutcomePill, plural, useToast, whenShort } from "../ui.jsx";
 
 export default function Calls() {
@@ -102,11 +106,25 @@ function History({ reload, onWatch }) {
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
   const [view, setView] = useState(null);
-  useEffect(() => { get(`/api/calls?page=${page}&per_page=10`).then(setData).catch(() => {}); }, [page, reload]);
+  const [text, setText] = useState("");
+  const [q, setQ] = useState("");
+  const applyQuery = useMemo(() => debounce((v) => { setQ(v); setPage(1); }, 300), []);
+  useEffect(() => () => applyQuery.cancel(), [applyQuery]);
+  useEffect(() => {
+    let live = true;
+    get(callsUrl({ page, perPage: 10, q })).then((d) => { if (live) setData(d); }).catch(() => {});
+    return () => { live = false; };
+  }, [page, reload, q]);
   return (
     <div className="card">
       <div className="card-head"><span className="card-title">Call history</span><span className="muted">{data ? plural(data.total, "call") : ""}</span></div>
-      {data?.calls.length === 0 && <div className="hint">No calls yet.</div>}
+      <div className="call-search">
+        <Icon name="search" />
+        <input type="search" value={text} maxLength={100} placeholder="Search transcripts and summaries" aria-label="Search transcripts and summaries"
+          onChange={(e) => { setText(e.target.value); applyQuery(e.target.value); }} />
+        {text && <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => { setText(""); applyQuery.cancel(); setQ(""); setPage(1); }}><Icon name="x" /></button>}
+      </div>
+      {data?.calls.length === 0 && <div className="hint">{q.trim() ? "No calls match" : "No calls yet."}</div>}
       {data?.calls.map((c) => (
         <button key={c.call_id} type="button" className="call-row"
           onClick={() => (c.has_transcript ? setView(c) : c.status === "ringing" ? onWatch({ uuid: c.call_id, label: c.contact_name || c.peer || "Call", sub: c.peer }) : null)}>
@@ -114,7 +132,7 @@ function History({ reload, onWatch }) {
             <b className="ellip">{c.contact_name || c.peer || "Unknown number"}</b>
             <div className="muted ellip">{[whenShort(c.started_at), c.agent_name, c.status === "answered" ? fmtDur(c.duration_secs) : null].filter(Boolean).join(" · ")}</div>
           </div>
-          <OutcomePill status={c.status} />
+          <span className="call-meta">{c.has_recording && <span className="rec-badge" title="This call was recorded"><Icon name="mic" />Recording</span>}<OutcomePill status={c.status} /></span>
         </button>
       ))}
       {data && data.total > 10 && (
@@ -134,6 +152,7 @@ function TranscriptModal({ call, onClose }) {
   return (
     <Modal title={call.contact_name || call.peer || "Call"} onClose={onClose} wide>
       <div className="muted" style={{ marginBottom: "var(--s3)" }}>{[call.peer, whenShort(call.started_at), fmtDur(call.duration_secs), call.agent_name].filter(Boolean).join(" · ")}</div>
+      {call.has_recording && <RecordingPlayer callId={call.call_id} />}
       <div className="chat" style={{ maxHeight: "60vh", border: "1px solid var(--border)", borderRadius: "var(--r-md)" }}>
         {!turns && <div className="hint">Loading…</div>}
         {turns && turns.length === 0 && <div className="hint">Nothing was said on this call.</div>}
@@ -141,6 +160,45 @@ function TranscriptModal({ call, onClose }) {
       </div>
       <div className="actions"><a className="ghost" href={`/api/calls/${encodeURIComponent(call.call_id)}/transcript.csv`} download><Icon name="download" />Download CSV</a></div>
     </Modal>
+  );
+}
+
+function RecordingPlayer({ callId }) {
+  const [rec, setRec] = useState(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const retried = useRef(false);
+  const audio = useRef();
+  const load = async () => {
+    setBusy(true); setError("");
+    try { setRec(await get(`/api/calls/${encodeURIComponent(callId)}/recording`)); }
+    catch (e) { setError(recordingMessage(e)); } finally { setBusy(false); }
+  };
+  // A signed link lasts 10 minutes; if playback fails after that, fetch a fresh one once and resume.
+  const expired = async () => {
+    if (retried.current) { setError("The recording could not be played. Try again."); return; }
+    retried.current = true;
+    const at = audio.current?.currentTime || 0;
+    try {
+      const fresh = await get(`/api/calls/${encodeURIComponent(callId)}/recording`);
+      setRec(fresh);
+      requestAnimationFrame(() => { if (audio.current) { audio.current.currentTime = at; audio.current.play().catch(() => {}); } });
+    } catch (e) { setError(recordingMessage(e)); }
+  };
+  return (
+    <motion.div className="rec-player" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
+      <div className="rec-head"><Icon name="mic" /><b>Call recording</b>{rec && <span className="muted">{[rec.mime?.replace("audio/", ""), fmtBytes(rec.bytes)].filter(Boolean).join(" · ")}</span>}</div>
+      {!rec && <button type="button" className="primary" onClick={load} disabled={busy}><Icon name="play" />{busy ? "Loading…" : "Play recording"}</button>}
+      <AnimatePresence>
+        {rec && (
+          <motion.div key="audio" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="rec-audio">
+            <audio ref={audio} controls autoPlay preload="none" src={rec.url} onError={expired} />
+            <a className="ghost btn small-btn" href={rec.download_url} download><Icon name="download" />Download</a>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {error && <div className="field-err" role="alert">{error}</div>}
+    </motion.div>
   );
 }
 
