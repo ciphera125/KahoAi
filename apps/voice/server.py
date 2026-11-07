@@ -370,15 +370,51 @@ def verify_signatures() -> bool:
     return (env("PLIVO_VERIFY_SIGNATURE") or "true").strip().lower() != "false"
 
 
+class NonceStore:
+    """Nonces of webhooks already accepted. Plivo's signature binds the request to
+    one nonce, but nothing else stops a captured request being sent again, so each
+    nonce is good once. Bounded in time (ttl) and space (cap, oldest dropped), so
+    a flood of requests cannot grow it without limit."""
+
+    def __init__(self, ttl: float = 600.0, cap: int = 20_000, clock=time.monotonic) -> None:
+        self._ttl, self._cap, self._clock = ttl, cap, clock
+        self._seen: dict[str, float] = {}  # insertion order is age order
+
+    def __len__(self) -> int:
+        return len(self._seen)
+
+    def claim(self, nonce: str) -> bool:
+        """True the first time a nonce is seen, False on a replay."""
+        now = self._clock()
+        while self._seen:
+            oldest, first = next(iter(self._seen.items()))
+            if now - first <= self._ttl:
+                break
+            del self._seen[oldest]
+        if nonce in self._seen:
+            return False
+        self._seen[nonce] = now
+        while len(self._seen) > self._cap:
+            del self._seen[next(iter(self._seen))]
+        return True
+
+
+_nonces = NonceStore()
+
+
 def signed_by_plivo(request: Request, body: dict) -> bool:
     """Whether Plivo signed this webhook. The URL is rebuilt with PUBLIC_HOST, as
     Plivo called it through the tunnel, not as it arrives here."""
     url = f"https://{env('PUBLIC_HOST')}{request.url.path}"
     if request.url.query:
         url += f"?{request.url.query}"
-    return plivo_signature.valid(
-        request.method, url, body, request.headers.get("x-plivo-signature-v3-nonce"),
-        request.headers.get("x-plivo-signature-v3"), plivo_auth()[1])
+    nonce = request.headers.get("x-plivo-signature-v3-nonce")
+    if not plivo_signature.valid(
+            request.method, url, body, nonce,
+            request.headers.get("x-plivo-signature-v3"), plivo_auth()[1]):
+        return False
+    # Only a verified request uses up its nonce, so garbage cannot burn real ones.
+    return _nonces.claim(nonce)
 
 
 @app.api_route("/hangup", methods=["GET", "POST"])
@@ -578,8 +614,12 @@ async def _run_call(
     async def report_lead(lead: dict) -> None:
         await studio_link.report_lead(lead, org_id=org_id)
 
+    async def report_recording(path: str, size: int, mime: str) -> None:
+        await studio_link.report_recording(call_id, path, size, mime)
+
     async def upload_recording(path) -> None:
-        await recording_upload.upload_recording(path, path.name)
+        await recording_upload.upload_recording(
+            path, recording_upload.object_name(call_id or path.stem), report=report_recording)
 
     worker = build_worker(
         transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id,

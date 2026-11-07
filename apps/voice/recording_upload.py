@@ -19,7 +19,9 @@ existed.
 """
 
 import asyncio
+import datetime
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -59,6 +61,18 @@ def _timeout() -> float:
     return value if value > 0 else DEFAULT_TIMEOUT_SECS
 
 
+_UNSAFE_ID = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def object_name(call_id: str, when: datetime.datetime | None = None) -> str:
+    """`<yyyy>/<mm>/<call_id>.wav` (UTC), the call's place in the bucket. The id comes
+    from the network, so nothing but letters, digits, `_` and `-` survives; the
+    extension is swapped for .opus by upload_recording when the audio is encoded."""
+    when = when or datetime.datetime.now(datetime.timezone.utc)
+    safe = _UNSAFE_ID.sub("_", call_id or "")[:100] or "unknown"
+    return f"{when:%Y}/{when:%m}/{safe}.wav"
+
+
 def _encode_opus(wav_path: Path) -> Path | None:
     """WAV -> Opus alongside the original, via ffmpeg. None if ffmpeg is missing
     or fails -- compression is an optimisation, never a reason to drop the
@@ -76,11 +90,12 @@ def _encode_opus(wav_path: Path) -> Path | None:
         return None
 
 
-async def upload_recording(path: Path, object_name: str) -> bool:
+async def upload_recording(path: Path, object_name: str, report=None) -> bool:
     """Never raises. Retries a transient failure (429/5xx/connection error) up
     to MAX_RETRIES times, each under its own deadline; a refusal (4xx other
     than 429) is not retried. Gives up silently (logged) rather than touching
-    the call or the local file."""
+    the call or the local file. After a successful upload, `report(path, bytes,
+    mime)` is awaited with what was really stored; its failure is contained."""
     if not configured():
         return False
 
@@ -107,6 +122,11 @@ async def upload_recording(path: Path, object_name: str) -> bool:
             encoded.unlink()
         except OSError:
             pass  # the upload already succeeded; a leftover temp file is harmless
+    if ok and report is not None:
+        try:
+            await report(object_name, len(data), content_type)
+        except Exception as e:  # noqa: BLE001 -- the recording is safe; telling the Studio is optional
+            logger.warning(f"Could not report the recording {object_name}: {type(e).__name__}")
     return ok
 
 

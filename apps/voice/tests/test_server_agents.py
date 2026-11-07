@@ -156,6 +156,8 @@ def signed(client, monkeypatch):
     monkeypatch.setenv("PLIVO_AUTH_TOKEN", "plivo-token")
     monkeypatch.setenv("NUMBER_STORE_PATH", "/nonexistent/numbers.json")
     monkeypatch.setenv("PLIVO_VERIFY_SIGNATURE", "true")
+    # The real nonce store is process-wide; each test gets its own, as with the rate limiter.
+    monkeypatch.setattr(server, "_nonces", server.NonceStore())
     return client
 
 
@@ -265,3 +267,28 @@ def test_the_url_cannot_change_what_the_answer_decided(client, monkeypatch):
 def test_an_unsigned_transfer_is_refused(signed, monkeypatch):
     monkeypatch.setenv("TRANSFER_NUMBER", "+919000000001")
     assert signed.post("/transfer?token=s3cret").status_code == 403
+
+
+# ---- replayed webhooks ------------------------------------------------------
+
+def _signed_hangup(client, nonce, token="plivo-token"):
+    base = "https://kaho.example.com/hangup?token=s3cret.CallStatusno-answerCallUUIDrepl1234"
+    return client.post("/hangup?token=s3cret", content="CallUUID=repl1234&CallStatus=no-answer",
+                       headers={"content-type": "application/x-www-form-urlencoded",
+                                "X-Plivo-Signature-V3": plivo_sign(base, nonce, token),
+                                "X-Plivo-Signature-V3-Nonce": nonce})
+
+
+def test_a_replayed_signed_webhook_is_refused(signed):
+    assert _signed_hangup(signed, "nonce-aaa").status_code == 200
+    assert _signed_hangup(signed, "nonce-aaa").status_code == 403
+
+
+def test_a_fresh_nonce_with_a_valid_signature_still_works(signed):
+    assert _signed_hangup(signed, "nonce-bbb").status_code == 200
+    assert _signed_hangup(signed, "nonce-ccc").status_code == 200
+
+
+def test_a_bad_signature_does_not_burn_the_real_nonce(signed):
+    assert _signed_hangup(signed, "nonce-ddd", token="wrong-token").status_code == 403
+    assert _signed_hangup(signed, "nonce-ddd").status_code == 200

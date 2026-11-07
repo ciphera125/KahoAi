@@ -287,3 +287,48 @@ def test_the_held_backlog_is_bounded():
     for i in range(studio_link.MAX_PENDING + 50):
         sink({"event": "live", "text": str(i)})
     assert len(sink._pending) == studio_link.MAX_PENDING
+
+
+# --- the recording report -------------------------------------------------------------------
+
+CALL = "4f9c1e2a-0b3d-4c5e-8f60-123456789abc"
+
+
+@pytest.fixture
+def recording_studio(monkeypatch):
+    seen = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    monkeypatch.setenv("STUDIO_INTERNAL_URL", "http://127.0.0.1:8021")
+    monkeypatch.setenv("STUDIO_INTERNAL_TOKEN", TOKEN)
+    monkeypatch.setattr(studio_link, "_transport", httpx.MockTransport(handler))
+    return seen
+
+
+async def test_a_recording_is_reported_with_path_size_and_type(recording_studio):
+    path = f"2026/11/{CALL}.opus"
+    assert await studio_link.report_recording(CALL, path, 1234, "audio/opus") is True
+    (req,) = recording_studio
+    assert req.method == "POST" and req.url.path == f"/internal/v1/calls/{CALL}/recording"
+    assert req.headers["authorization"] == f"Bearer {TOKEN}"
+    assert json.loads(req.content) == {"path": path, "bytes": 1234, "mime": "audio/opus"}
+
+
+async def test_a_recording_report_is_skipped_when_off_or_id_odd(monkeypatch, recording_studio):
+    assert await studio_link.report_recording("../x", "2026/11/x.opus", 1, "audio/opus") is False
+    monkeypatch.delenv("STUDIO_INTERNAL_URL")
+    assert await studio_link.report_recording(CALL, "2026/11/x.opus", 1, "audio/opus") is False
+    assert recording_studio == []
+
+
+async def test_a_recording_report_failure_is_contained(monkeypatch):
+    def boom(request):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setenv("STUDIO_INTERNAL_URL", "http://127.0.0.1:8021")
+    monkeypatch.setenv("STUDIO_INTERNAL_TOKEN", TOKEN)
+    monkeypatch.setattr(studio_link, "_transport", httpx.MockTransport(boom))
+    assert await studio_link.report_recording(CALL, "2026/11/x.opus", 1, "audio/opus") is False

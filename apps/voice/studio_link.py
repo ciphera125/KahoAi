@@ -160,6 +160,24 @@ async def report_lead(lead: dict, *, org_id: str | None = None) -> bool:
         return False
 
 
+async def report_recording(call_id: str, path: str, size: int, mime: str) -> bool:
+    """Where a call's recording was stored (Supabase Storage object path, bytes, type),
+    so the Studio can link and play it. Never raises; off the call path, like the other
+    reports."""
+    if not configured() or not _CALL_ID.match(call_id or ""):
+        return False
+    body = {"path": path, "bytes": size, "mime": mime}
+    try:
+        async with _client() as client:
+            r = await asyncio.wait_for(
+                client.post(f"/internal/v1/calls/{call_id}/recording", json=body), _timeout())
+        return r.status_code == 200
+    except (httpx.HTTPError, TimeoutError) as e:
+        logger.warning(f"Could not report the recording of call {call_id} to the Studio: "
+                        f"{type(e).__name__}")
+        return False
+
+
 class EventSink:
     """Transcript lines on their way to the Studio, sent in the background.
 

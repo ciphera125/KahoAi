@@ -135,3 +135,68 @@ async def test_a_connection_error_never_raises(tmp_path, monkeypatch):
 
     monkeypatch.setattr(recording_upload, "_transport", httpx.MockTransport(handler))
     assert await recording_upload.upload_recording(path, "c1.recording.wav") is False
+
+
+# ---- date-partitioned names and the report to the Studio ---------------------------------
+
+import datetime  # noqa: E402
+
+
+def test_object_names_are_date_partitioned_and_traversal_safe():
+    when = datetime.datetime(2026, 11, 7, 9, 0, tzinfo=datetime.timezone.utc)
+    assert recording_upload.object_name("4f9c1e2a-0b3d", when) == "2026/11/4f9c1e2a-0b3d.wav"
+    hostile = recording_upload.object_name("../../etc/passwd\x00/x", when)
+    assert hostile.startswith("2026/11/") and hostile.count("/") == 2 and ".." not in hostile
+    assert recording_upload.object_name("a" * 500, when).count("/") == 2
+    assert len(recording_upload.object_name("a" * 500, when)) <= 8 + 100 + 4
+
+
+async def test_reports_the_final_opus_path_size_and_mime(studio, tmp_path, monkeypatch):
+    path = tmp_path / "c1.recording.wav"
+    path.write_bytes(b"RIFF....")
+    opus_path = tmp_path / "c1.recording.opus"
+    opus_path.write_bytes(b"OPUSDATA")
+    monkeypatch.setattr(recording_upload, "_encode_opus", lambda p: opus_path)
+    seen = []
+
+    async def report(p, size, mime):
+        seen.append((p, size, mime))
+
+    assert await recording_upload.upload_recording(path, "2026/11/c1.wav", report=report) is True
+    assert seen == [("2026/11/c1.opus", 8, "audio/opus")]
+
+
+async def test_reports_the_wav_when_opus_is_unavailable(studio, tmp_path):
+    path = tmp_path / "c1.recording.wav"
+    path.write_bytes(b"RIFF....")
+    seen = []
+
+    async def report(p, size, mime):
+        seen.append((p, size, mime))
+
+    assert await recording_upload.upload_recording(path, "2026/11/c1.wav", report=report) is True
+    assert seen == [("2026/11/c1.wav", 8, "audio/wav")]
+
+
+async def test_nothing_is_reported_when_the_upload_failed(studio, tmp_path, monkeypatch):
+    monkeypatch.setattr(recording_upload, "_transport",
+                        httpx.MockTransport(lambda r: httpx.Response(403)))
+    path = tmp_path / "c1.recording.wav"
+    path.write_bytes(b"RIFF....")
+    seen = []
+
+    async def report(*a):
+        seen.append(a)
+
+    assert await recording_upload.upload_recording(path, "2026/11/c1.wav", report=report) is False
+    assert seen == []
+
+
+async def test_a_failing_report_never_changes_the_upload_result(studio, tmp_path):
+    path = tmp_path / "c1.recording.wav"
+    path.write_bytes(b"RIFF....")
+
+    async def report(*a):
+        raise RuntimeError("studio exploded")
+
+    assert await recording_upload.upload_recording(path, "2026/11/c1.wav", report=report) is True
