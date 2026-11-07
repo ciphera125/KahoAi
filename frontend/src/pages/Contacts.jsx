@@ -3,14 +3,15 @@ import { Link } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
 import { useTags } from "../tags.jsx";
-import { fmtDur, Icon, initials, Menu, Modal, OutcomePill, plural, Spinner, useConfirm, useToast, whenShort } from "../ui.jsx";
+import { serverView } from "../paginate.js";
+import { dayWord } from "../time.js";
+import { Icon, initials, Menu, Modal, OutcomePill, Pager, plural, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 const TABS = [
   { key: "all", label: "All" },
   { key: "given", label: "Consented" },
   { key: "refused", label: "DNC" },
 ];
-const PER_OPTIONS = [10, 25, 50, 100];
 
 export default function Contacts() {
   const me = useMe();
@@ -74,7 +75,6 @@ export default function Contacts() {
     load();
   };
 
-  const totalPages = data ? Math.ceil(data.total / perPage) : 0;
 
   return (
     <section>
@@ -129,7 +129,7 @@ export default function Contacts() {
               <div className="num ellip">{first ? first.number : <span className="muted">No number</span>}{c.numbers.length > 1 && <span className="muted">  +{c.numbers.length - 1}</span>}</div>
               <div className="tags">{(c.tags || []).map((id) => { const t = tagById(id); return t ? <span key={id} className="tag" style={{ "--tc": `var(--t-${t.color})` }}>{t.name}</span> : null; })}</div>
               <span><span className={`badge ${consentBadge}`}>{c.consent || "pending"}</span></span>
-              <div style={{ minWidth: 0 }}>{lc ? <div><div className="muted">{whenShort(lc.started_at)}</div><div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4 }}><OutcomePill status={lc.status} />{lc.status === "answered" && lc.duration_secs != null && <span className="muted">{fmtDur(lc.duration_secs)}</span>}</div></div> : <span className="muted">—</span>}</div>
+              <div style={{ minWidth: 0 }}>{lc ? <div className="last-call"><OutcomePill status={lc.status} /><span className="muted">{dayWord(lc.started_at)}</span></div> : <span className="muted">Not called yet</span>}</div>
               <div className="row-actions">
                 <Menu items={[
                   ["Edit", () => setEditing(c)],
@@ -142,20 +142,8 @@ export default function Contacts() {
             </div>
           );
         })}
-        {data && (
-          <div className="pager" style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <span>Page {data.page} of {totalPages || 1}</span>
-            <button className="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button>
-            <button className="ghost" disabled={page * perPage >= data.total} onClick={() => setPage((p) => p + 1)}>Next</button>
-            <span className="grow" />
-            <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13 }}>
-              Rows per page
-              <select value={perPage} onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1); }} style={{ width: 64 }}>
-                {PER_OPTIONS.map((n) => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </label>
-          </div>
-        )}
+        {data && <Pager view={serverView({ page, total: data.total, size: perPage })} size={perPage}
+          onPage={setPage} onSize={(n) => { setPerPage(n); setPage(1); }} />}
       </div>
       {editing && <EditContact contact={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); reloadTags(); }} />}
       {confirmNode}

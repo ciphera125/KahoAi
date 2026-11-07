@@ -1,8 +1,9 @@
 // Small shared pieces: icons, toast, modal, confirm, a dropdown menu, and a few
 // formatters. Kept together so the pages stay about their own screen.
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { Component, createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { motion } from "motion/react";
+import { pageNumbers, paginate, SIZES } from "./paginate.js";
 
 /* ---------- icons (same set as the original Studio) ---------- */
 const PATHS = {
@@ -177,4 +178,67 @@ export function PasswordInput(props) {
       <button type="button" className="icon-btn" style={{ position: "absolute", right: 3, top: 3 }} onClick={() => setShow((v) => !v)} title="Show"><Icon name="eye" /></button>
     </div>
   );
+}
+
+/* ---------- paging ---------- */
+/** The footer of a list: where you are, and the way to other pages. Always shows the
+ * count, so a short list still says how many there are; the buttons appear when there is
+ * more than one page. */
+export function Pager({ view, size, onPage, onSize }) {
+  const { page, pages, total, from, to } = view;
+  return (
+    <nav className="pager" aria-label="Pages">
+      <span className="muted">{total === 0 ? "Nothing to show" : `Showing ${from} to ${to} of ${total}`}</span>
+      {pages > 1 && (
+        <div className="pager-buttons">
+          <button type="button" className="ghost" disabled={page <= 1} onClick={() => onPage(page - 1)}>Previous</button>
+          {pageNumbers(page, pages).map((n, i) => (n === "…"
+            ? <span key={`gap${i}`} className="muted">…</span>
+            : <button key={n} type="button" className={`ghost${n === page ? " on" : ""}`} aria-current={n === page ? "page" : undefined}
+              onClick={() => onPage(n)}>{n}</button>))}
+          <button type="button" className="ghost" disabled={page >= pages} onClick={() => onPage(page + 1)}>Next</button>
+        </div>
+      )}
+      {onSize && total > SIZES[0] && (
+        <label className="pager-size muted">Per page
+          <select value={size} onChange={(e) => onSize(Number(e.target.value))}>
+            {SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
+          </select>
+        </label>
+      )}
+    </nav>
+  );
+}
+
+/** Cut a list into pages. Returns [the items on this page, the footer to show under
+ * them]. A page that stops existing (the last item on it was deleted) steps back by itself. */
+export function usePaged(items, initialSize = 10) {
+  const [page, setPage] = useState(1);
+  const [size, setSize] = useState(initialSize);
+  const view = paginate(items, page, size);
+  useEffect(() => { if (view.page !== page) setPage(view.page); }, [view.page, page]);
+  const footer = <Pager view={view} size={size} onPage={setPage} onSize={(n) => { setSize(n); setPage(1); }} />;
+  return [view.items, footer];
+}
+
+/* ---------- a page that breaks should say so, not go blank ---------- */
+/** Catches a crash in whatever is inside it. Without this, one bad value in one page
+ * unmounts the whole app and the person is left looking at nothing (2026-11-08: the Tasks
+ * page, on Add a task). Changing page (`resetKey`) clears it. */
+export class ErrorBoundary extends Component {
+  state = { failed: false };
+  static getDerivedStateFromError() { return { failed: true }; }
+  componentDidCatch(error) { console.error("A page crashed:", error); }
+  componentDidUpdate(prev) { if (prev.resetKey !== this.props.resetKey && this.state.failed) this.setState({ failed: false }); }
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="card" style={{ maxWidth: 560, margin: "var(--s6) auto" }}>
+        <h2>Something went wrong on this page</h2>
+        <p className="sub">The rest of the Studio is fine. Try again, and if it keeps happening, tell us what you pressed.</p>
+        <div className="actions"><button className="primary" onClick={() => this.setState({ failed: false })}>Try again</button>
+          <button className="ghost" onClick={() => window.location.reload()}>Reload the page</button></div>
+      </div>
+    );
+  }
 }

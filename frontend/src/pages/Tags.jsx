@@ -2,7 +2,7 @@ import { useState } from "react";
 import { del, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
 import { useTags } from "../tags.jsx";
-import { Icon, Menu, Modal, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 export default function Tags() {
   const me = useMe();
@@ -10,6 +10,7 @@ export default function Tags() {
   const [confirm, confirmNode] = useConfirm();
   const { tags, reload } = useTags();
   const [editing, setEditing] = useState(null);
+  const [shown, pager] = usePaged(tags ?? []);
   if (!tags) return <Spinner />;
 
   const remove = async (t) => {
@@ -27,7 +28,7 @@ export default function Tags() {
       <div className="card list">
         <div className="row head" style={{ gridTemplateColumns: "minmax(0,2fr) 100px 56px" }}><span>Tag</span><span>Color</span><span /></div>
         {tags.length === 0 && <div className="empty">No tags yet. Create one and assign it to contacts.</div>}
-        {tags.map((t) => (
+        {shown.map((t) => (
           <div key={t.id} className="row" style={{ gridTemplateColumns: "minmax(0,2fr) 100px 56px" }}>
             <span className="ellip"><span className="tag" style={{ "--tc": `var(--t-${t.color})` }}>{t.name}</span></span>
             <span className="muted">{t.color}</span>
@@ -35,6 +36,7 @@ export default function Tags() {
           </div>
         ))}
       </div>
+      {pager}
       {editing && <EditTag tag={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); reload(); }} />}
       {confirmNode}
     </section>

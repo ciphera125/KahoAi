@@ -7,12 +7,12 @@ import * as Tooltip from "@radix-ui/react-tooltip";
 import { get, post } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { LogoMark, Wordmark } from "../logo.jsx";
-import { ago, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
+import { ago, ErrorBoundary, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
 
 const NAV = [
   ["Operate", [["dashboard", "dash", "Dashboard"], ["calls", "call", "Calls"], ["live", "live", "Live"], ["bulk", "bulk", "Bulk calls"], ["contacts", "contacts", "Contacts"]]],
   ["Configure", [["agents", "agent", "Agents"], ["prompts", "prompt", "Prompts"], ["numbers", "numbers", "Numbers"], ["team", "team", "Team"]]],
-  ["Inspect", [["tasks", "check", "Tasks"], ["your-tools", "plug", "Your own tools"], ["tool-calls", "tool", "Tools"], ["tags", "tag", "Tags"], ["errors", "warn", "Error Logs"], ["settings", "settings", "Settings"]]],
+  ["Inspect", [["tasks", "check", "Tasks"], ["your-tools", "plug", "Your own tools"], ["tool-calls", "tool", "Tool history"], ["tags", "tag", "Tags"], ["errors", "warn", "Error Logs"], ["settings", "settings", "Settings"]]],
 ];
 const RAIL_KEY = "kaho.rail.open";
 const readRail = () => { try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } };
@@ -36,7 +36,8 @@ export default function Layout() {
     return () => document.removeEventListener("keydown", esc);
   }, [drawer]);
   const togglePin = () => setPinned((v) => { try { localStorage.setItem(RAIL_KEY, v ? "0" : "1"); } catch { /* private window */ } setPeek(false); return !v; });
-  const enter = () => { clearTimeout(peekTimer.current); peekTimer.current = setTimeout(() => setPeek(true), 30); };
+  // Opens the moment the cursor reaches it: any delay reads as the sidebar being slow.
+  const enter = () => { clearTimeout(peekTimer.current); setPeek(true); };
   const leave = () => { clearTimeout(peekTimer.current); peekTimer.current = setTimeout(() => setPeek(false), 200); };
   const open = pinned || peek || drawer;
   return (
@@ -45,7 +46,7 @@ export default function Layout() {
       <Tooltip.Provider delayDuration={80} skipDelayDuration={300}>
       <nav className={`rail${drawer ? " open" : ""}`} aria-label="Sections" onMouseEnter={enter} onMouseLeave={leave}>
         <div className="logo">
-          <LogoMark size={54} />
+          <LogoMark size={36} />
           <div className="rail-text brand">
             <b><Wordmark /></b>
             <OrgSwitcher />
@@ -82,7 +83,7 @@ export default function Layout() {
             <Bell />
           </div>
           <motion.div key={location.pathname} className="page-enter" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}>
-            <Outlet />
+            <ErrorBoundary resetKey={location.pathname}><Outlet /></ErrorBoundary>
           </motion.div>
         </div>
       </main>
@@ -146,7 +147,7 @@ function OrgSwitcher() {
   };
   return (
     <div className="org-switch" ref={ref}>
-      <button type="button" className="org-name" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open}>
+      <button type="button" className="org-name" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} title="Switch organization">
         <span className="ellip">{me.org_name}</span><Icon name="updown" />
       </button>
       {open && (

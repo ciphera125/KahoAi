@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { get } from "../api.js";
-import { Spinner, useToast, whenShort } from "../ui.jsx";
+import { Spinner, usePaged, useToast, whenShort } from "../ui.jsx";
 
 const BADGE = { error: "bad", warn: "warn" };
 
@@ -9,6 +9,7 @@ export default function ErrorLogs() {
   const [data, setData] = useState(null);
   const load = () => get("/api/errors?limit=100").then((r) => setData(r.errors)).catch((e) => toast(e.message, true));
   useEffect(() => { load(); }, []);
+  const [shown, pager] = usePaged(data ?? []);
   if (!data) return <Spinner />;
   return (
     <section>
@@ -21,7 +22,7 @@ export default function ErrorLogs() {
           <span>Level</span><span>Source</span><span>Message</span><span>Call</span><span>When</span>
         </div>
         {data.length === 0 && <div className="empty">No errors logged. The voice service reports TTS, LLM and provider failures here.</div>}
-        {data.map((e) => (
+        {shown.map((e) => (
           <div key={e.id} className="row" style={{ gridTemplateColumns: "70px minmax(0,0.8fr) minmax(0,2fr) 100px 120px" }}>
             <span><span className={`badge ${BADGE[e.level] || ""}`}>{e.level}</span></span>
             <span className="code ellip">{e.source}</span>
@@ -31,6 +32,7 @@ export default function ErrorLogs() {
           </div>
         ))}
       </div>
+      {pager}
     </section>
   );
 }

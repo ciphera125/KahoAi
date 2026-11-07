@@ -471,3 +471,25 @@ h1 { font-weight: 800; letter-spacing: -.03em; }
 .tree-tool-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .twist { display: inline-flex; transition: transform .15s ease; color: var(--text-3); }
 .twist.open { transform: rotate(90deg); }
+
+.last-call { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; }
+
+/* sidebar, 2026-11-08 */
+nav.rail { padding-top: var(--s3); }
+.logo { min-height: 44px; margin-bottom: var(--s2); }
+/* The organization name is a button: it looks like one before anything touches it. */
+.org-name { height: 26px; padding: 0 8px; margin-left: -2px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); cursor: pointer; }
+.org-name:hover, .org-name[aria-expanded="true"] { background: var(--hover); border-color: var(--text-3); }
+.org-name svg.i { color: var(--text-3); }
+/* Folded rail: each item is only its icon. The hidden label used to leave a gap that made the
+   highlight a wide bar with empty space beside the icon, and a hover look like a selection. */
+.shell:not(.rail-wide) .nav-item { gap: 0; width: 44px; height: 44px; padding: 0; margin: 2px auto; justify-content: center; }
+.shell:not(.rail-wide) .nav-item .rail-text { display: none; }
+.shell:not(.rail-wide) .nav-pill { display: none; }
+.shell:not(.rail-wide) .nav-item:hover { background: transparent; }
+.shell:not(.rail-wide) .nav-item:hover .nav-icon { background: var(--hover); }
+.shell:not(.rail-wide) .nav-item.active { background: transparent; }
+.shell:not(.rail-wide) .nav-item.active::before { left: -16px; }
+
+.explain { margin-bottom: var(--s4); }
+.explain p { margin: 4px 0 0; }

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
-import { Icon, Menu, Modal, Spinner, useConfirm, useToast, whenShort } from "../ui.jsx";
+import { Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
 
 export default function Prompts() {
   const me = useMe();
@@ -13,6 +13,7 @@ export default function Prompts() {
   const [editing, setEditing] = useState(null);
   const load = () => get("/api/prompts").then(setPrompts).catch((e) => toast(e.message, true));
   useEffect(() => { load(); }, []);
+  const [shown, pager] = usePaged(prompts ?? []);
   if (!prompts) return <Spinner />;
 
   const remove = async (p) => {
@@ -28,7 +29,7 @@ export default function Prompts() {
       <div className="card list">
         <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr) 80px 110px 56px" }}><span>Prompt</span><span>Agent</span><span>Versions</span><span>Last edited</span><span /></div>
         {prompts.length === 0 && <div className="empty">No prompts yet.</div>}
-        {prompts.map((p) => (
+        {shown.map((p) => (
           <div key={p.id} className="row" style={{ gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr) 80px 110px 56px" }}>
             <div style={{ minWidth: 0 }}>
               <button type="button" className="link ellip" onClick={() => (p.agent_id ? navigate(`/agents/${p.agent_id}`) : setEditing(p))}>{p.name}</button>
@@ -41,6 +42,7 @@ export default function Prompts() {
           </div>
         ))}
       </div>
+      {pager}
       {editing && <EditPrompt prompt={editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {confirmNode}
     </section>

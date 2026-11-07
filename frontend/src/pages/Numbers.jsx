@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
-import { DropdownButton, Menu, Modal, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { DropdownButton, Menu, Modal, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 const STATUS = { active: ["Active", "active"], incomplete: ["Needs credentials", "warn"], not_connected: ["Not connected yet", "muted"] };
 
@@ -16,6 +16,7 @@ export default function Numbers() {
   const admin = isAdmin(me);
   const load = () => Promise.all([get("/api/numbers"), get("/api/agents"), get("/api/providers")]).then(([n, a, p]) => { setNumbers(n); setAgents(a); setProviders(p); }).catch((e) => toast(e.message, true));
   useEffect(() => { load(); }, []);
+  const [shown, pager] = usePaged(numbers ?? []);
   if (!numbers) return <Spinner />;
 
   const route = async (n, agentId) => { try { await post(`/api/numbers/${n.id}/agent`, { agent_id: agentId || null }); toast("Saved. The next call to this number uses it."); load(); } catch (e) { toast(e.message, true); } };
@@ -33,7 +34,7 @@ export default function Numbers() {
       <div className="card list">
         <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr) 150px 56px" }}><span>Number</span><span>Answers with</span><span>Status</span><span /></div>
         {numbers.length === 0 && <div className="empty">No numbers yet.</div>}
-        {numbers.map((n) => {
+        {shown.map((n) => {
           const [label, cls] = STATUS[n.status];
           return (
             <div key={n.id} className="row" style={{ gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr) 150px 56px" }}>
@@ -48,6 +49,7 @@ export default function Numbers() {
           );
         })}
       </div>
+      {pager}
       {editing && <EditNumber {...editing} onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />}
       {confirmNode}
     </section>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { get, post } from "../api.js";
-import { Icon, Modal, plural, Spinner, useToast } from "../ui.jsx";
+import { Icon, Modal, plural, Spinner, usePaged, useToast } from "../ui.jsx";
 
 export default function Agents() {
   const toast = useToast();
@@ -9,6 +9,7 @@ export default function Agents() {
   const [agents, setAgents] = useState(null);
   const [creating, setCreating] = useState(false);
   useEffect(() => { get("/api/agents").then(setAgents).catch((e) => toast(e.message, true)); }, []);
+  const [shown, pager] = usePaged(agents ?? [], 12);
   if (!agents) return <Spinner />;
   return (
     <section>
@@ -20,7 +21,7 @@ export default function Agents() {
         <div className="card empty">No agents yet. Create one for each kind of call you make.</div>
       ) : (
         <div className="agent-grid">
-          {agents.map((a) => (
+          {shown.map((a) => (
             <div key={a.id} className="card agent-card" role="button" tabIndex={0} onClick={() => navigate(`/agents/${a.id}`)} onKeyDown={(e) => e.key === "Enter" && navigate(`/agents/${a.id}`)}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div className="avatar"><Icon name="agent" /></div>
@@ -36,6 +37,7 @@ export default function Agents() {
           ))}
         </div>
       )}
+      {pager}
       {creating && <NewAgent onClose={() => setCreating(false)} onCreated={(a) => navigate(`/agents/${a.id}`)} />}
     </section>
   );

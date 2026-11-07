@@ -5,7 +5,8 @@ import { ApiError, get, post } from "../api.js";
 import { debounce } from "../debounce.js";
 import { fmtBytes } from "../format.js";
 import { callsUrl, recordingMessage } from "../recording.js";
-import { fmtDur, Icon, initials, Modal, OutcomePill, plural, useToast, whenShort } from "../ui.jsx";
+import { serverView } from "../paginate.js";
+import { fmtDur, Icon, initials, Modal, OutcomePill, Pager, plural, useToast, whenShort } from "../ui.jsx";
 
 export default function Calls() {
   const toast = useToast();
@@ -149,12 +150,7 @@ function History({ reload, onWatch }) {
           <span className="call-meta">{c.has_recording && <span className="rec-badge" title="This call was recorded"><Icon name="mic" />Recording</span>}<OutcomePill status={c.status} /></span>
         </button>
       ))}
-      {data && data.total > 10 && (
-        <div className="pager">
-          <button className="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>Previous</button>
-          <button className="ghost" disabled={page * 10 >= data.total} onClick={() => setPage((p) => p + 1)}>Next</button>
-        </div>
-      )}
+      {data && <Pager view={serverView({ page, total: data.total, size: 10 })} size={10} onPage={setPage} />}
       {view && <TranscriptModal call={view} onClose={() => setView(null)} />}
     </div>
   );

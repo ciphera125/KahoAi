@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, isOwner, useAuth } from "../auth.jsx";
-import { ago, initials, Menu, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { ago, initials, Menu, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 export default function Team() {
   const { me } = useAuth();
@@ -13,6 +13,7 @@ export default function Team() {
   const [team, setTeam] = useState(null);
   const [invite, setInvite] = useState(null);
   const load = useCallback(() => get("/api/team").then(setTeam).catch((e) => toast(e.message, true)), [toast]);
+  const [shown, pager] = usePaged(team ?? []);
   useEffect(() => { load(); if (isAdmin(me)) get("/api/me").then((m) => m.invite_code && setInvite({ code: m.invite_code, expires: m.invite_expires })).catch(() => {}); }, [load]);
   if (!team) return <Spinner />;
 
@@ -37,7 +38,7 @@ export default function Team() {
       )}
       <div className="card list">
         <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.5fr) 110px minmax(0,1fr) 56px" }}><span>Name</span><span>Role</span><span>Last active</span><span /></div>
-        {team.map((u) => (
+        {shown.map((u) => (
           <div key={u.id} className="row" style={{ gridTemplateColumns: "minmax(0,1.5fr) 110px minmax(0,1fr) 56px" }}>
             <div className="who"><div className="avatar">{initials(u.name)}</div><div style={{ minWidth: 0 }}><b className="ellip">{u.name}{u.id === me.id && <span className="muted"> · you</span>}</b><div className="muted ellip">{u.email}</div></div></div>
             <span className={`pill role ${u.role === "owner" ? "active" : ""}`}>{u.role}</span>
@@ -51,6 +52,7 @@ export default function Team() {
           </div>
         ))}
       </div>
+      {pager}
       {confirmNode}
     </section>
   );
