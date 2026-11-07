@@ -33,6 +33,11 @@ export async function ingest(req, res) {
   res.json({ ok: true });
 }
 
+export async function recordingReport(req, res) {
+  await Call.setRecording(req.params.callId, req.body ?? {});
+  res.json({ ok: true });
+}
+
 export async function reportError(req, res) {
   const { level, source, message, call_id, org_id } = req.body ?? {};
   await ErrorLog.add(org_id || null, { level, source, message, call_id });

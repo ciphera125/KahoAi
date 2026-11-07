@@ -53,6 +53,9 @@ const schema = z.object({
   PLIVO_AUTH_TOKEN: z.string().optional(),
   TRANSFER_NUMBER: z.string().optional(),
   TOOL_WEBHOOK_URL: z.string().optional(),
+  SUPABASE_URL: z.url().or(z.literal("")).optional(),            // call recordings: signed links to the private Storage bucket
+  SUPABASE_SECRET_KEY: z.string().optional(),
+  SUPABASE_RECORDINGS_BUCKET: z.string().optional(),
 });
 
 function load() {

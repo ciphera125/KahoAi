@@ -1,4 +1,5 @@
 // Calls: how each one ended and what its transcript says.
+import { createHash } from "node:crypto";
 import { asSystem, inOrg } from "../db/pool.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { blankDigits, maskSensitive } from "../utils/masking.js";
@@ -116,6 +117,7 @@ export async function ingest(callId, events) {
       const event = String(e.event ?? "");
       const at = when(e.at);
       let role = null, text = null, name = null;
+      let count = () => {}; // counters move only when the line is new: a resent batch must not double them
       if (event === "call_start") { call.started_at = at; call.has_transcript = true; }
       else if (event === "call_party") {
         try { call.peer = normalizeNumber(String(e.number ?? "")); } catch { /* left as it was */ }
@@ -123,21 +125,22 @@ export async function ingest(callId, events) {
       } else if (event === "turn") {
         role = e.role === "user" ? "user" : "assistant";
         text = maskSensitive(String(e.text ?? "").slice(0, 4000));
-        call.turns += 1;
-        if (role === "user") call.caller_turns += 1;
-        call.has_transcript = true;
+        count = () => { call.turns += 1; if (role === "user") call.caller_turns += 1; call.has_transcript = true; };
       } else if (event === "live") {
         role = ["assistant", "agent"].includes(e.role) ? "agent" : "caller";
         text = maskSensitive(blankDigits(String(e.text ?? "").slice(0, 2000)));
       } else if (event === "tool") {
         name = String(e.name ?? "").slice(0, 40);
-        call.lead = call.lead || leadSaved(e);
+        count = () => { call.lead = call.lead || leadSaved(e); };
       } else if (event === "call_end") { call.ended_at = at; }
       else if (event === "summary") { call.summary = maskSensitive(String(e.summary ?? "").slice(0, 2000)); }
       if (SHOWN.has(event)) {
         call.has_transcript = true;
-        await db.query("INSERT INTO call_events (call_id, at, event, role, text, name, org_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-          [callId, at, event, role, text, name, call.org_id]);
+        const dedupe = createHash("md5").update([callId, at.getTime(), event, role ?? "", name ?? "", text ?? ""].join("|")).digest("hex");
+        const done = await db.query(`INSERT INTO call_events (call_id, at, event, role, text, name, org_id, dedupe)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (dedupe) DO NOTHING`,
+        [callId, at, event, role, text, name, call.org_id, dedupe]);
+        if (done.rowCount) count();
       }
     }
     const duration = call.started_at && call.ended_at
@@ -155,7 +158,8 @@ export async function ingest(callId, events) {
 export const PAGE_SIZES = [10, 20, 25, 50];
 
 const FIELDS = `call_id, peer, direction, started_at, duration_secs, turns, summary, caller_turns, lead, has_transcript,
-  ${STATUS_SQL} AS status, cause, cost, agent_id, ${SUCCESS_SQL} AS successful`;
+  ${STATUS_SQL} AS status, cause, cost, agent_id, ${SUCCESS_SQL} AS successful,
+  (recording_path IS NOT NULL) AS has_recording`;
 
 const shape = (c) => ({ ...c, started_at: c.started_at ? new Date(c.started_at).toISOString() : null });
 
@@ -166,10 +170,17 @@ export function checkPage(page, perPage) {
 }
 
 /** One page of the organization's calls, newest first; only with `peers` if given. */
-export async function page(orgId, { page: p, perPage, peers = null }) {
+export async function page(orgId, { page: p, perPage, peers = null, q = null }) {
   const { page: n, perPage: size } = checkPage(p, perPage);
-  const where = `WHERE org_id = $1${peers ? " AND peer = ANY($2)" : ""}`;
-  const params = [orgId, ...(peers ? [peers] : [])];
+  const params = [orgId];
+  let where = "WHERE org_id = $1";
+  if (peers) { params.push(peers); where += ` AND peer = ANY($${params.length})`; }
+  if (q) { // what was said: the summary or any line of the call; websearch syntax never raises on odd input
+    params.push(q);
+    const k = `websearch_to_tsquery('simple', $${params.length})`;
+    where += ` AND (summary_tsv @@ ${k} OR EXISTS (SELECT 1 FROM call_events e
+      WHERE e.call_id = calls.call_id AND e.org_id = calls.org_id AND e.tsv @@ ${k}))`;
+  }
   return inOrg(orgId, async (db) => {
     const list = await db.query(`SELECT ${FIELDS} FROM calls ${where} ORDER BY started_at DESC NULLS LAST, call_id
       LIMIT ${size} OFFSET ${(n - 1) * size}`, params);
@@ -278,4 +289,31 @@ export async function dashboard(orgId, days) {
     best_hour: best,
     recent: recent.rows.map(shape),
   };
+}
+
+// --- recordings ---------------------------------------------------------------
+
+const RECORDING_MIMES = ["audio/opus", "audio/ogg", "audio/wav"];
+export const MAX_RECORDING_BYTES = 200 * 1024 * 1024;
+
+/** The voice service says where a finished call's audio now lives in Storage. */
+export async function setRecording(callId, { path, bytes, mime } = {}) {
+  if (typeof callId !== "string" || !CALL_ID.test(callId)) throw new ValidationError("not a call id");
+  if (typeof path !== "string" || !new RegExp(`^[0-9]{4}/[0-9]{2}/${callId}\\.(opus|wav)$`).test(path)) throw new ValidationError("not this call's recording path");
+  if (!RECORDING_MIMES.includes(mime)) throw new ValidationError("mime must be audio/opus, audio/ogg or audio/wav");
+  if (!Number.isInteger(bytes) || bytes < 1 || bytes > MAX_RECORDING_BYTES) throw new ValidationError("bytes must be a whole number up to 200 MB");
+  await asSystem(async (db) => {
+    await db.query("INSERT INTO calls (call_id) VALUES ($1) ON CONFLICT DO NOTHING", [callId]);
+    await db.query(`UPDATE calls SET recording_path = $2, recording_bytes = $3, recording_mime = $4, recording_at = now(), updated_at = now()
+      WHERE call_id = $1`, [callId, path, bytes, mime]);
+  });
+}
+
+/** The organization's recording for a call, or null. */
+export async function recordingOf(orgId, callId) {
+  if (!CALL_ID.test(String(callId))) return null;
+  const { rows } = await inOrg(orgId, (db) => db.query(
+    "SELECT recording_path AS path, recording_bytes::int AS bytes, recording_mime AS mime FROM calls WHERE call_id = $1 AND org_id = $2 AND recording_path IS NOT NULL",
+    [callId, orgId]));
+  return rows[0] ?? null;
 }

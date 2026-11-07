@@ -86,3 +86,10 @@ members; members do the daily work.
 - **TRUST_PROXY=true** only behind a load balancer you control (it decides the
   client address the limits use).
 - Put the voice-service API (:8021) on a private network; never expose it.
+
+## Supabase: lock-down, search and recordings (migration 008)
+
+- The public-API roles `anon` and `authenticated` are revoked from every table and a RESTRICTIVE `deny_api` policy blocks them even if grants return; `schema_migrations` is row-protected (the migration runner sets `app.bypass` for itself).
+- Transcript lines are idempotent: `call_events.dedupe` (md5 of call, time in ms, event, role, name, text) is unique, so a resent batch changes nothing.
+- `GET /api/calls?q=` searches summaries and every transcript line (full-text, `simple` config, GIN indexes), per organization.
+- `POST /internal/v1/calls/:id/recording` `{path, bytes, mime}` links an uploaded file to its call; `GET /api/calls/:id/recording` returns a 10-minute signed link. Set `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, `SUPABASE_RECORDINGS_BUCKET` in `backend/.env` for it; without them the route answers 503.

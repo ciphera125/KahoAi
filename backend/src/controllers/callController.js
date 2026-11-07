@@ -4,6 +4,7 @@ import * as Call from "../models/Call.js";
 import * as Contact from "../models/Contact.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 import { OutsideWindowError, placeCall } from "../services/calling.js";
+import { SIGNED_URL_SECS, signRecording } from "../services/storage.js";
 import { syncFromPlivo } from "../services/plivoSync.js";
 import { subscribe } from "../services/liveEvents.js";
 import { HttpError, NotFoundError, ValidationError } from "../utils/errors.js";
@@ -35,8 +36,19 @@ export async function place(req, res) {
 
 export async function list(req, res) {
   const org = req.user.org_id;
-  const page = await Call.page(org, { page: req.query.page, perPage: req.query.per_page });
+  const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
+  if (req.query.q !== undefined && typeof req.query.q !== "string") throw new ValidationError("q must be text");
+  const page = await Call.page(org, { page: req.query.page, perPage: req.query.per_page, q: q || null });
   res.json({ ...page, calls: await named(org, page.calls) });
+}
+
+/** A ten-minute link to the call's audio; only for a call the organization owns. */
+export async function recording(req, res) {
+  const rec = await Call.recordingOf(req.user.org_id, req.params.callId);
+  if (!rec) throw new NotFoundError("recording");
+  const ext = rec.path.endsWith(".wav") ? "wav" : "opus";
+  const { url, download_url: downloadUrl } = await signRecording(rec.path, `${req.params.callId}.${ext}`);
+  res.json({ url, download_url: downloadUrl, expires_in: SIGNED_URL_SECS, mime: rec.mime, bytes: rec.bytes });
 }
 
 export async function forContact(req, res) {

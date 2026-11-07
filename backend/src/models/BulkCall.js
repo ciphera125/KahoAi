@@ -187,9 +187,11 @@ export async function openCounts() {
 /** Take up to `n` queued items for dialling, in list order. Two runners never take the same one. */
 export async function claim(runId, n) {
   if (n <= 0) return [];
-  const { rows } = await asSystem((db) => db.query(`UPDATE bulk_items SET status = 'dialling', placed_at = now()
-    WHERE id IN (SELECT id FROM bulk_items WHERE run_id = $1 AND status = 'queued' ORDER BY position LIMIT $2 FOR UPDATE SKIP LOCKED)
-    RETURNING *`, [runId, n]));
+  // MATERIALIZED: without it Postgres may re-run the LIMITed subquery per row and claim more than n.
+  const { rows } = await asSystem((db) => db.query(`WITH picked AS MATERIALIZED (
+      SELECT id FROM bulk_items WHERE run_id = $1 AND status = 'queued' ORDER BY position LIMIT $2 FOR UPDATE SKIP LOCKED)
+    UPDATE bulk_items i SET status = 'dialling', placed_at = now() FROM picked WHERE i.id = picked.id
+    RETURNING i.*`, [runId, n]));
   return rows.sort((a, b) => a.position - b.position);
 }
 

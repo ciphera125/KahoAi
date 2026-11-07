@@ -17,3 +17,7 @@ process.env.PUBLIC_SCHEME = "http";
 process.env.PLIVO_DIAL_TIMEOUT_MS = "3000";
 process.env.STREAM_WAIT_SECS = "2";
 process.env.MAX_STREAMS_PER_USER = "2";
+// A fake Supabase Storage on a fixed local port (tests/storageData.test.js); never the real one.
+process.env.SUPABASE_URL = "http://127.0.0.1:18767";
+process.env.SUPABASE_SECRET_KEY = "sb_secret_test_key_never_real";
+process.env.SUPABASE_RECORDINGS_BUCKET = "call-recordings";
