@@ -14,9 +14,9 @@ expected (that database has no `anon` role); everything else must be green.
 | 1 | Save vs Publish, with versions and rollback | done | `1e5b235` |
 | 2 | "Save What the Caller Says" (capture tool) | done | `4692c42` |
 | 3 | Tasks table, Tasks page, four task tools | done | `c452beb` |
-| 4 | "Look Up Contact Details" tool | done | `STEP4` |
-| 5 | The `{{` picker in the prompt editor | in progress | |
-| 6 | Custom API tools ("Call My API") | todo | |
+| 4 | "Look Up Contact Details" tool | done | `2f1c298` |
+| 5 | The `{{` picker in the prompt editor | done | `STEP5` |
+| 6 | Custom API tools ("Call My API") | in progress | |
 | 7 | Tool-call History tree | todo | |
 | 8 | "Test this agent", with Publish gating | todo | |
 
@@ -104,6 +104,24 @@ expected (that database has no `anon` role); everything else must be green.
   every answer saved on a call.
 - The tools-list error message is now built from `KNOWN_TOOLS` in the test, so adding a
   tool no longer breaks an unrelated assertion.
+
+### Step 5
+
+- **Variables are filled in by the Studio, before the prompt reaches the model.** The
+  voice service now sends the caller's number with its call-config request; nothing about
+  the variables exists on the call path, so the model cannot read one out or be talked
+  into describing them.
+- **An unknown variable becomes nothing, not `{{...}}`.** Hearing "Hello, curly curly
+  customer name" is the worst outcome; publish already refuses a variable we cannot fill.
+- **`detail.*` is accepted without being listed**, since those fields come from the
+  customer's own system and differ per contact. The picker still offers the ones this
+  organization actually sends, read from the contacts it has.
+- **Found and fixed while doing this:** `studio_link._clean_config` builds a fixed shape,
+  so the capture fields added in step 2 were being dropped before reaching a real call.
+  Three tests now cover it, including a malformed field being dropped on its own rather
+  than taking the whole config down.
+- `variables.js` queries the latest answers itself rather than importing `CallAnswer.js`,
+  which would have made Agent.js and CallAnswer.js import each other through it.
 
 ## Known limits / to revisit
 

@@ -13,7 +13,10 @@ import * as PhoneNumber from "../models/PhoneNumber.js";
 export async function callConfig(req, res) {
   let agentId = typeof req.query.agent_id === "string" ? req.query.agent_id : null;
   if (!agentId && typeof req.query.number === "string") agentId = await Agent.agentForNumber(req.query.number);
-  res.json({ config: agentId ? await Agent.callConfig(agentId) : null });
+  // The caller's own number, so {{customer_name}} and the rest are filled in before the
+  // prompt ever reaches the model.
+  const caller = typeof req.query.caller === "string" && req.query.caller ? req.query.caller : null;
+  res.json({ config: agentId ? await Agent.callConfig(agentId, { caller }) : null });
 }
 
 export async function recordOutcome(req, res) {

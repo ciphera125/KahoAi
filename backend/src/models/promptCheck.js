@@ -60,7 +60,9 @@ export function promptProblems(text, attachedTools = [], knownVariables = []) {
   }
 
   for (const name of unique(variables)) {
-    if (known.has(name)) continue;
+    // detail.* is whatever the customer's own system sends about a contact: we cannot
+    // list them in advance, and an empty one is filled in as nothing rather than read out.
+    if (known.has(name) || name.startsWith("detail.")) continue;
     problems.push({
       code: "unfilled_variable",
       found: name,
@@ -74,7 +76,14 @@ export function promptProblems(text, attachedTools = [], knownVariables = []) {
 /** The first problem, as one line, or null. */
 export const firstProblem = (text, attachedTools) => promptProblems(text, attachedTools)[0]?.message ?? null;
 
-/** The {{...}} an agent with these settings can fill in: one per question it saves.
- * Lives here, not in Agent.js, so Prompt.js can use it without an import cycle. */
-export const variablesOf = (settings) =>
-  (Array.isArray(settings?.capture_fields) ? settings.capture_fields : []).map((f) => `answer.${f.key}`);
+// Filled in for every call, whoever is on it (variables.js does the filling).
+export const ALWAYS_FILLED = ["customer_name", "customer_phone", "today", "now", "agent_name"];
+
+/** The {{...}} an agent with these settings can fill in: the ones that are always
+ * there, plus one per question it saves. Lives here, not in Agent.js, so Prompt.js can
+ * use it without an import cycle. `detail.*` is accepted by name in `promptProblems`,
+ * since those fields come from the customer's own system and differ per contact. */
+export const variablesOf = (settings) => [
+  ...ALWAYS_FILLED,
+  ...(Array.isArray(settings?.capture_fields) ? settings.capture_fields : []).map((f) => `answer.${f.key}`),
+];

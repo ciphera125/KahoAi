@@ -450,3 +450,14 @@ h1 { font-weight: 800; letter-spacing: -.03em; }
 .switch-inline { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; white-space: nowrap; padding-bottom: 8px; }
 .inline-edit { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .inline-edit input { width: auto; }
+
+.picker { position: absolute; z-index: 20; left: 0; right: 0; top: 100%; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-lg, 0 8px 24px rgba(0,0,0,.18)); padding: 6px; }
+.picker > input { margin-bottom: 6px; }
+.picker-list { max-height: 260px; overflow: auto; }
+.picker-group { font: 600 11px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .04em;
+  color: var(--text-3); padding: 6px 8px 2px; }
+.picker-item { display: flex; justify-content: space-between; gap: 12px; width: 100%; text-align: left;
+  background: none; border: 0; padding: 6px 8px; border-radius: var(--r-sm); cursor: pointer; color: inherit; }
+.picker-item:hover, .picker-item:focus-visible { background: var(--accent-soft); }
+.picker-item code { color: var(--text-3); font-size: 11.5px; }

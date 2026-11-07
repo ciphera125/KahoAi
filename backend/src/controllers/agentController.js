@@ -34,6 +34,10 @@ export async function check(req, res) {
   res.json(await Agent.check(req.user.org_id, req.params.agentId));
 }
 
+export async function variables(req, res) {
+  res.json(await Agent.variables(req.user.org_id, req.params.agentId));
+}
+
 export async function versions(req, res) {
   res.json(await Agent.versions(req.user.org_id, req.params.agentId));
 }

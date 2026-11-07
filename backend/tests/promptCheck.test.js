@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { freshDb, owner } from "./helpers.js";
-import { promptProblems } from "../src/models/promptCheck.js";
+import { ALWAYS_FILLED, promptProblems } from "../src/models/promptCheck.js";
 import * as Agent from "../src/models/Agent.js";
 
 beforeEach(freshDb);
@@ -47,6 +47,13 @@ describe("what a prompt may say about tools (the 2026-11-07 bug)", () => {
 });
 
 describe("variables the agent can actually fill in", () => {
+  it("accepts the ones that are always filled in, and anything the system sends", () => {
+    expect(promptProblems("Hello {{customer_name}}, today is {{today}}.", [], ALWAYS_FILLED)).toEqual([]);
+    expect(promptProblems("Your {{detail.loan_amount}} loan.", [], ALWAYS_FILLED)).toEqual([]);
+    const [problem] = promptProblems("Your {{loan_amount}} loan.", [], ALWAYS_FILLED);
+    expect(problem).toMatchObject({ code: "unfilled_variable", found: "loan_amount" });
+  });
+
   it("accepts an answer the agent collects, and still catches one it does not", () => {
     const known = ["answer.payment_date"];
     expect(promptProblems("Remind them about {{answer.payment_date}}.", [], known)).toEqual([]);

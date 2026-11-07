@@ -332,3 +332,35 @@ async def test_a_recording_report_failure_is_contained(monkeypatch):
     monkeypatch.setenv("STUDIO_INTERNAL_TOKEN", TOKEN)
     monkeypatch.setattr(studio_link, "_transport", httpx.MockTransport(boom))
     assert await studio_link.report_recording(CALL, "2026/11/x.opus", 1, "audio/opus") is False
+
+
+def test_the_config_carries_the_questions_the_agent_saves():
+    # Added 2026-11-07 with the capture tool: _clean_config builds a fixed shape, so a
+    # new field in the Studio's answer is dropped unless it is named here too.
+    raw = {"agent_id": "ag_1", "org_id": "org_1", "name": "Ria", "prompt": "hi", "tools": [],
+           "opening_line": None, "max_secs": 600.0, "ring_secs": 40, "version": 3,
+           "confirm_answers": False,
+           "capture_fields": [{"key": "payment_date", "label": "Payment date", "kind": "date",
+                               "choices": [], "required": True, "ask": ""}]}
+    out = studio_link._clean_config(raw)
+    assert out["capture_fields"][0]["key"] == "payment_date"
+    assert out["confirm_answers"] is False
+    assert out["version"] == 3
+
+
+def test_a_config_with_no_questions_still_works_and_defaults_to_reading_back():
+    raw = {"agent_id": "ag_1", "org_id": None, "name": "", "prompt": None, "tools": [],
+           "opening_line": None, "max_secs": 600.0, "ring_secs": 40}
+    out = studio_link._clean_config(raw)
+    assert out["capture_fields"] == []
+    assert out["confirm_answers"] is True
+    assert out["version"] is None
+
+
+def test_malformed_questions_are_dropped_rather_than_passed_to_a_live_call():
+    raw = {"agent_id": "ag_1", "org_id": None, "name": "", "prompt": None, "tools": [],
+           "opening_line": None, "max_secs": 600.0, "ring_secs": 40,
+           "capture_fields": [{"label": "No key"}, "not an object",
+                              {"key": "ok_one", "label": "Fine", "kind": "text"}]}
+    out = studio_link._clean_config(raw)
+    assert [f["key"] for f in out["capture_fields"]] == ["ok_one"]

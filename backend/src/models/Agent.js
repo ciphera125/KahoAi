@@ -6,6 +6,8 @@ import { hexId } from "../utils/crypto.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { DEFAULT_TOOLS, KNOWN_TOOLS } from "./toolCatalog.js";
 import { KINDS as CAPTURE_KINDS } from "./answerValue.js";
+import { fill as fillVariables, offered } from "./variables.js";
+import { idForNumber as contactIdForNumber } from "./Contact.js";
 import { promptProblems, variablesOf } from "./promptCheck.js";
 import { AGENT_ID, normalizeNumber } from "../utils/phone.js";
 import { cleanText } from "../utils/text.js";
@@ -101,8 +103,8 @@ const SETTING_LABELS = { max_minutes: "Longest call (minutes)", ring_secs: "Ring
 /** Refuses a prompt an agent could not actually follow. Called wherever a prompt or an
  * agent's tools change, because either side can break the pair. `only` narrows it to one
  * kind of problem (changing tools says nothing about the prompt's variables). */
-export function refusePromptProblems(text, tools, only = null) {
-  const problems = promptProblems(text, tools).filter((p) => !only || p.code === only);
+export function refusePromptProblems(text, tools, known = []) {
+  const problems = promptProblems(text, tools, known);
   if (problems.length) throw new ValidationError(problems[0].message);
 }
 
@@ -189,7 +191,7 @@ export async function create(orgId, { name, description, prompt }) {
   name = cleanText(name, MAX_NAME, "agent name");
   description = cleanText(description, MAX_DESCRIPTION, "description", false);
   const text = promptText(prompt);
-  refusePromptProblems(text, DEFAULT_TOOLS);
+  refusePromptProblems(text, DEFAULT_TOOLS, variablesOf(DEFAULT_SETTINGS));
   return inOrg(orgId, async (db) => {
     const id = `ag_${hexId()}`;
     await db.query("INSERT INTO agents (id, name, description, tools, settings, org_id) VALUES ($1, $2, $3, $4, $5, $6)",
@@ -367,9 +369,28 @@ export async function agentForNumber(number) {
   }
 }
 
+/** Who is on the other end, if we know them. Never throws: a call must start anyway. */
+async function contactForCaller(orgId, caller) {
+  if (!orgId || !caller) return null;
+  try {
+    return await contactIdForNumber(orgId, caller);
+  } catch {
+    return null;
+  }
+}
+
+/** Everything the prompt editor can offer for this agent. */
+export async function variables(orgId, agentId) {
+  const agent = await get(orgId, agentId);
+  const { rows } = await inOrg(orgId, (db) => db.query(
+    `SELECT DISTINCT jsonb_object_keys(details) AS key FROM contacts
+     WHERE org_id = $1 AND details <> '{}'::jsonb ORDER BY 1 LIMIT 50`, [orgId]));
+  return offered({ captureFields: agent.settings.capture_fields ?? [], detailKeys: rows.map((r) => r.key) });
+}
+
 /** What a call with this agent needs, or null. Never throws: it is read at the
  * start of a live call, and an id can arrive from the network. */
-export async function callConfig(agentId) {
+export async function callConfig(agentId, { caller = null } = {}) {
   if (typeof agentId !== "string" || !AGENT_ID.test(agentId)) return null;
   try {
     // The published version, never the draft: what someone is still working on in the
@@ -381,7 +402,13 @@ export async function callConfig(agentId) {
     const a = rows[0];
     if (!a) return null;
     const s = settingsOf(a.settings);
-    return { agent_id: a.id, org_id: a.org_id, name: a.name, prompt: a.prompt || null,
+    // The prompt is filled in here, before it ever reaches the model, so the agent is
+    // handed plain words and cannot read a {{variable}} out loud.
+    const prompt = await fillVariables(a.prompt || "", {
+      orgId: a.org_id, contactId: caller ? await contactForCaller(a.org_id, caller) : null,
+      phone: caller, agentName: a.name,
+    }).catch(() => a.prompt || "");
+    return { agent_id: a.id, org_id: a.org_id, name: a.name, prompt: prompt || null,
       tools: a.tools.filter((t) => KNOWN_TOOLS.includes(t)), opening_line: s.opening_line || null,
       max_secs: s.max_minutes * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
       capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, version: a.version };

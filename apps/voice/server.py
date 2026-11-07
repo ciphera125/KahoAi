@@ -322,21 +322,23 @@ async def answer(request: Request, token: str | None = Query(None)):
         return Response(str(e), status_code=400)
 
     peer = clean_caller(first("peer"))
+    # Who is on the other end, so the Studio can fill a prompt's {{customer_name}} and
+    # the rest in before the model ever sees it.
+    caller = peer or clean_caller(first("From"))
     # A Studio agent: named by an outbound call from the Studio, or the one our
     # number routes to for an inbound call. Checked here, so a bad id never rings.
     studio_agent = first("studio_agent")
     if studio_agent:
-        config = await agent_config_for(agent_id=studio_agent)
+        config = await agent_config_for(agent_id=studio_agent, caller=caller)
         if config is None:
             logger.error("Refusing the call: unknown Studio agent")
             return Response("unknown agent", status_code=400)
     elif not peer:
-        config = await agent_config_for(number=first("To"))
+        config = await agent_config_for(number=first("To"), caller=caller)
     else:
         config = None
     if config:
         max_secs = min(max_secs, config["max_secs"])
-    caller = peer or clean_caller(first("From"))
     logger.info(f"{'Outbound call to' if peer else 'Inbound call from'} {caller or 'unknown'}")
     apology = env("FAILURE_MESSAGE") or DEFAULT_APOLOGY
     stream_token = issue_stream({"caller": caller, "agent": agent, "max_secs": max_secs,
@@ -710,14 +712,15 @@ async def _close_sink_later(sink) -> None:
     await sink.close()
 
 
-async def agent_config_for(agent_id: str | None = None, number: str | None = None) -> dict | None:
+async def agent_config_for(agent_id: str | None = None, number: str | None = None,
+                           caller: str | None = None) -> dict | None:
     """The Studio agent for a call: by its id (outbound) or by our number (inbound).
     Read from the Studio when it is linked; if it cannot answer, from
     data/agents.json, so a Studio that is down never stops a call ringing."""
     store = agents_store.default_store()
     if studio_link.configured():
         try:
-            return await studio_link.call_config(agent_id=agent_id, number=number)
+            return await studio_link.call_config(agent_id=agent_id, number=number, caller=caller)
         except studio_link.StudioUnavailable as e:
             logger.warning(f"The Studio did not answer ({e}); using the local agents")
     if agent_id is None:

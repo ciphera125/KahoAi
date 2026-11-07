@@ -64,6 +64,26 @@ def _client() -> httpx.AsyncClient:
                              headers={"Authorization": f"Bearer {_token()}"})
 
 
+def _clean_fields(raw) -> list[dict]:
+    """The questions this agent saves. One malformed entry is dropped rather than taking
+    the whole call's config down with it: the rest of the call still works without it."""
+    out = []
+    for field in raw if isinstance(raw, list) else []:
+        if not isinstance(field, dict):
+            continue
+        key, label, kind = field.get("key"), field.get("label"), field.get("kind")
+        if not (isinstance(key, str) and key and isinstance(kind, str) and kind):
+            continue
+        choices = field.get("choices")
+        out.append({
+            "key": key, "label": str(label or key), "kind": kind,
+            "choices": [str(c) for c in choices] if isinstance(choices, list) else [],
+            "required": bool(field.get("required")),
+            "ask": str(field.get("ask") or ""),
+        })
+    return out
+
+
 def _clean_config(raw) -> dict | None:
     """The Studio's config in the shape agents_store.call_config gives, or None
     if anything in it is malformed (it decides what a live call does)."""
@@ -79,18 +99,25 @@ def _clean_config(raw) -> dict | None:
         if opening is not None and not isinstance(opening, str):
             return None
         org_id = raw.get("org_id")
+        version = raw.get("version")
         return {"agent_id": str(raw["agent_id"]), "org_id": str(org_id) if org_id else None,
                 "name": str(raw.get("name") or ""),
                 "prompt": prompt or None, "tools": tools, "opening_line": opening or None,
-                "max_secs": float(raw["max_secs"]), "ring_secs": int(raw["ring_secs"])}
+                "max_secs": float(raw["max_secs"]), "ring_secs": int(raw["ring_secs"]),
+                "capture_fields": _clean_fields(raw.get("capture_fields")),
+                "confirm_answers": raw.get("confirm_answers") is not False,
+                "version": int(version) if version is not None else None}
     except (KeyError, TypeError, ValueError):
         return None
 
 
-async def call_config(agent_id: str | None = None, number: str | None = None) -> dict | None:
+async def call_config(agent_id: str | None = None, number: str | None = None,
+                      caller: str | None = None) -> dict | None:
     """The agent for this call, by its id or by the number it was routed to.
     None if the Studio has no such agent; StudioUnavailable if it could not say."""
     params = {"agent_id": agent_id} if agent_id else {"number": number or ""}
+    if caller:
+        params["caller"] = caller
     try:
         async with _client() as client:
             r = await asyncio.wait_for(client.get("/internal/v1/call-config", params=params),

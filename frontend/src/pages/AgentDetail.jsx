@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
@@ -205,6 +205,37 @@ function VersionsTab({ agent, confirm, onChanged }) {
   );
 }
 
+/** Typing {{ offers what this agent can actually fill in: who it is calling, what it has
+ * saved about them, and the call's own facts. Picking one puts it in at the cursor, so
+ * nobody has to remember the spelling, which is how the 2026-11-07 prompt went wrong. */
+function VariablePicker({ groups, onPick, onClose }) {
+  const [find, setFind] = useState("");
+  const matches = groups
+    .map((g) => ({ ...g, items: g.items.filter((i) => `${i.name} ${i.label}`.toLowerCase().includes(find.toLowerCase())) }))
+    .filter((g) => g.items.length);
+  return (
+    <div className="picker">
+      <input autoFocus value={find} placeholder="Find a detail…" aria-label="Find a detail"
+        onChange={(e) => setFind(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Escape") onClose(); }} />
+      <div className="picker-list">
+        {matches.length === 0 && <div className="hint" style={{ padding: 8 }}>Nothing matches.</div>}
+        {matches.map((g) => (
+          <div key={g.group}>
+            <div className="picker-group">{g.group}</div>
+            {g.items.map((i) => (
+              <button key={i.name} className="picker-item" onClick={() => onPick(i.name)}>
+                <b>{i.label}</b><code>{`{{${i.name}}}`}</code>
+              </button>
+            ))}
+          </div>
+        ))}
+      </div>
+      <div className="hint" style={{ padding: "6px 8px" }}>These are filled in before the call, so the agent never asks for them.</div>
+    </div>
+  );
+}
+
 function PromptTab({ agent, prompts, onChanged }) {
   const toast = useToast();
   const active = prompts.find((p) => p.id === agent.active_prompt_id) || prompts[0];
@@ -212,7 +243,32 @@ function PromptTab({ agent, prompts, onChanged }) {
   const current = prompts.find((p) => p.id === sel) || active;
   const [name, setName] = useState(current?.name || "");
   const [text, setText] = useState(current?.prompt || "");
+  const [groups, setGroups] = useState([]);
+  const [picking, setPicking] = useState(false);
+  const boxRef = useRef(null);
   useEffect(() => { setName(current?.name || ""); setText(current?.prompt || ""); }, [sel]);
+  useEffect(() => { get(`/api/agents/${agent.id}/variables`).then(setGroups).catch(() => setGroups([])); }, [agent.id]);
+
+  // "{{" anywhere opens the picker; what it inserts replaces those two characters.
+  const onType = (e) => {
+    setText(e.target.value);
+    const upto = e.target.value.slice(0, e.target.selectionStart);
+    if (upto.endsWith("{{")) setPicking(true);
+  };
+  const insert = (variableName) => {
+    const box = boxRef.current;
+    const at = box ? box.selectionStart : text.length;
+    const before = text.slice(0, at).replace(/\{\{$/, "");
+    const next = `${before}{{${variableName}}}${text.slice(at)}`;
+    setText(next);
+    setPicking(false);
+    requestAnimationFrame(() => {
+      if (!box) return;
+      const caret = before.length + variableName.length + 4;
+      box.focus();
+      box.setSelectionRange(caret, caret);
+    });
+  };
   if (!current) return <div className="card">This agent has no prompt.</div>;
 
   const save = async () => {
@@ -231,7 +287,11 @@ function PromptTab({ agent, prompts, onChanged }) {
           <button className="chip" onClick={addPrompt}><Icon name="plus" />New prompt</button>
         </div>
         <div className="field"><label className="f">Prompt name</label><input value={name} onChange={(e) => setName(e.target.value)} /></div>
-        <div className="field"><label className="f">Prompt</label><textarea value={text} onChange={(e) => setText(e.target.value)} /></div>
+        <div className="field" style={{ position: "relative" }}><label className="f">Prompt</label>
+          <textarea ref={boxRef} value={text} onChange={onType} />
+          <span className="hint">Type <code>{"{{"}</code> to drop in something you already know, like their name.</span>
+          {picking && <VariablePicker groups={groups} onPick={insert} onClose={() => setPicking(false)} />}
+        </div>
         <div className="actions"><button className="primary" onClick={save}>Save prompt</button>{current.id !== agent.active_prompt_id && <button className="ghost" onClick={use}>Use on calls</button>}</div>
       </div>
       <div className="card"><div className="card-head"><span className="card-title">How it works</span></div>

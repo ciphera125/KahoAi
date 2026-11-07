@@ -39,7 +39,7 @@ describe("what the agent can look up about the person it is calling", () => {
 
   it("gives back the newest answer saved for each question", async () => {
     const b = await owner();
-    const contact = await onACall(b);
+    await onACall(b);
     const a = (await b.get("/api/agents")).body[0];
     await b.patch(`/api/agents/${a.id}`).send({ settings: { capture_fields: [{ label: "Payment date", kind: "date" }] } });
     await publish(b, a.id);
