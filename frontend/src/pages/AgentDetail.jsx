@@ -53,7 +53,7 @@ export default function AgentDetail() {
         <p className="hint">Ask an admin for a role that can build agents (Manager or Agent builder).</p></div>}
       {can(me, "agents.edit") && <PublishBar agent={agent} check={check} me={me} confirm={confirm} onChanged={load} />}
       <div className="seg">
-        {["prompt", "tools", "questions", "settings", "calls", "versions"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "questions" ? "Questions to save" : t === "settings" ? "Call settings" : t === "calls" ? "Call history" : "Versions"}</button>)}
+        {["prompt", "tools", "questions", "knowledge", "settings", "calls", "versions"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "questions" ? "Questions to save" : t === "knowledge" ? "Knowledge" : t === "settings" ? "Call settings" : t === "calls" ? "Call history" : "Versions"}</button>)}
       </div>
       {tab === "prompt" && <PromptTab agent={agent} prompts={prompts} onChanged={load} />}
       {(tab === "tools" || tab === "questions") && (can(me, "agents.edit") || can(me, "tools.custom")) && (
@@ -62,6 +62,7 @@ export default function AgentDetail() {
       {tab === "settings" && <SettingsTab agent={agent} limits={limits} languages={languages} onChanged={load} />}
       {tab === "calls" && <AgentCalls agent={agent} />}
       {tab === "questions" && <QuestionsTab agent={agent} onChanged={load} />}
+      {tab === "knowledge" && <KnowledgeTab agent={agent} onChanged={load} />}
       {tab === "versions" && <VersionsTab agent={agent} confirm={confirm} onChanged={load} />}
       {chatting && <Assistant agentId={agent.id} onClose={() => setChatting(false)} onApplied={() => load()} />}
       {confirmNode}
@@ -436,6 +437,76 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
         <div className="field"><label className="f">Time zone</label><input value={cw.timezone} disabled={!cw.enabled} onChange={(e) => setCw({ ...cw, timezone: e.target.value })} placeholder="Asia/Kolkata" /></div>
         <div className="actions"><button className="primary" onClick={save}>Save calling window</button></div>
       </div>
+    </div>
+  );
+}
+
+/** Documents the agent can answer from. Text only: paste it, or load a .txt, .md or .csv file. */
+function KnowledgeTab({ agent, onChanged }) {
+  const toast = useToast();
+  const me = useMe();
+  const [confirm, confirmNode] = useConfirm();
+  const [docs, setDocs] = useState(null);
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const editable = can(me, "agents.edit");
+  const on = agent.tools.includes("search_knowledge");
+
+  const load = useCallback(() => get(`/api/agents/${agent.id}/knowledge`).then(setDocs).catch((e) => toast(e.message, true)), [agent.id, toast]);
+  useEffect(() => { load(); }, [load]);
+
+  const readFile = async (file) => {
+    if (!file) return;
+    if (file.size > 200000) return toast("That file is too big. Split it into parts of up to 20,000 letters each.", true);
+    setText(await file.text());
+    setTitle((t) => t || file.name.replace(/\.[^.]+$/, ""));
+  };
+  const addDoc = async () => {
+    setBusy(true);
+    try {
+      await post(`/api/agents/${agent.id}/knowledge`, { title, text });
+      if (!on) await patch(`/api/agents/${agent.id}`, { tools: [...agent.tools, "search_knowledge"] });
+      setTitle(""); setText(""); toast("Added. Publish the agent to make it live."); load(); onChanged();
+    } catch (e) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  const remove = async (d) => {
+    if (!(await confirm({ title: `Remove “${d.title}”?`, text: "The agent will stop answering from it once you publish.", ok: "Remove" }))) return;
+    try { await del(`/api/agents/${agent.id}/knowledge/${d.id}`); load(); } catch (e) { toast(e.message, true); }
+  };
+
+  return (
+    <div className="stack">
+      <div className="card explain">
+        <b>Teach the agent about your business</b>
+        <p className="hint">Add a price list, an FAQ or your policies. When a caller asks something, the agent looks it up here and answers only from what you wrote,
+          and says it is not sure if the answer is not there. Adding a document switches the lookup on for this agent.</p>
+      </div>
+      {docs === null ? <Spinner /> : docs.length > 0 && (
+        <div className="card">
+          <table className="rows"><tbody>
+            {docs.map((d) => (
+              <tr key={d.id}><td><b>{d.title}</b><div className="hint">{d.chars.toLocaleString("en-IN")} letters</div></td>
+                <td style={{ textAlign: "right" }}>{editable && <button className="ghost" onClick={() => remove(d)} aria-label={`Remove ${d.title}`}><Icon name="trash" /></button>}</td></tr>
+            ))}
+          </tbody></table>
+        </div>
+      )}
+      {editable && (
+        <div className="card">
+          <div className="field"><label className="f" htmlFor="kb-title">Name of the document</label>
+            <input id="kb-title" value={title} maxLength={120} placeholder="Loan FAQ" onChange={(e) => setTitle(e.target.value)} /></div>
+          <div className="field"><label className="f" htmlFor="kb-text">What it says</label>
+            <textarea id="kb-text" rows={8} value={text} maxLength={20000} placeholder="Paste the text here, or load a file below."
+              onChange={(e) => setText(e.target.value)} />
+            <span className="hint">{text.length.toLocaleString("en-IN")} of 20,000 letters. Put a blank line between topics: the agent finds the right paragraph.</span></div>
+          <div className="actions">
+            <label className="ghost file-pick">Load a text file<input type="file" accept=".txt,.md,.csv,text/plain" hidden onChange={(e) => readFile(e.target.files?.[0])} /></label>
+            <button className="primary" onClick={addDoc} disabled={busy || !title.trim() || !text.trim()}>Add document</button>
+          </div>
+        </div>
+      )}
+      {confirmNode}
     </div>
   );
 }

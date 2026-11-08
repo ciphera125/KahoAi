@@ -9,6 +9,7 @@
 import { asSystem } from "../db/pool.js";
 import { logger } from "../utils/logger.js";
 import { parseAnswer } from "./answerValue.js";
+import * as Knowledge from "./Knowledge.js";
 import * as Task from "./Task.js";
 import * as Contact from "./Contact.js";
 import * as CustomTool from "./CustomTool.js";
@@ -20,7 +21,7 @@ const no = (message) => ({ ok: false, message });
 /** The organization the call belongs to, and the contact on the other end. */
 async function callSubject(callId) {
   const { rows } = await asSystem((db) => db.query(
-    `SELECT c.org_id, (SELECT cn.contact_id FROM contact_numbers cn
+    `SELECT c.org_id, c.agent_id, (SELECT cn.contact_id FROM contact_numbers cn
        WHERE cn.number = c.peer AND cn.org_id = c.org_id LIMIT 1) AS contact_id
      FROM calls c WHERE c.call_id = $1`, [callId]));
   return rows[0] ?? null;
@@ -36,6 +37,16 @@ function dueFrom(said) {
 }
 
 const HANDLERS = {
+  /** Passages of the agent's own documents. When nothing matches it says so, so the agent says it
+   * does not know instead of making something up. */
+  async search_knowledge(subject, args) {
+    const passages = await Knowledge.search(subject.org_id, subject.agent_id, args.question);
+    if (passages.length === 0) {
+      return { ok: true, passages: [], message: "I do not have that in my documents. Say you are not sure and offer to have someone follow up." };
+    }
+    return { ok: true, passages };
+  },
+
   /** Who the agent is speaking to: their name, what the customer's own system knows, and
    * the newest answer to each question ever saved about them. Deliberately no internal
    * ids: everything here can be said out loud. */

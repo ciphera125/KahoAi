@@ -1,3 +1,4 @@
+import * as Knowledge from "../models/Knowledge.js";
 import * as Agent from "../models/Agent.js";
 import * as AgentTest from "../models/AgentTest.js";
 import * as Call from "../models/Call.js";
@@ -84,3 +85,11 @@ export async function remove(req, res) {
   await note(req, "agent", `Deleted the agent ${name}; its prompts are kept`, "prompts");
   res.json({ deleted: req.params.agentId });
 }
+
+export async function knowledge(req, res) { res.json(await Knowledge.list(req.user.org_id, req.params.agentId)); }
+export async function addKnowledge(req, res) {
+  const doc = await Knowledge.add(req.user.org_id, req.params.agentId, req.body ?? {});
+  await note(req, "agent", `Added the document ${doc.title} to an agent`, "agents", req.params.agentId);
+  res.json(doc);
+}
+export async function removeKnowledge(req, res) { res.json(await Knowledge.remove(req.user.org_id, req.params.agentId, req.params.docId)); }

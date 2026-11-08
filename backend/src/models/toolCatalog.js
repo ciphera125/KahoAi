@@ -1,7 +1,7 @@
 // The tools an agent can be given. Kept apart from Agent.js so promptCheck.js can
 // read it without a circular import (Agent.js -> Prompt.js -> promptCheck.js).
 export const KNOWN_TOOLS = ["end_call", "capture_lead", "save_answer", "get_tasks", "add_task",
-  "reschedule_task", "mark_task_done", "look_up_contact", "transfer_to_human", "call_webhook"];
+  "reschedule_task", "mark_task_done", "look_up_contact", "transfer_to_human", "call_webhook", "search_knowledge"];
 export const DEFAULT_TOOLS = ["end_call", "capture_lead"];
 
 export const TOOL_CATALOG = [
@@ -21,6 +21,8 @@ export const TOOL_CATALOG = [
     description: "Ticks off a task when the person says it is finished.", needs: null },
   { name: "look_up_contact", label: "Look up contact details",
     description: "Reads what you already know about the person on the call, so the agent does not ask again.", needs: null },
+  { name: "search_knowledge", label: "Answer from your documents",
+    description: "Looks answers up in the documents you add on the Knowledge tab, like prices, hours and policies.", needs: null },
   { name: "transfer_to_human", label: "Transfer to a person",
     description: "Hands the call to your team's number when the person asks for a human.", needs: "TRANSFER_NUMBER" },
   { name: "call_webhook", label: "Your system (webhook)",

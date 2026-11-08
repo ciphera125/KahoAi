@@ -137,6 +137,19 @@
     "properties": {},
     "required": []
   },
+  "search_knowledge": {
+    "description": "Look up an answer in the documents you were given about the business (prices, rules, hours, policies). Use it before answering any factual question about the business, and answer only from what it returns.",
+    "per_call": false,
+    "properties": {
+      "question": {
+        "description": "The caller's question, in a few plain words.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "question"
+    ]
+  },
   "transfer_to_human": {
     "description": "Hand the call to a person. Use it when the caller asks for a human, or has a need you cannot meet. Say one short line that you are connecting them, in the same turn.",
     "per_call": false,
