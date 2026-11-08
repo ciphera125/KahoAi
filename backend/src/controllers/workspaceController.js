@@ -1,3 +1,4 @@
+import { note } from "./notify.js";
 import { ValidationError } from "../utils/errors.js";
 import { AVATARS } from "../models/avatars.js";
 import { PERMISSIONS, ROLES } from "../models/permissions.js";
@@ -86,8 +87,7 @@ export async function orgSettings(req, res) {
 
 export async function updateOrgSettings(req, res) {
   const next = await OrgSettings.update(req.user.org_id, req.body ?? {});
-  await Activity.add(req.user.org_id, "account", `${req.user.name} changed the organization's call settings`,
-    { view: "settings", actor: req.user.name });
+  await note(req, "account", `${req.user.name} changed the organization's call settings`, "settings");
   res.json(next);
 }
 

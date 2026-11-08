@@ -1,3 +1,4 @@
+import { ROLES } from "../models/permissions.js";
 import * as User from "../models/User.js";
 import * as Activity from "../models/Activity.js";
 import { cookieOptions, DEVICE_COOKIE, SESSION_COOKIE } from "../middleware/auth.js";
@@ -36,6 +37,7 @@ export async function changePassword(req, res) {
 
 export async function newInvite(req, res) {
   const invite = await User.currentInvite(req.user.org_id, { renew: true });
+  await note(req, "account", `${req.user.name} made a new invite code`, "team");
   res.json({ invite_code: invite.code, invite_expires: invite.expires });
 }
 
@@ -56,9 +58,15 @@ export async function team(req, res) {
   res.json(await User.members(req.user.org_id));
 }
 
+/** "an admin", "a viewer", "an agent builder": the role's real name, with the right article. */
+const aRole = (id) => {
+  const label = (ROLES.find((r) => r.id === id)?.label ?? id).toLowerCase();
+  return `${/^[aeiou]/.test(label) ? "an" : "a"} ${label}`;
+};
+
 export async function changeRole(req, res) {
   const out = await User.changeRole(req.user, req.params.userId, req.body?.role);
-  await note(req, "account", `${out.name} is now ${out.role === "admin" ? "an admin" : "a member"}`, "team");
+  await note(req, "account", `${out.name} is now ${aRole(out.role)}`, "team");
   res.json(out);
 }
 

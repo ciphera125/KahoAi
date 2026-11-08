@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
+import { serverView } from "../paginate.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
-import { Icon, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { Icon, Pager, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 const TABS = [["organization", "Organization"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
-  ["webhook", "Call webhook"]];
+  ["webhook", "Call webhook"], ["audit", "Audit log"]];
 
 export default function Settings() {
   const me = useMe();
@@ -16,13 +17,14 @@ export default function Settings() {
           <div className="sub">The rules for your whole organization: who can do what, when calls may be made, and how other systems connect.</div></div>
       </header>
       <div className="seg" style={{ marginBottom: "var(--s4)" }}>
-        {TABS.filter(([id]) => id !== "keys" || can(me, "keys.manage")).map(([id, label]) =>
+        {TABS.filter(([id]) => (id !== "keys" || can(me, "keys.manage")) && (id !== "audit" || can(me, "org.settings"))).map(([id, label]) =>
           <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>)}
       </div>
       {tab === "organization" && <Organization />}
       {tab === "calls" && <CallRules />}
       {tab === "roles" && <Roles />}
       {tab === "webhook" && <Webhook />}
+      {tab === "audit" && <Audit />}
       {tab === "keys" && <ApiKeys />}
     </section>
   );
@@ -261,6 +263,45 @@ function Webhook() {
           {s.webhook_url && <button className="ghost" onClick={() => { save({ webhook_url: null }); setSecret(null); }}>Turn off</button>}
         </div>
       )}
+    </div>
+  );
+}
+
+/** Who changed what, kept for good. Searchable, in pages of 10, 25 or 50, and downloadable. */
+function Audit() {
+  const toast = useToast();
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(10);
+  const [q, setQ] = useState("");
+  const [find, setFind] = useState("");
+  const [d, setD] = useState(null);
+  useEffect(() => {
+    const t = setTimeout(() => setFind(q), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+  useEffect(() => { setPage(1); }, [find, perPage]);
+  useEffect(() => {
+    get(`/api/audit?page=${page}&per_page=${perPage}&q=${encodeURIComponent(find)}`).then(setD).catch((e) => toast(e.message, true));
+  }, [page, perPage, find, toast]);
+  return (
+    <div className="stack">
+      <div className="card explain">
+        <b>Audit log</b>
+        <p className="hint">A permanent record of who changed what: agents, numbers, people, roles, keys and settings. It is never trimmed and cannot be edited or deleted from the Studio.</p>
+        <div className="actions">
+          <input value={q} placeholder="Search by person or change" onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 320 }} />
+          <a className="ghost file-pick" href="/api/audit.csv" download>Download as spreadsheet</a>
+        </div>
+      </div>
+      {!d ? <Spinner /> : d.entries.length === 0 ? <div className="card"><p className="hint">Nothing recorded yet.</p></div> : (
+        <div className="card">
+          <table className="rows"><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead>
+            <tbody>{d.entries.map((e) => (
+              <tr key={e.id}><td className="nowrap">{new Date(e.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</td>
+                <td>{e.actor}<div className="hint">{e.role}</div></td><td>{e.detail}</td></tr>))}</tbody></table>
+        </div>
+      )}
+      {d && <Pager view={serverView({ page: d.page, total: d.total, size: d.per_page })} size={d.per_page} onPage={setPage} onSize={(n) => { setPerPage(n); setPage(1); }} />}
     </div>
   );
 }
