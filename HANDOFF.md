@@ -1995,3 +1995,16 @@ tab, searchable, 10/25/50, spreadsheet export. Role changes now name the real ro
 4. Placing calls through the API is limited per organization: `API_CALLS_PER_MIN` (10) and
    `API_CALLS_PER_DAY` (500), shared by all keys. Reading calls and agents is not slowed. The consent flag is
    still only asserted by the caller. Findings 2, 3, 5, 6 and 7 remain open.
+
+### 2026-11-08 (night): the remaining pen-test findings fixed
+
+2: everything the Builder writes into a prompt is flattened to one plain line (no headings, list markers,
+{{variables}} or our own heading). 3: Builder limited per organization, `ASSISTANT_PER_MIN` 15 and
+`ASSISTANT_PER_DAY` 300. 5: the webhook address is shown only to those who may change organization settings
+(others see `webhook_configured`). 6: undo is a signed token tied to the organization and agent, valid 24 hours;
+forged or altered ones are refused, and undoing a tool also needs the agent-edit permission. 7: documents that
+read as orders to the agent are refused when added, and passages come back marked as reference text.
+Also closed: DNS rebinding. Outgoing requests (tools, webhook) now connect through a lookup that checks the
+address at the moment of connecting, using node's own http/https instead of fetch.
+All 7 findings from the pen-test are now fixed. Still true: the consent flag on API calls is only asserted, and
+the loopback block needs `NODE_ENV=production` on the deployment.

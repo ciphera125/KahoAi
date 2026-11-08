@@ -5,7 +5,9 @@
 // address, a hard deadline, and a reply read only up to a limit. Without the address
 // check a tool could be pointed at the cloud metadata service or at another service on
 // our own network, and the agent would read the answer out loud.
-import { lookup } from "node:dns/promises";
+import { lookup as dnsLookup } from "node:dns/promises";
+import http from "node:http";
+import https from "node:https";
 import { isIP } from "node:net";
 import { config } from "../config/env.js";
 
@@ -87,17 +89,67 @@ export function urlProblem(raw) {
   return null;
 }
 
-/** The address a hostname really points at, checked so a public name cannot be used to
- * reach a private address (the name is resolved once, then the request is made). */
+const defaultResolver = (host) => dnsLookup(host, { all: true });
+let resolver = defaultResolver;
+/** Tests stand in for DNS; null puts the real one back. */
+export const setResolver = (fn) => { resolver = fn ?? defaultResolver; };
+
+const PRIVATE = "That address resolves to a private network, so we cannot call it.";
+
+/** While developing, `localhost` may reach this machine; nothing else private is ever allowed. */
+const developmentLoopback = (hostname, address) => config.NODE_ENV !== "production"
+  && (hostname === "localhost" || hostname.endsWith(".localhost")) && isLoopbackAddress(address);
+
+/** Whether every address a name points at may be called. */
 async function resolvedProblem(hostname) {
   if (isIP(hostname.replace(/^\[|\]$/g, ""))) return null; // already checked by urlProblem
-  if (config.NODE_ENV !== "production" && /(^|\.)localhost$/.test(hostname.toLowerCase())) return null;
   try {
-    const found = await lookup(hostname, { all: true }); // every address it answers with, not just the first
-    return found.some((f) => isPrivateAddress(f.address)) ? "That address resolves to a private network, so we cannot call it." : null;
+    const found = await resolver(hostname);
+    return found.some((f) => isPrivateAddress(f.address) && !developmentLoopback(hostname, f.address)) ? PRIVATE : null;
   } catch {
     return "We could not find that address.";
   }
+}
+
+/**
+ * The lookup the connection itself uses. The name is resolved again here, at the moment of
+ * connecting, and the socket is opened only to an address that passed: so a name that answers
+ * "public" to the early check and "127.0.0.1" a moment later (DNS rebinding) is refused, and the
+ * address that was checked is the address that is used.
+ */
+export function guardedLookup(hostname, options, callback) {
+  if (typeof options === "function") { callback = options; options = {}; }
+  resolver(hostname).then((found) => {
+    if (!found.length) throw new Error("not found");
+    if (found.some((f) => isPrivateAddress(f.address) && !developmentLoopback(hostname, f.address))) {
+      throw Object.assign(new Error(PRIVATE), { code: "EPRIVATE" });
+    }
+    if (options?.all) callback(null, found);
+    else callback(null, found[0].address, found[0].family);
+  }).catch((error) => callback(error));
+}
+
+/** One request, connected only through guardedLookup, a reply read up to a limit, nothing followed. */
+function rawRequest(url, { method, headers, body, deadline }) {
+  return new Promise((resolve, reject) => {
+    const target = new URL(url);
+    const lib = target.protocol === "https:" ? https : http;
+    const out = { "Accept-Encoding": "identity", ...headers };
+    if (body !== null && body !== undefined) out["Content-Length"] = Buffer.byteLength(body);
+    const req = lib.request(target, { method, headers: out, lookup: guardedLookup, agent: false, signal: AbortSignal.timeout(deadline) }, (res) => {
+      const chunks = [];
+      let size = 0;
+      res.on("data", (c) => {
+        size += c.length;
+        if (size <= MAX_BODY_BYTES) chunks.push(c);
+        else res.destroy(); // far more than anyone should send: stop reading
+      });
+      res.on("error", () => {});
+      res.on("close", () => resolve({ status: res.statusCode, text: Buffer.concat(chunks).toString("utf8").slice(0, MAX_BODY_BYTES) }));
+    });
+    req.on("error", reject);
+    req.end(body ?? undefined);
+  });
 }
 
 /**
@@ -113,21 +165,19 @@ export async function callOut({ url, method = "POST", headers = {}, body = null,
   let lastProblem = "We could not reach it.";
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const response = await fetch(url, {
-        method, headers, body: body ?? undefined, redirect: "manual",
-        signal: AbortSignal.timeout(deadline),
-      });
+      const response = await rawRequest(url, { method, headers, body, deadline });
       if (response.status >= 300 && response.status < 400) {
         return { ok: false, status: response.status, problem: "It redirected us somewhere else, so we stopped." };
       }
-      const text = (await response.text()).slice(0, MAX_BODY_BYTES);
+      const text = response.text;
       let parsed = null;
       try { parsed = JSON.parse(text); } catch { parsed = null; }
-      return { ok: response.ok, status: response.status, body: parsed, text,
-        problem: response.ok ? null : `It answered ${response.status}.` };
+      const ok = response.status >= 200 && response.status < 300;
+      return { ok, status: response.status, body: parsed, text, problem: ok ? null : `It answered ${response.status}.` };
     } catch (err) {
       // Nothing was received, so trying again cannot repeat anything that happened.
-      lastProblem = err?.name === "TimeoutError" ? "It took too long to answer." : "We could not reach it.";
+      if (err?.code === "EPRIVATE") return { ok: false, problem: PRIVATE }; // refused at the connection: never retried
+      lastProblem = err?.name === "TimeoutError" || err?.name === "AbortError" ? "It took too long to answer." : "We could not reach it.";
     }
   }
   return { ok: false, problem: lastProblem };

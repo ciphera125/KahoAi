@@ -121,3 +121,77 @@ describe("placing calls through the API is limited", () => {
     expect(config.API_CALLS_PER_DAY).toBeLessThanOrEqual(2000);
   });
 });
+
+describe("a name that changes its answer between the check and the connection (DNS rebinding)", () => {
+  let hits, server, port, restore;
+  beforeAll(async () => {
+    const http = await import("node:http");
+    server = http.createServer((_req, res) => { hits += 1; res.end("{}"); });
+    await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    port = server.address().port;
+  });
+  afterAll(() => server.close());
+  beforeEach(async () => { hits = 0; restore = null; });
+  afterEach(async () => { restore?.(); const { setResolver } = await import("../src/models/outbound.js"); setResolver(null); });
+
+  const ask = (guardedLookup, host, options = {}) => new Promise((resolve) => guardedLookup(host, options, (...args) => resolve(args)));
+
+  it("looks the name up again at the moment of connecting, and refuses a private answer", async () => {
+    const { guardedLookup, setResolver } = await import("../src/models/outbound.js");
+    config.NODE_ENV = "production";
+    setResolver(async () => [{ address: "203.0.113.9", family: 4 }]);
+    expect((await ask(guardedLookup, "rebind.example.test"))[0]).toBeNull(); // the check said public
+    setResolver(async () => [{ address: "127.0.0.1", family: 4 }]);          // the connection would have gone to this
+    const [error] = await ask(guardedLookup, "rebind.example.test");
+    expect(error).toBeTruthy();
+    expect(String(error.message)).toMatch(/private network/);
+  });
+
+  it("is refused when any one of its answers is private, and hands over only checked addresses", async () => {
+    const { guardedLookup, setResolver } = await import("../src/models/outbound.js");
+    config.NODE_ENV = "production";
+    setResolver(async () => [{ address: "203.0.113.9", family: 4 }, { address: "10.0.0.7", family: 4 }]);
+    expect((await ask(guardedLookup, "mixed.example.test"))[0]).toBeTruthy();
+    setResolver(async () => [{ address: "203.0.113.9", family: 4 }, { address: "2606:4700::1111", family: 6 }]);
+    const [error, list] = await ask(guardedLookup, "ok.example.test", { all: true });
+    expect(error).toBeNull();
+    expect(list.map((x) => x.address)).toEqual(["203.0.113.9", "2606:4700::1111"]);
+    const [e2, address, family] = await ask(guardedLookup, "ok.example.test");
+    expect([e2, address, family]).toEqual([null, "203.0.113.9", 4]);
+  });
+
+  it("refuses a name that cannot be found, and a pre-check that sees a private answer", async () => {
+    const { callOut, setResolver } = await import("../src/models/outbound.js");
+    config.NODE_ENV = "production";
+    setResolver(async () => { throw new Error("ENOTFOUND"); });
+    expect((await callOut({ url: "https://nowhere.example.test/x", timeoutMs: 500 })).problem).toMatch(/could not find/i);
+    setResolver(async () => [{ address: "169.254.169.254", family: 4 }]);
+    expect((await callOut({ url: "https://meta.example.test/x", timeoutMs: 500 })).problem).toMatch(/private network/);
+  });
+
+  it("still reaches a local test server by name while developing, and reads its reply", async () => {
+    config.NODE_ENV = "development";
+    const out = await callOut({ url: `http://localhost:${port}/x`, timeoutMs: 1500 });
+    expect(out.ok).toBe(true);
+    expect(out.body).toEqual({});
+    expect(hits).toBe(1);
+  });
+
+  it("does not follow a redirect, and stops reading a reply that is too large", async () => {
+    const http = await import("node:http");
+    const big = http.createServer((req, res) => {
+      if (req.url === "/r") { res.statusCode = 302; res.setHeader("Location", `http://127.0.0.1:${port}/x`); return res.end(); }
+      res.end("x".repeat(500_000));
+    });
+    await new Promise((r) => big.listen(0, "127.0.0.1", r));
+    const p = big.address().port;
+    config.NODE_ENV = "development";
+    const redirect = await callOut({ url: `http://localhost:${p}/r`, timeoutMs: 1500 });
+    expect(redirect.ok).toBe(false);
+    expect(redirect.problem).toMatch(/redirected/);
+    expect(hits).toBe(0);
+    const large = await callOut({ url: `http://localhost:${p}/big`, timeoutMs: 1500 });
+    expect(large.text.length).toBeLessThanOrEqual(64 * 1024);
+    big.close();
+  });
+});
