@@ -1,4 +1,4 @@
-"""Keypad (DTMF) input: digits the caller presses reach the agent as text, when it is switched on."""
+"""Keypad (DTMF) input: pressed digits reach the agent as text, when it is switched on."""
 
 import pytest
 from pipecat.audio.dtmf.types import KeypadEntry
