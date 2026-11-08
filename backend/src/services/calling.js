@@ -59,7 +59,7 @@ export async function placeCall(org, { fromId, to: raw, agentId, language = null
   await dialer.preflight(answer, creds.auth_token);
   const result = await dialer.dial({ authId: creds.auth_id, authToken: creds.auth_token, from: row.number, to, answer,
     hangup: dialer.hangupUrl({ to, studioAgent: agent?.agent_id }), maxSecs,
-    ringSecs: agent ? agent.ring_secs : dialer.DEFAULT_RING_TIMEOUT_SECS });
+    ringSecs: agent ? agent.ring_secs : dialer.DEFAULT_RING_TIMEOUT_SECS, hangUpOnMachine: agent?.voicemail === "hang_up" });
   const requestUuid = typeof result.request_uuid === "string" && CALL_ID.test(result.request_uuid) ? result.request_uuid : null;
   if (requestUuid) {
     await Call.recordOutcome(requestUuid, { status: "ringing", peer: to, ours: row.number, direction: "outbound",

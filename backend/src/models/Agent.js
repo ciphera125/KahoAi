@@ -126,6 +126,9 @@ function checkSettings(current, changes) {
       out.capture_fields = checkCaptureFields(value);
     } else if (key === "confirm_answers") {
       out.confirm_answers = Boolean(value);
+    } else if (key === "voicemail") {
+      if (value !== "talk" && value !== "hang_up") throw new ValidationError("Voicemail must be talk or hang_up");
+      out.voicemail = value;
     } else if (key === "language") {
       if (!LANGUAGE_VALUES.includes(value)) throw new ValidationError(`Language must be one of: ${LANGUAGE_CHOICES}`);
       out.language = value;
@@ -452,6 +455,7 @@ export async function callConfig(agentId, { caller = null } = {}) {
       custom_tools: await customToolsForCall(a.org_id, a.tools.filter((t) => !KNOWN_TOOLS.includes(t))),
       max_secs: Math.min(s.max_minutes, orgCap ?? Infinity) * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
       capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, language: s.language,
+      voicemail: s.voicemail === "hang_up" ? "hang_up" : "talk",
       version: a.version };
   } catch (err) {
     logger.error({ err: err.message }, "agent unreadable, the call uses the default persona");

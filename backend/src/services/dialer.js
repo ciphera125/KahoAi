@@ -85,11 +85,13 @@ export async function preflight(url, authToken) {
 }
 
 /** Ask Plivo to place the call. Never retried. */
-export async function dial({ authId, authToken, from, to, answer, hangup, maxSecs, ringSecs }) {
+export async function dial({ authId, authToken, from, to, answer, hangup, maxSecs, ringSecs, hangUpOnMachine = false }) {
   const unknown = "The call MAY OR MAY NOT have been placed. Check the Plivo console (Logs, Calls) before "
     + "trying again, or you may ring the same person twice.";
   const payload = { from, to, answer_url: answer, answer_method: "POST",
     time_limit: Math.floor(maxSecs) + PLIVO_LIMIT_GRACE_SECS, ring_timeout: ringSecs };
+  // Plivo listens to the first seconds and hangs up itself if an answering machine picks up.
+  if (hangUpOnMachine) Object.assign(payload, { machine_detection: "hangup", machine_detection_time: 5000 });
   if (hangup) Object.assign(payload, { hangup_url: hangup, hangup_method: "POST" });
   let res;
   try {

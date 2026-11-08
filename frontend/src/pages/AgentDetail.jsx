@@ -404,11 +404,12 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
   const [maxMin, setMaxMin] = useState(s.max_minutes);
   const [ring, setRing] = useState(s.ring_secs);
   const [lang, setLang] = useState(s.language || "auto");
+  const [voicemail, setVoicemail] = useState(s.voicemail || "talk");
   const w = s.call_window || { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
   const [cw, setCw] = useState(w);
   const save = async () => {
     try {
-      await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw, language: lang } });
+      await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw, language: lang, voicemail } });
       toast("Saved as a draft. Publish it when you are ready."); onChanged();
     } catch (e) { toast(e.message, true); }
   };
@@ -421,6 +422,13 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
           </select>
           <span className="hint">{languages.find((l) => l.value === lang)?.hint}
             {" "}You can still choose a different one for a single call on the Calls page.</span>
+        </div>
+        <div className="field"><label className="f">If an answering machine picks up</label>
+          <select value={voicemail} onChange={(e) => setVoicemail(e.target.value)}>
+            <option value="talk">Carry on and speak</option>
+            <option value="hang_up">Hang up</option>
+          </select>
+          <span className="hint">For calls we place. Plivo listens to the first few seconds; hanging up avoids talking to a recording. Try it on a real call before relying on it.</span>
         </div>
         <div className="field"><label className="f">Opening line</label><input value={opening} onChange={(e) => setOpening(e.target.value)} maxLength={200} placeholder="Leave empty to let the agent introduce itself" /></div>
         <div className="field"><label className="f">Longest call (minutes)</label><input type="number" value={maxMin} min={1} max={limits.max_minutes} onChange={(e) => setMaxMin(e.target.value)} /><span className="hint">Up to {limits.max_minutes} minutes on this server.</span></div>

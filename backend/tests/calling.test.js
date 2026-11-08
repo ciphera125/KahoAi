@@ -126,3 +126,34 @@ describe("syncing outcomes from Plivo", () => {
     expect(rows[0]).toEqual({ status: "answered", peer: "+919876543210", duration_secs: 42, cost: 0.84 });
   });
 });
+
+describe("answering machines", () => {
+  const dialBody = () => fakes.plivo.requests.find((q) => q.method === "POST").body;
+
+  it("talks to whoever picks up, unless the agent is told to hang up on voicemail", async () => {
+    const { b, n } = await setup();
+    const a = (await b.post("/api/agents").send({ name: "EMI", prompt: "Hi" })).body;
+    await b.post("/api/calls").send({ from_id: n.id, to: "9876543210", consent: true, agent_id: a.id });
+    expect(dialBody().machine_detection).toBeUndefined();
+  });
+
+  it("asks Plivo to hang up when a machine answers, if the agent is set to", async () => {
+    const { b, n } = await setup();
+    const a = (await b.post("/api/agents").send({ name: "EMI", prompt: "Hi" })).body;
+    const set = await b.patch(`/api/agents/${a.id}`).send({ settings: { voicemail: "hang_up" } });
+    expect(set.status).toBe(200);
+    expect(set.body.settings.voicemail).toBe("hang_up");
+    await publish(b, a.id);
+    await b.post("/api/calls").send({ from_id: n.id, to: "9876543210", consent: true, agent_id: a.id });
+    expect(dialBody()).toMatchObject({ machine_detection: "hangup", machine_detection_time: 5000 });
+  });
+
+  it("accepts only the two choices", async () => {
+    const { b } = await setup();
+    const a = (await b.post("/api/agents").send({ name: "EMI", prompt: "Hi" })).body;
+    for (const bad of ["leave_message", true, 1, "HANG_UP "]) {
+      expect((await b.patch(`/api/agents/${a.id}`).send({ settings: { voicemail: bad } })).status, String(bad)).toBe(400);
+    }
+    expect((await b.patch(`/api/agents/${a.id}`).send({ settings: { voicemail: "talk" } })).status).toBe(200);
+  });
+});
