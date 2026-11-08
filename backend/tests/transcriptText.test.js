@@ -37,7 +37,7 @@ describe("the name a call's files are given", () => {
     expect(fileStem({ name: "Ravi Kumar", startedAt: "2026-11-08T10:25:00.000Z", callId: "ab12cd34-0000-4000-8000-000000000000" }))
       .toBe("Ravi-Kumar_2026-11-08_1555_ab12cd34");
     const hostile = fileStem({ name: "../../etc/passwd\u0000 \"x\"", startedAt: "2026-11-08T10:25:00.000Z", callId: "ab12cd34-0000" });
-    expect(hostile).not.toMatch(/[\/\\.\u0000" ]/);
+    expect(hostile).toMatch(/^[A-Za-z0-9_-]+$/);   // nothing a path or a header could misuse
     expect(hostile.endsWith("_2026-11-08_1555_ab12cd34")).toBe(true);
   });
 
