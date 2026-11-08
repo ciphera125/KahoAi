@@ -152,6 +152,37 @@ describe("building it the moment it understands", () => {
     expect(await promptOf(b, a)).toContain("check_order_status");
   });
 
+  it("tries once more when the model comes back with nothing at all", async () => {
+    const b = await owner();
+    const a = await newAgent(b);
+    const requests = scripted(say(""), propose(WRITE_DOWN));
+    const r = await talk(b, { agent_id: a.id, messages: said("ask for the payment date") });
+    expect(requests).toHaveLength(2);
+    expect(r.body.created?.kind).toBe("write_down");
+    scripted(say(""));
+    const again = await talk(b, { agent_id: a.id, messages: said("something") });
+    expect(again.body.created).toBeNull();
+    expect(again.body.reply).toMatch(/tell me a little more/i);
+  });
+
+  it("names the tool itself when the model forgot to", async () => {
+    const b = await owner();
+    const a = await newAgent(b);
+    scripted(propose({ ...LOOK_UP, label: undefined, summary: "The agent will look up the next loan payment." }));
+    const r = await talk(b, { agent_id: a.id, messages: said("check the next loan payment on https://api.example.com/orders") });
+    expect(r.body.created?.kind).toBe("look_up");
+    expect((await b.get("/api/custom-tools")).body).toHaveLength(1);
+  });
+
+  it("is told that anything the caller can say is written down, and only the person's own system is looked up", async () => {
+    const b = await owner();
+    const requests = scripted(say("Okay."));
+    await talk(b, { messages: said("hi") });
+    const system = requests[0].messages[0].content;
+    expect(system).toMatch(/fetch|collect|find out/i);
+    expect(system).toMatch(/only when the person says their own system/i);
+  });
+
   it("asks for the address in the chat, rather than building half a tool", async () => {
     const b = await owner();
     const a = await newAgent(b);

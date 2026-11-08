@@ -8,13 +8,13 @@ let injected = null;
 /** Tests hand in a stand-in. null puts the real one back. */
 export const useModel = (fn) => { injected = fn; };
 
-async function groq({ messages, tools }) {
+async function groq({ messages, tools, maxTokens = 600, effort = "medium", toolChoice = "auto" }) {
   const key = config.GROQ_API_KEY;
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: config.GROQ_MODEL_ID, messages, max_tokens: 600,
-      reasoning_effort: "medium", ...(tools ? { tools, tool_choice: "auto" } : {}) }),
+    body: JSON.stringify({ model: config.GROQ_MODEL_ID, messages, max_tokens: maxTokens,
+      reasoning_effort: effort, ...(tools ? { tools, tool_choice: toolChoice } : {}) }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   const body = await response.json().catch(() => ({}));
