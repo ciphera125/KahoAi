@@ -5,6 +5,7 @@ import { Spinner, useToast } from "../ui.jsx";
 const RANGES = [[7, "Last 7 days"], [30, "Last 30 days"], [90, "Last 90 days"]];
 const n = (v) => Number(v ?? 0).toLocaleString("en-IN");
 
+/** Minutes used, shown as a tab in Settings. */
 export default function Usage() {
   const toast = useToast();
   const [days, setDays] = useState(30);
@@ -16,10 +17,8 @@ export default function Usage() {
   const top = Math.max(1, ...(d?.by_day ?? []).map((x) => x.minutes));
 
   return (
-    <section>
-      <header className="page">
-        <div><h1>Usage</h1><div className="sub">Minutes your agents have spent on calls. Each call counts up to its next whole minute.</div></div>
-      </header>
+    <div>
+      <p className="hint" style={{ marginTop: 0 }}>Minutes your agents have spent on calls. Each call counts up to its next whole minute.</p>
       <div className="seg" style={{ marginBottom: "var(--s4)" }}>
         {RANGES.map(([v, l]) => <button key={v} className={days === v ? "on" : ""} onClick={() => setDays(v)}>{l}</button>)}
       </div>
@@ -51,6 +50,6 @@ export default function Usage() {
           )}
         </>
       )}
-    </section>
+    </div>
   );
 }

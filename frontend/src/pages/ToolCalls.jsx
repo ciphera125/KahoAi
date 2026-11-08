@@ -9,7 +9,7 @@ const STATUS_WORDS = { worked: "Worked", failed: "Did not work", refused: "Not o
  * on each turn. The plain reading comes first; the raw request and reply sit behind a
  * toggle, because almost nobody needs them and they are noisy.
  */
-export default function ToolCalls() {
+export default function ToolCalls({ embedded = false }) {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [agents, setAgents] = useState([]);
@@ -35,6 +35,16 @@ export default function ToolCalls() {
 
   return (
     <section>
+      {embedded ? (
+        <div className="list-bar" style={{ marginBottom: "var(--s3)" }}>
+          <span className="hint">Every time an agent used a tool on a call, and whether it worked.</span>
+          <span className="grow" />
+          <label className="switch-inline">
+            <input type="checkbox" checked={technical} onChange={(e) => setTechnical(e.target.checked)} />
+            Show technical details
+          </label>
+        </div>
+      ) : (
       <header className="page">
         <div><h1>Tool history</h1><div className="sub">A record of every time an agent used a tool on a call, and whether it worked. To give an agent a tool, go to Agents, then Tools.</div></div>
         <div className="head-actions">
@@ -44,6 +54,7 @@ export default function ToolCalls() {
           </label>
         </div>
       </header>
+      )}
 
       <div className="card" style={{ marginBottom: "var(--s3)" }}>
         <div className="q-row" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", marginBottom: 0 }}>

@@ -1,4 +1,5 @@
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import ToolCalls from "./ToolCalls.jsx";
 import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
@@ -17,6 +18,8 @@ const BLANK = {
 /** Your own tools: a way for an agent to ask YOUR system something during a call. */
 export default function CustomTools() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
+  const [view, setView] = useState(params.get("tab") === "history" ? "history" : "tools");
   const me = useMe();
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
@@ -34,6 +37,20 @@ export default function CustomTools() {
     try { await del(`/api/custom-tools/${tool.id}`); toast("Deleted."); load(); } catch (e) { toast(e.message, true); }
   };
 
+  const switcher = (
+    <div className="seg" style={{ marginBottom: "var(--s4)" }}>
+      <button className={view === "tools" ? "on" : ""} onClick={() => setView("tools")}>Your tools</button>
+      <button className={view === "history" ? "on" : ""} onClick={() => setView("history")}>History</button>
+    </div>
+  );
+  if (view === "history") return (
+    <section>
+      <header className="page"><div><h1>Your own tools</h1></div></header>
+      {switcher}
+      <ToolCalls embedded />
+    </section>
+  );
+
   return (
     <section>
       <header className="page">
@@ -44,6 +61,7 @@ export default function CustomTools() {
           <button className="primary" onClick={() => setEditing(BLANK)}><Icon name="plus" />New tool</button></div>}
       </header>
 
+      {switcher}
       <div className="card explain">
         <b>Tools and your own tools: what is the difference?</b>
         <ul className="plain">

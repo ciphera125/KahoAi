@@ -12,7 +12,12 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-11-07. **Everything is committed and pushed** (`main` == `origin/main` at
+Last updated: 2026-11-08 (night). **Newer than the paragraph below:** the session log at the bottom is current
+(Builder, audit log, DTMF, all 7 pen-test findings fixed, Contacts call button, Builder-made tools). The commit table in
+section 2 stops at 2026-11-03; use `git log` for later work. Sidebar trimmed: Usage is now a Settings tab and Tool
+history a History toggle on Your own tools (old URLs redirect). Older state follows.
+
+Last updated (older): 2026-11-07. **Everything is committed and pushed** (`main` == `origin/main` at
 `2ebef95`; working tree clean). Five commits landed after the 2026-11-03 entry: `be9720f` (2026-11-04,
 CSV formula guard, frontend security headers, no public API docs, patched deps), `e233d0b` (new parrot
 logo / Plus Jakarta Sans / Radix rebrand), `29d06cb` (webhook replay guard: a signed Plivo nonce is
@@ -2017,3 +2022,10 @@ history kept up to 2000). Tools made by Kaho Builder carry a "Kaho Builder" badg
 024, applied live) in Your own tools and in the agent's Tools tab, which now has a "Your own tools" section and no
 longer keeps a stale copy of the switches (it used to be able to undo what the Builder had just added).
 Not tried: placing a real call from the new button, and a Builder build in live data (looked at, not run).
+
+### 2026-11-08 (night): sidebar consolidation
+
+Usage moved into Settings as a tab; Tool history moved into Your own tools behind a Your tools / History toggle
+(`?tab=history`). The sidebar entries are gone; `/usage` and `/tool-calls` redirect. Frontend lint 0 errors, 42 tests
+pass, build ok. No frontend component tests exist, so none were written first; not looked at in a browser; no pen-test
+run (routing and display only, no new endpoints). Committed and pushed on the owner's request.

@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import Usage from "./Usage.jsx";
 import { del, get, patch, post } from "../api.js";
 import { serverView } from "../paginate.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
 import { Icon, Pager, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 const TABS = [["organization", "Organization"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
-  ["webhook", "Call webhook"], ["audit", "Audit log"]];
+  ["webhook", "Call webhook"], ["usage", "Usage"], ["audit", "Audit log"]];
 
 export default function Settings() {
   const me = useMe();
-  const [tab, setTab] = useState("organization");
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(TABS.some(([id]) => id === params.get("tab")) ? params.get("tab") : "organization");
   return (
     <section>
       <header className="page">
@@ -24,6 +27,7 @@ export default function Settings() {
       {tab === "calls" && <CallRules />}
       {tab === "roles" && <Roles />}
       {tab === "webhook" && <Webhook />}
+      {tab === "usage" && <Usage />}
       {tab === "audit" && <Audit />}
       {tab === "keys" && <ApiKeys />}
     </section>
