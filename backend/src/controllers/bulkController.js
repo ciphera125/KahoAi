@@ -10,7 +10,9 @@ export async function create(req, res) {
   const body = req.body ?? {};
   if (body.consent !== true) throw new ValidationError("confirm that everyone on this list has agreed to be called");
   const run = await BulkCall.create(req.user.org_id, { name: body.name, agentId: body.agent_id, fromId: body.from_id,
-    parallel: body.parallel, rows: body.rows, createdBy: req.user.name });
+    parallel: body.parallel, rows: body.rows, createdBy: req.user.name,
+    ...(body.retries !== undefined ? { retries: body.retries } : {}),
+    ...(body.retry_after_hours !== undefined ? { retryAfterHours: body.retry_after_hours } : {}) });
   await note(req, "call", `Started the bulk call ${run.name}: ${run.counts.queued} to call with ${run.agent_name}`, "bulk", run.id);
   res.json(run);
 }

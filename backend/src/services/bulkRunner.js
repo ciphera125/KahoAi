@@ -34,7 +34,7 @@ function windowText(w, whose = "agent") {
 const bulkWindow = (agent) => (agent.call_window?.enabled ? agent.call_window : { ...Agent.DEFAULT_WINDOW, enabled: true });
 
 async function dialOne(run, item, now) {
-  if (await BulkCall.calledRecently(run.org_id, item.number, config.BULK_REPEAT_HOURS)) {
+  if (item.attempts === 0 && await BulkCall.calledRecently(run.org_id, item.number, config.BULK_REPEAT_HOURS)) {
     await BulkCall.mark(item.id, { status: "skipped", reason: `already called in the last ${config.BULK_REPEAT_HOURS} hours`,
       finished_at: new Date() });
     return null;

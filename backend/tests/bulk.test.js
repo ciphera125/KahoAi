@@ -262,3 +262,67 @@ describe("the findings of 2026-10-25, fixed", () => {
     expect(byOrg).toEqual({ ours: 5, theirs: 5 }); // BULK_MAX_CONCURRENT is 10
   });
 });
+
+describe("trying again when nobody answers", () => {
+  const unanswered = (id) => internal("put", `/internal/v1/calls/${id}`).send({ status: "no_answer" });
+  const open = (runId) => db.query("SELECT status, attempts, outcome, reason FROM bulk_items WHERE run_id = $1 ORDER BY position", [runId]);
+  const due = (runId) => db.query("UPDATE bulk_items SET not_before = now() - interval '1 minute' WHERE run_id = $1", [runId]);
+
+  it("calls an unanswered number again after the wait, up to the number of tries chosen", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(1), retries: 2, retry_after_hours: 4 })).body;
+    expect(run.retries).toBe(2);
+    await tick();
+    await unanswered("req-0001-bulk");
+    await tick();
+    expect(dials()).toHaveLength(1); // settled, now waiting out the 4 hours
+    let item = (await open(run.id)).rows[0];
+    expect(item).toMatchObject({ status: "queued", attempts: 1 });
+    expect(item.reason).toMatch(/trying again/i);
+    await tick();
+    expect(dials()).toHaveLength(1); // not yet
+    await due(run.id);
+    await tick();
+    expect(dials()).toHaveLength(2); // second try, although the first was under 24 hours ago
+    await unanswered("req-0002-bulk");
+    await tick(); await due(run.id); await tick();
+    expect(dials()).toHaveLength(3); // third and last
+    await unanswered("req-0003-bulk");
+    await tick();
+    item = (await open(run.id)).rows[0];
+    expect(item).toMatchObject({ status: "done", outcome: "no_answer", attempts: 2 });
+    expect((await b.get(`/api/bulk-calls/${run.id}`)).body.status).toBe("done");
+  });
+
+  it("never calls back someone who answered or said no", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(2), retries: 3, retry_after_hours: 1 })).body;
+    await tick();
+    await internal("put", "/internal/v1/calls/req-0001-bulk").send({ status: "answered", duration_secs: 30 });
+    await internal("put", "/internal/v1/calls/req-0002-bulk").send({ status: "declined" });
+    await tick(); await due(run.id); await tick();
+    expect(dials()).toHaveLength(2);
+    expect((await open(run.id)).rows.map((r) => r.status)).toEqual(["done", "done"]);
+  });
+
+  it("does not retry unless asked to, and checks what it is given", async () => {
+    const { b, n, a } = await setup();
+    const plain = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(1) })).body;
+    expect(plain.retries).toBe(0);
+    await tick(); await unanswered("req-0001-bulk"); await tick();
+    expect((await open(plain.id)).rows[0]).toMatchObject({ status: "done", attempts: 0 });
+    for (const bad of [{ retries: 4 }, { retries: -1 }, { retries: "x" }, { retries: 1, retry_after_hours: 0 }, { retries: 1, retry_after_hours: 25 }]) {
+      const r = await start(b, { agent_id: a.id, from_id: n.id, rows: rows(1, 50), ...bad });
+      expect(r.status, JSON.stringify(bad)).toBe(400);
+    }
+  });
+
+  it("does not retry a run that was cancelled", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(1), retries: 2, retry_after_hours: 1 })).body;
+    await tick(); await unanswered("req-0001-bulk"); await tick();
+    await b.post(`/api/bulk-calls/${run.id}/cancel`).send({});
+    await due(run.id); await tick();
+    expect(dials()).toHaveLength(1);
+  });
+});

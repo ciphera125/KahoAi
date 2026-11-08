@@ -26,11 +26,11 @@ const SHOW = `SELECT r.*, a.name AS agent_name,
   FROM bulk_runs r LEFT JOIN agents a ON a.id = r.agent_id`;
 
 const shape = (r) => ({ id: r.id, name: r.name, agent_id: r.agent_id, agent_name: r.agent_name, from_id: r.from_id,
-  parallel: r.parallel, status: r.status, waiting: r.waiting, created_by: r.created_by,
+  parallel: r.parallel, retries: r.retries, retry_after_hours: r.retry_after_hours, status: r.status, waiting: r.waiting, created_by: r.created_by,
   created_at: r.created_at.toISOString(), updated_at: r.updated_at.toISOString(), counts: r.counts });
 
 const shapeItem = (i) => ({ id: Number(i.id), name: i.name, number: i.number, status: i.status, reason: i.reason,
-  call_id: i.call_id, outcome: i.outcome, placed_at: i.placed_at?.toISOString() ?? null,
+  call_id: i.call_id, outcome: i.outcome, attempts: i.attempts, placed_at: i.placed_at?.toISOString() ?? null,
   finished_at: i.finished_at?.toISOString() ?? null });
 
 /** The rows as they will be called: numbers checked, repeats skipped, each with why. */
@@ -54,10 +54,12 @@ export function prepareRows(rows) {
   });
 }
 
-export async function create(orgId, { name, agentId, fromId, parallel, rows, createdBy }) {
+export async function create(orgId, { name, agentId, fromId, parallel, rows, createdBy, retries = 0, retryAfterHours = 4 }) {
   const runName = cleanText(name || `Bulk call ${new Date().toISOString().slice(0, 10)}`, MAX_NAME, "name");
   const n = Number(parallel ?? 3);
   if (!Number.isInteger(n) || n < 1 || n > MAX_PARALLEL) throw new ValidationError(`calls at once must be between 1 and ${MAX_PARALLEL}`);
+  if (!Number.isInteger(retries) || retries < 0 || retries > 3) throw new ValidationError("tries again must be a whole number from 0 to 3");
+  if (!Number.isInteger(retryAfterHours) || retryAfterHours < 1 || retryAfterHours > 24) throw new ValidationError("the wait before trying again must be from 1 to 24 hours");
   const items = prepareRows(rows);
   // Checked now, not at the first dial: a number of another organization, or one that cannot call, is refused.
   const from = (await PhoneNumber.listPublic(orgId)).find((r) => r.id === String(fromId ?? ""));
@@ -67,8 +69,8 @@ export async function create(orgId, { name, agentId, fromId, parallel, rows, cre
     const agent = await db.query("SELECT 1 FROM agents WHERE id = $1 AND org_id = $2", [String(agentId ?? ""), orgId]);
     if (!agent.rowCount) throw new ValidationError("choose an agent that exists");
     const id = `bk_${hexId().slice(0, 12)}`;
-    await db.query(`INSERT INTO bulk_runs (id, org_id, name, agent_id, from_id, parallel, created_by)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)`, [id, orgId, runName, agentId, String(fromId ?? ""), n, createdBy ?? null]);
+    await db.query(`INSERT INTO bulk_runs (id, org_id, name, agent_id, from_id, parallel, created_by, retries, retry_after_hours)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`, [id, orgId, runName, agentId, String(fromId ?? ""), n, createdBy ?? null, retries, retryAfterHours]);
     const cols = ["position", "name", "number", "status", "reason"];
     for (let i = 0; i < items.length; i += 500) {
       const chunk = items.slice(i, i + 500);
@@ -153,6 +155,13 @@ export async function settle(runId, deadlineSecs) {
         outcome = CASE WHEN c.has_transcript THEN 'answered' ELSE coalesce(c.status, 'unknown') END
       FROM calls c WHERE i.run_id = $1 AND i.status = 'calling' AND c.call_id = i.call_id
         AND (c.status IS DISTINCT FROM 'ringing' OR c.ended_at IS NOT NULL)`, [runId]);
+    // Nobody answered: wait, then try again, up to the tries the run was given. A "no" or a
+    // conversation is never retried. A run that is cancelled has nothing queued to retry.
+    await db.query(`UPDATE bulk_items i SET status = 'queued', attempts = i.attempts + 1, call_id = NULL, outcome = NULL,
+        finished_at = NULL, placed_at = NULL, not_before = now() + make_interval(hours => r.retry_after_hours),
+        reason = 'No answer; trying again (try ' || (i.attempts + 2) || ' of ' || (r.retries + 1) || ')'
+      FROM bulk_runs r WHERE r.id = i.run_id AND i.run_id = $1 AND r.status IN ('running', 'paused')
+        AND i.status = 'done' AND i.outcome = 'no_answer' AND i.attempts < r.retries`, [runId]);
     // Taken for dialling by a process that then stopped: it may or may not have rung, so never again.
     await db.query(`UPDATE bulk_items SET status = 'failed', finished_at = now(),
         reason = 'The Studio stopped while dialling; this call may or may not have been placed. Check Plivo before calling again.'
@@ -189,7 +198,7 @@ export async function claim(runId, n) {
   if (n <= 0) return [];
   // MATERIALIZED: without it Postgres may re-run the LIMITed subquery per row and claim more than n.
   const { rows } = await asSystem((db) => db.query(`WITH picked AS MATERIALIZED (
-      SELECT id FROM bulk_items WHERE run_id = $1 AND status = 'queued' ORDER BY position LIMIT $2 FOR UPDATE SKIP LOCKED)
+      SELECT id FROM bulk_items WHERE run_id = $1 AND status = 'queued' AND (not_before IS NULL OR not_before <= now()) ORDER BY position LIMIT $2 FOR UPDATE SKIP LOCKED)
     UPDATE bulk_items i SET status = 'dialling', placed_at = now() FROM picked WHERE i.id = picked.id
     RETURNING i.*`, [runId, n]));
   return rows.sort((a, b) => a.position - b.position);

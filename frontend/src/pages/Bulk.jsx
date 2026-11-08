@@ -70,6 +70,8 @@ function NewRun({ onClose, onStarted }) {
   const [agentId, setAgentId] = useState("");
   const [fromId, setFromId] = useState("");
   const [parallel, setParallel] = useState(3);
+  const [retries, setRetries] = useState(0);
+  const [wait, setWait] = useState(4);
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [drag, setDrag] = useState(false);
@@ -100,7 +102,7 @@ function NewRun({ onClose, onStarted }) {
     if (!consent) return toast("Confirm that everyone on the list agreed to be called.", true);
     setBusy(true);
     try {
-      const run = await post("/api/bulk-calls", { name, agent_id: agentId, from_id: fromId, parallel: Number(parallel), rows: list.rows, consent: true });
+      const run = await post("/api/bulk-calls", { name, agent_id: agentId, from_id: fromId, parallel: Number(parallel), retries: Number(retries), retry_after_hours: Number(wait), rows: list.rows, consent: true });
       toast(`Started: ${people(run.counts.queued)} to call${run.counts.skipped ? `, ${run.counts.skipped} skipped` : ""}.`);
       onStarted(run);
     } catch (e) { toast(e.message, true); } finally { setBusy(false); }
@@ -151,6 +153,19 @@ function NewRun({ onClose, onStarted }) {
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
         </div>
+        <div className="field"><label className="f">If nobody answers</label>
+          <select value={retries} onChange={(e) => setRetries(e.target.value)}>
+            <option value={0}>Do not try again</option>
+            {[1, 2, 3].map((n) => <option key={n} value={n}>Try again up to {n} {n === 1 ? "time" : "times"}</option>)}
+          </select>
+        </div>
+        {Number(retries) > 0 && (
+          <div className="field"><label className="f">Wait before trying again</label>
+            <select value={wait} onChange={(e) => setWait(e.target.value)}>
+              {[1, 2, 4, 6, 12, 24].map((n) => <option key={n} value={n}>{n} {n === 1 ? "hour" : "hours"}</option>)}
+            </select>
+          </div>
+        )}
       </div>
       <p className="hint">The agent's own settings apply to every call: its calling window, opening line, longest call and ring time. People already in Contacts keep their names; new numbers are added to Contacts.</p>
       <label className="check" style={{ marginTop: "var(--s3)" }}><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>Everyone on this list has agreed to be called. India's TRAI/DND rules apply, and calls are recorded.</span></label>
