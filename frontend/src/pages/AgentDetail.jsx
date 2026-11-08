@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
-import { isAdmin, useMe } from "../auth.jsx";
+import { can, isAdmin, useMe } from "../auth.jsx";
 import AgentCalls from "../components/AgentCalls.jsx";
 import { Icon, Menu, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
@@ -47,7 +47,9 @@ export default function AgentDetail() {
           {isAdmin(me) && <Menu items={[["Delete agent", removeAgent, true]]} />}
         </div>
       </header>
-      <PublishBar agent={agent} check={check} me={me} confirm={confirm} onChanged={load} />
+      {!can(me, "agents.edit") && <div className="card explain"><b>You can look at this agent but not change it.</b>
+        <p className="hint">Ask an admin for a role that can build agents (Manager or Agent builder).</p></div>}
+      {can(me, "agents.edit") && <PublishBar agent={agent} check={check} me={me} confirm={confirm} onChanged={load} />}
       <div className="seg">
         {["prompt", "tools", "questions", "settings", "calls", "versions"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "questions" ? "Questions to save" : t === "settings" ? "Call settings" : t === "calls" ? "Call history" : "Versions"}</button>)}
       </div>

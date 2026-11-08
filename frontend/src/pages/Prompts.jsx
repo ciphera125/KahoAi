@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
-import { isAdmin, useMe } from "../auth.jsx";
+import { can, useMe } from "../auth.jsx";
 import { Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
 
 export default function Prompts() {
@@ -24,7 +24,7 @@ export default function Prompts() {
     <section>
       <header className="page">
         <div><h1>Prompts</h1><div className="sub">A prompt is the instructions an agent follows on a call. Here is every prompt in your organization and the agent it belongs to.</div></div>
-        <div className="head-actions"><button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New prompt</button></div>
+        {can(me, "agents.edit") && <div className="head-actions"><button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New prompt</button></div>}
       </header>
       <div className="card list">
         <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.6fr) minmax(0,1fr) 80px 110px 56px" }}><span>Prompt</span><span>Agent</span><span>Versions</span><span>Last edited</span><span /></div>
@@ -38,7 +38,7 @@ export default function Prompts() {
             <div className="ellip">{p.agent_name || <span className="muted">Not assigned</span>}</div>
             <span className="num">{p.version_count}</span>
             <span className="muted">{whenShort(p.updated_at)}</span>
-            <div className="row-actions"><Menu items={[["Edit", () => setEditing(p)], isAdmin(me) && ["Delete", () => remove(p), true]]} /></div>
+            <div className="row-actions"><Menu items={[can(me, "agents.edit") && ["Edit", () => setEditing(p)], can(me, "agents.delete") && ["Delete", () => remove(p), true]]} /></div>
           </div>
         ))}
       </div>

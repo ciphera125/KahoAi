@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import * as Tooltip from "@radix-ui/react-tooltip";
-import { get, post } from "../api.js";
+import { get, patch, post } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { LogoMark, Wordmark } from "../logo.jsx";
-import { ago, ErrorBoundary, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
+import { ago, Avatar, ErrorBoundary, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
 
 const NAV = [
   ["Operate", [["dashboard", "dash", "Dashboard"], ["calls", "call", "Calls"], ["live", "live", "Live"], ["bulk", "bulk", "Bulk calls"], ["contacts", "contacts", "Contacts"]]],
@@ -65,10 +65,10 @@ export default function Layout() {
           ))}
         </div>
         <button type="button" className="me" onClick={() => setProfile(true)} data-label={me.name}>
-          <div className="avatar">{initials(me.name)}</div>
+          <Avatar name={me.name} avatar={me.avatar} />
           <div className="rail-text" style={{ minWidth: 0 }}>
             <div className="ellip me-name">{me.name}</div>
-            <div className="muted ellip role">{me.role} · {me.org_name}</div>
+            <div className="muted ellip role">{roleLabel(me.role)} · {me.org_name}</div>
           </div>
         </button>
       </nav>
@@ -207,6 +207,9 @@ function ThemeToggle() {
 }
 
 // What each kind of notification is about, as an icon.
+const ROLE_LABEL = { owner: "Owner", admin: "Admin", manager: "Manager", builder: "Agent builder", operator: "Caller", viewer: "Viewer" };
+const roleLabel = (id) => ROLE_LABEL[id] ?? id;
+
 const KIND_ICON = { call: "call", agent: "agent", prompt: "prompt", account: "team", error: "warn", lead: "contacts" };
 
 function Bell() {
@@ -267,6 +270,12 @@ function Profile({ onClose }) {
   const [changing, setChanging] = useState(false);
   const [cur, setCur] = useState(""); const [next, setNext] = useState("");
   const [invite, setInvite] = useState(null);
+  const [icons, setIcons] = useState([]);
+  useEffect(() => { get("/api/avatars").then(setIcons).catch(() => {}); }, []);
+  const chooseIcon = async (icon) => {
+    try { await patch("/api/me/profile", { avatar: icon }); await refresh(); toast(icon ? "Icon changed." : "Back to your initials."); }
+    catch (e) { toast(e.message, true); }
+  };
   useEffect(() => { get("/api/me").then((m) => setInvite(m.invite_code ? { code: m.invite_code, expires: m.invite_expires } : null)).catch(() => {}); }, []);
   const changePassword = async () => {
     try { await post("/api/auth/password", { current: cur, new: next }); await refresh(); toast("Password changed."); setChanging(false); setCur(""); setNext(""); }
@@ -278,7 +287,18 @@ function Profile({ onClose }) {
   };
   return (
     <Modal title={me.name} onClose={onClose} wide>
-      <div className="muted role" style={{ marginBottom: "var(--s4)" }}>{me.role} · {me.org_name} · {me.email}</div>
+      <div className="profile-head">
+        <Avatar name={me.name} avatar={me.avatar} className="big" />
+        <div className="muted role">{roleLabel(me.role)} · {me.org_name} · {me.email}</div>
+      </div>
+      <div className="f">Pick an icon for yourself</div>
+      <div className="icon-grid" role="radiogroup" aria-label="Your icon">
+        {icons.map((icon) => (
+          <button key={icon} type="button" role="radio" aria-checked={me.avatar === icon} className={me.avatar === icon ? "on" : ""}
+            onClick={() => chooseIcon(icon)}>{icon}</button>
+        ))}
+      </div>
+      {me.avatar && <button type="button" className="link" style={{ marginBottom: "var(--s4)" }} onClick={() => chooseIcon(null)}>Go back to my initials</button>}
       {invite && (
         <div className="card" style={{ marginBottom: "var(--s4)" }}>
           <div className="f" style={{ marginBottom: 8 }}>Invite a teammate</div>

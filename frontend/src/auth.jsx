@@ -9,6 +9,9 @@ export const useAuth = () => useContext(AuthCtx);
 export const useMe = () => useContext(AuthCtx).me;
 export const isAdmin = (me) => me && (me.role === "owner" || me.role === "admin");
 export const isOwner = (me) => me && me.role === "owner";
+/** Whether this person's role allows something (the list comes from the server). Hiding a button with it is a
+ * courtesy; the server is what refuses. */
+export const can = (me, permission) => Boolean(me?.permissions?.includes(permission));
 
 export function AuthProvider({ children }) {
   const [me, setMe] = useState(undefined); // undefined = still loading, null = signed out

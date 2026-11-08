@@ -1,3 +1,4 @@
+import { can, useMe } from "../auth.jsx";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { get, post } from "../api.js";
@@ -5,6 +6,7 @@ import { Icon, Modal, plural, Spinner, usePaged, useToast } from "../ui.jsx";
 
 export default function Agents() {
   const toast = useToast();
+  const me = useMe();
   const navigate = useNavigate();
   const [agents, setAgents] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -15,7 +17,7 @@ export default function Agents() {
     <section>
       <header className="page">
         <div><h1>Agents</h1><div className="sub">Each agent has its own prompts, tools and call settings. Make one per job, like EMI reminders.</div></div>
-        <div className="head-actions"><button className="primary" onClick={() => setCreating(true)}><Icon name="plus" />New agent</button></div>
+        {can(me, "agents.edit") && <div className="head-actions"><button className="primary" onClick={() => setCreating(true)}><Icon name="plus" />New agent</button></div>}
       </header>
       {agents.length === 0 ? (
         <div className="card empty">No agents yet. Create one for each kind of call you make.</div>

@@ -170,6 +170,10 @@ export function useConfirm() {
 
 /* ---------- misc ---------- */
 export const Spinner = () => <div className="center"><div className="spinner" /></div>;
+/** A person's picture: the icon they chose, or their initials until they do. */
+export const Avatar = ({ name, avatar, className = "" }) => (
+  <div className={`avatar${avatar ? " has-icon" : ""} ${className}`.trim()} title={name}>{avatar || initials(name)}</div>
+);
 export function PasswordInput(props) {
   const [show, setShow] = useState(false);
   return (

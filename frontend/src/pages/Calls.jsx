@@ -1,3 +1,4 @@
+import { can, useMe } from "../auth.jsx";
 import { messages } from "../transcript.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, get, post } from "../api.js";
@@ -9,6 +10,7 @@ import { fmtDur, Icon, initials, Modal, OutcomePill, Pager, plural, useToast, wh
 
 export default function Calls() {
   const toast = useToast();
+  const me = useMe();
   const [agents, setAgents] = useState([]);
   const [numbers, setNumbers] = useState([]);
   const [watch, setWatch] = useState(null); // { uuid, label, sub }
@@ -41,7 +43,10 @@ export default function Calls() {
       <header className="page"><div><h1>Calls</h1><div className="sub">Call anyone with one of your agents, and follow the conversation live.</div></div></header>
       <div className="grid-side" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1.15fr)" }}>
         <div className="stack">
-          <NewCall agents={agents} numbers={numbers} languages={languages} onPlace={place} />
+          {can(me, "calls.place")
+            ? <NewCall agents={agents} numbers={numbers} languages={languages} onPlace={place} />
+            : <div className="card"><div className="card-head"><span className="card-title">New call</span></div>
+              <p className="hint">Your role can look at calls but not place them. Ask an admin for a role that can.</p></div>}
           <History reload={reload} onWatch={setWatch} />
         </div>
         <LiveTranscript watch={watch} onEnded={() => setReload((n) => n + 1)} />

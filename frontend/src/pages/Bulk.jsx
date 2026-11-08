@@ -1,6 +1,7 @@
 // Bulk calls: upload a list (CSV) of names and numbers, pick an agent, and the
 // server calls them a few at a time. The list page shows every run; a run's
 // page shows each person and how their call went, refreshing while it runs.
+import { can, useMe } from "../auth.jsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { get, post } from "../api.js";
@@ -21,6 +22,7 @@ export default function Bulk() {
 
 function RunList() {
   const toast = useToast();
+  const me = useMe();
   const navigate = useNavigate();
   const [runs, setRuns] = useState(null);
   const [creating, setCreating] = useState(false);
@@ -31,7 +33,7 @@ function RunList() {
     <section>
       <header className="page">
         <div><h1>Bulk calls</h1><div className="sub">Upload a list of names and phone numbers and an agent calls them all, a few at a time. Do not call numbers are skipped.</div></div>
-        <div className="head-actions"><button className="primary" onClick={() => setCreating(true)}><Icon name="upload" />New bulk call</button></div>
+        {can(me, "calls.bulk") && <div className="head-actions"><button className="primary" onClick={() => setCreating(true)}><Icon name="upload" />New bulk call</button></div>}
       </header>
       <div className="card list">
         <div className="row head bulk-cols"><span>Name</span><span>Agent</span><span>Progress</span><span>Status</span><span>Started</span></div>

@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { get } from "../api.js";
+import { can, useMe } from "../auth.jsx";
 import { recordingMessage } from "../recording.js";
 import { fmtDur, Icon, Modal, whenShort } from "../ui.jsx";
 
@@ -70,6 +71,8 @@ function Player({ callId, open, onFailed }) {
 }
 
 export default function CallDetail({ call, onClose }) {
+  const me = useMe();
+  const listen = call.has_recording && can(me, "recordings.listen");
   const [turns, setTurns] = useState(null);
   const [playing, setPlaying] = useState(false);
   const id = encodeURIComponent(call.call_id);
@@ -82,7 +85,7 @@ export default function CallDetail({ call, onClose }) {
       </div>
 
       <div className="call-actions">
-        {call.has_recording && (
+        {listen && (
           <button type="button" className="primary" onClick={() => setPlaying(true)} disabled={playing}>
             <Icon name="play" />Play recording
           </button>
@@ -90,7 +93,8 @@ export default function CallDetail({ call, onClose }) {
         <a className="btn ghost" href={`/api/calls/${id}/transcript.csv`} download title="Opens in Excel or Google Sheets"><Icon name="download" />Download transcript</a>
       </div>
 
-      {call.has_recording && <Player callId={call.call_id} open={playing} onFailed={() => setPlaying(false)} />}
+      {call.has_recording && !listen && <p className="hint">This call was recorded. Your role cannot listen to recordings.</p>}
+      {listen && <Player callId={call.call_id} open={playing} onFailed={() => setPlaying(false)} />}
       <SavedAnswers callId={call.call_id} />
 
       <div className="chat" style={{ maxHeight: "50vh", border: "1px solid var(--border)", borderRadius: "var(--r-md)" }}>

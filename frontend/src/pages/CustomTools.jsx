@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
-import { isAdmin, useMe } from "../auth.jsx";
+import { can, useMe } from "../auth.jsx";
 import { dayWord } from "../time.js";
 import { Icon, Modal, Spinner, usePaged, useConfirm, useToast } from "../ui.jsx";
 
@@ -35,7 +35,7 @@ export default function CustomTools() {
       <header className="page">
         <div><h1>Your own tools</h1>
           <div className="sub">Let an agent ask your own system something during a call, like “where is my order?”.</div></div>
-        {isAdmin(me) && <div className="head-actions">
+        {can(me, "tools.custom") && <div className="head-actions">
           <button className="primary" onClick={() => setEditing(BLANK)}><Icon name="plus" />New tool</button></div>}
       </header>
 
@@ -68,7 +68,7 @@ export default function CustomTools() {
               <span>{t.last_test_at
                 ? <span className={`pill ${t.last_test_ok ? "live" : "muted"}`} title={t.last_test_note}>{t.last_test_ok ? "Worked" : "Failed"} · {dayWord(t.last_test_at)}</span>
                 : <span className="muted">Not tested</span>}</span>
-              <span className="row-buttons">{isAdmin(me) && <>
+              <span className="row-buttons">{can(me, "tools.custom") && <>
                 <button className="ghost" onClick={() => setEditing(t)}>Edit</button>
                 <button className="ghost" onClick={() => remove(t)} aria-label={`Delete ${t.label}`}><Icon name="trash" /></button></>}</span>
             </div>

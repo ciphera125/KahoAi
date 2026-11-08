@@ -552,3 +552,24 @@ details.more[open] > summary { margin-bottom: var(--s3); }
 .row-actions .icon-btn svg.i { width: 20px; height: 20px; }
 .row-actions .icon-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); border-color: var(--text-3); }
 .row-actions { display: flex; justify-content: flex-end; align-items: center; }
+
+/* roles and access */
+.role-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: var(--s3); margin-bottom: var(--s4); }
+.role-card p { margin: 6px 0 0; }
+.role-card.mine { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+table.matrix { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.matrix th, table.matrix td { padding: 8px 10px; text-align: center; border-bottom: 1px solid var(--border); }
+table.matrix th:first-child, table.matrix td:first-child { text-align: left; min-width: 280px; }
+table.matrix tr.group td { background: var(--surface-2); font: 600 11px/1.6 var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--text-3); text-align: left; }
+table.matrix .mine { background: var(--accent-soft); }
+table.matrix .yes { color: var(--ok, #2f8f5b); display: inline-flex; }
+table.matrix .yes svg.i { width: 16px; height: 16px; }
+table.matrix .no { color: var(--text-3); }
+.avatar.has-icon { font-size: 18px; background: var(--accent-soft); }
+.icon-grid { display: grid; grid-template-columns: repeat(8, 1fr); gap: 8px; margin: var(--s2) 0 var(--s3); }
+.icon-grid button { height: 44px; font-size: 22px; border: 1px solid var(--border); background: var(--surface); border-radius: var(--r-md); cursor: pointer; }
+.icon-grid button:hover { background: var(--hover); }
+.icon-grid button.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--accent); }
+.role-select { width: 100%; height: 32px; padding: 0 8px; }
+.profile-head { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s4); }
+.avatar.big { width: 56px; height: 56px; font-size: 30px; flex: none; }

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { del, patch, post } from "../api.js";
-import { isAdmin, useMe } from "../auth.jsx";
+import { can, useMe } from "../auth.jsx";
 import { useTags } from "../tags.jsx";
 import { Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
@@ -23,7 +23,7 @@ export default function Tags() {
     <section>
       <header className="page">
         <div><h1>Tags</h1><div className="sub">Short labels, like “VIP”, that you put on contacts so you can find and group them.</div></div>
-        <div className="head-actions"><button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New tag</button></div>
+        {can(me, "contacts.edit") && <div className="head-actions"><button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New tag</button></div>}
       </header>
       <div className="card list">
         <div className="row head" style={{ gridTemplateColumns: "minmax(0,2fr) 100px 56px" }}><span>Tag</span><span>Color</span><span /></div>
@@ -32,7 +32,7 @@ export default function Tags() {
           <div key={t.id} className="row" style={{ gridTemplateColumns: "minmax(0,2fr) 100px 56px" }}>
             <span className="ellip"><span className="tag" style={{ "--tc": `var(--t-${t.color})` }}>{t.name}</span></span>
             <span className="muted">{t.color}</span>
-            <div className="row-actions"><Menu items={[["Rename", () => setEditing(t)], isAdmin(me) && ["Delete", () => remove(t), true]]} /></div>
+            <div className="row-actions"><Menu items={[can(me, "contacts.edit") && ["Rename", () => setEditing(t)], can(me, "contacts.delete") && ["Delete", () => remove(t), true]]} /></div>
           </div>
         ))}
       </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
-import { isAdmin, useMe } from "../auth.jsx";
+import { can, isAdmin, useMe } from "../auth.jsx";
 import { useTags } from "../tags.jsx";
 import { serverView } from "../paginate.js";
 import { dayWord } from "../time.js";
@@ -81,8 +81,8 @@ export default function Contacts() {
       <header className="page">
         <div><h1>Contacts</h1><div className="sub">The people your agents call. Mark anyone Do not call to stop dialling them.</div></div>
         <div className="head-actions">
-          <Link className="btn ghost" to="/bulk"><Icon name="upload" />Bulk call from a file</Link>
-          <button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New contact</button>
+          {can(me, "calls.bulk") && <Link className="btn ghost" to="/bulk"><Icon name="upload" />Bulk call from a file</Link>}
+          {can(me, "contacts.edit") && <button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New contact</button>}
         </div>
       </header>
 

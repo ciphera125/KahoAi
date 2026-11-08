@@ -5,10 +5,12 @@ import { get } from "../api.js";
 import { serverView } from "../paginate.js";
 import { dayWord } from "../time.js";
 import CallDetail from "./CallDetail.jsx";
+import { can, useMe } from "../auth.jsx";
 import { fmtDur, Icon, OutcomePill, Pager, Spinner, useToast } from "../ui.jsx";
 
 export default function AgentCalls({ agent }) {
   const toast = useToast();
+  const me = useMe();
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
@@ -45,7 +47,7 @@ export default function AgentCalls({ agent }) {
             <span className="muted">{fmtDur(c.duration_secs)}</span>
             <span><OutcomePill status={c.status} /></span>
             <span className="row-buttons">
-              {c.has_recording && <button type="button" className="btn listen" onClick={() => setOpen(c)} title="Play the recording"><Icon name="play" />Listen</button>}
+              {c.has_recording && can(me, "recordings.listen") && <button type="button" className="btn listen" onClick={() => setOpen(c)} title="Play the recording"><Icon name="play" />Listen</button>}
               {c.has_transcript && <a className="btn ghost" href={`/api/calls/${encodeURIComponent(c.call_id)}/transcript.csv`} download title="Download the transcript (opens in Excel or Google Sheets)"><Icon name="download" />Transcript</a>}
             </span>
           </div>

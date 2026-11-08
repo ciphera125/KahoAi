@@ -1,3 +1,4 @@
+import { can, useMe } from "../auth.jsx";
 import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { dayWord } from "../time.js";
@@ -21,6 +22,7 @@ const fromInput = (value) => (value ? new Date(`${value}:00+05:30`).toISOString(
 
 export default function Tasks() {
   const toast = useToast();
+  const me = useMe();
   const [confirm, confirmNode] = useConfirm();
   const [data, setData] = useState(null);
   const [range, setRange] = useState("all");
@@ -49,7 +51,7 @@ export default function Tasks() {
       <header className="page">
         <div><h1>Tasks</h1>
           <div className="sub">Things your agent can remind people about, like “Pay the November EMI”.</div></div>
-        <div className="head-actions"><button className="primary" onClick={() => setAdding(true)}><Icon name="plus" />Add a task</button></div>
+        {can(me, "contacts.edit") && <div className="head-actions"><button className="primary" onClick={() => setAdding(true)}><Icon name="plus" />Add a task</button></div>}
       </header>
 
       <div className="card explain">
@@ -78,15 +80,15 @@ export default function Tasks() {
                 <tr key={t.id}>
                   <td style={{ width: 28 }}>
                     <input type="checkbox" aria-label={`Mark ${t.title} done`} checked={t.status === "done"}
-                      onChange={(e) => setDone(t, e.target.checked)} />
+                      disabled={!can(me, "contacts.edit")} onChange={(e) => setDone(t, e.target.checked)} />
                   </td>
                   <td>
                     <div style={{ textDecoration: t.status === "done" ? "line-through" : "none" }}>{t.title}</div>
                     <div className="hint">{[t.due_at ? `Due ${dayWord(t.due_at)}` : "No date", t.contact_name, SOURCES[t.source]].filter(Boolean).join(" · ")}</div>
                   </td>
                   <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                    <button className="ghost" onClick={() => setEditing(t)}>Edit</button>
-                    <button className="ghost" onClick={() => remove(t)} aria-label={`Delete ${t.title}`}><Icon name="trash" /></button>
+                    {can(me, "contacts.edit") && <><button className="ghost" onClick={() => setEditing(t)}>Edit</button>
+                    <button className="ghost" onClick={() => remove(t)} aria-label={`Delete ${t.title}`}><Icon name="trash" /></button></>}
                   </td>
                 </tr>
               ))}
