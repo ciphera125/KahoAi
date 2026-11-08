@@ -1,4 +1,5 @@
 // Calls: how each one ended and what its transcript says.
+import { deliverCallCompleted } from "../services/webhook.js";
 import { createHash } from "node:crypto";
 import { asSystem, inOrg } from "../db/pool.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
@@ -174,6 +175,8 @@ export async function ingest(callId, events) {
       call.caller_turns, call.lead, call.summary, call.has_transcript, duration, call.agent_version ?? null]);
     await db.query("SELECT pg_notify('call_events', $1)", [callId]); // delivered on commit
   });
+  // A summary is the last thing a call writes. Sending is off the call path and never raises.
+  if (events.some((e) => e?.event === "summary")) setImmediate(() => deliverCallCompleted(callId));
 }
 
 // --- what the Studio shows -----------------------------------------------------

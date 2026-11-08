@@ -3,7 +3,8 @@ import { del, get, patch, post } from "../api.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
 import { Icon, Spinner, useConfirm, useToast } from "../ui.jsx";
 
-const TABS = [["organization", "Organization"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"]];
+const TABS = [["organization", "Organization"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
+  ["webhook", "Call webhook"]];
 
 export default function Settings() {
   const me = useMe();
@@ -21,6 +22,7 @@ export default function Settings() {
       {tab === "organization" && <Organization />}
       {tab === "calls" && <CallRules />}
       {tab === "roles" && <Roles />}
+      {tab === "webhook" && <Webhook />}
       {tab === "keys" && <ApiKeys />}
     </section>
   );
@@ -219,6 +221,46 @@ function ApiKeys() {
         <input value={name} maxLength={60} placeholder="Our CRM" onChange={(e) => setName(e.target.value)} /></div>
       <div className="actions"><button className="primary" onClick={make}><Icon name="plus" />Make a key</button></div>
       {confirmNode}
+    </div>
+  );
+}
+
+function Webhook() {
+  const me = useMe();
+  const toast = useToast();
+  const editable = can(me, "org.settings");
+  const [s, setS] = useState(null);
+  const [url, setUrl] = useState("");
+  const [secret, setSecret] = useState(null);
+  useEffect(() => { get("/api/org/settings").then((d) => { setS(d); setUrl(d.webhook_url ?? ""); }).catch((e) => toast(e.message, true)); }, [toast]);
+  const save = async (changes) => {
+    try {
+      const next = await patch("/api/org/settings", changes);
+      setS(next); setUrl(next.webhook_url ?? "");
+      if (next.webhook_secret) setSecret(next.webhook_secret);
+      toast("Saved.");
+    } catch (e) { toast(e.message, true); }
+  };
+  if (!s) return <Spinner />;
+  return (
+    <div className="card">
+      <h2>Send finished calls to your own system</h2>
+      <p className="hint">When a call ends, Kaho AI sends the summary and every answer the agent saved (a payment date, an amount, a yes or no) to the web address below,
+        so your system updates without anyone copying anything. Each message is signed with a secret so your system can tell it really came from us.</p>
+      <div className="field"><label className="f" htmlFor="wh-url">Web address</label>
+        <input id="wh-url" value={url} disabled={!editable} placeholder="https://yourcompany.com/kaho/calls" onChange={(e) => setUrl(e.target.value)} /></div>
+      {secret && (
+        <div className="notice"><b>Your signing secret</b> (shown once, copy it now)
+          <code className="secret">{secret}</code></div>
+      )}
+      {s.webhook_secret_set && !secret && <p className="hint">A signing secret is set. You can make a new one if it was lost; the old one stops working.</p>}
+      {editable && (
+        <div className="actions">
+          <button className="primary" onClick={() => save({ webhook_url: url.trim() || null })}>Save</button>
+          {s.webhook_secret_set && <button className="ghost" onClick={() => save({ rotate_webhook_secret: true })}>Make a new secret</button>}
+          {s.webhook_url && <button className="ghost" onClick={() => { save({ webhook_url: null }); setSecret(null); }}>Turn off</button>}
+        </div>
+      )}
     </div>
   );
 }

@@ -634,3 +634,4 @@ table.matrix .no { color: var(--text-3); }
 .template span { font-size: 12px; color: var(--text-3); }
 .template:hover { border-color: var(--accent); }
 .template.on { border-color: var(--accent); background: var(--accent-soft); box-shadow: 0 0 0 2px var(--accent-soft); }
+.secret { display: block; margin-top: 6px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--r-md); font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; user-select: all; }
