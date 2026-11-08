@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
@@ -15,6 +16,7 @@ const BLANK = {
 
 /** Your own tools: a way for an agent to ask YOUR system something during a call. */
 export default function CustomTools() {
+  const navigate = useNavigate();
   const me = useMe();
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
@@ -80,7 +82,7 @@ export default function CustomTools() {
       )}
       {tools?.length > 0 && pager}
 
-      {chatting && <Assistant onClose={() => setChatting(false)} onApplied={() => load()} onShow={() => setChatting(false)} />}
+      {chatting && <Assistant onClose={() => setChatting(false)} onApplied={() => load()} onShow={(card) => { setChatting(false); if (card?.agent_id) navigate(`/agents/${card.agent_id}?tab=tools`); }} />}
       {editing && <ToolForm tool={editing} onClose={() => setEditing(null)}
         onSaved={() => { setEditing(null); load(); }} />}
       {confirmNode}

@@ -112,7 +112,7 @@ export default function Assistant({ agentId = null, onClose, onApplied, onShow }
                   <b>{t.card.undone ? "Undone" : KINDS[t.card.kind]}</b>
                   <span>{t.card.names.join(", ")}</span>
                   {!t.card.undone && <small>Saved as a draft. Publish the agent to make it live.</small>}
-                  {!t.card.undone && onShow && <button type="button" className="kb-see" onClick={onShow}>See it in Tools</button>}
+                  {!t.card.undone && onShow && <button type="button" className="kb-see" onClick={() => onShow(t.card)}>See it in Tools</button>}
                 </div>
                 {!t.card.undone && <button type="button" className="kb-undo" disabled={busy} onClick={() => undo(i)}>Undo</button>}
               </div>

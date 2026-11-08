@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
 import AgentCalls from "../components/AgentCalls.jsx";
@@ -22,7 +22,12 @@ export default function AgentDetail() {
   const [limits, setLimits] = useState({ max_minutes: 30, ring_secs: [15, 60] });
   const [check, setCheck] = useState({ problems: [], can_publish: true });
   const [languages, setLanguages] = useState([]);
-  const [tab, setTab] = useState("prompt");
+  const [focusTools, setFocusTools] = useState(false); // arrived from Kaho Builder: scroll to what it made
+  const TABS = ["prompt", "tools", "questions", "knowledge", "settings", "calls", "versions"];
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState(TABS.includes(params.get("tab")) ? params.get("tab") : "prompt");
+  // A link to ?tab=tools (from the Builder, say) opens that tab even when the agent is already on screen.
+  useEffect(() => { const t = params.get("tab"); if (TABS.includes(t)) { setTab(t); if (t === "tools") setFocusTools(true); } }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
   const [chatting, setChatting] = useState(false);
 
   const load = useCallback(async () => {
@@ -53,18 +58,18 @@ export default function AgentDetail() {
         <p className="hint">Ask an admin for a role that can build agents (Manager or Agent builder).</p></div>}
       {can(me, "agents.edit") && <PublishBar agent={agent} check={check} me={me} confirm={confirm} onChanged={load} />}
       <div className="seg">
-        {["prompt", "tools", "questions", "knowledge", "settings", "calls", "versions"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "questions" ? "Questions to save" : t === "knowledge" ? "Knowledge" : t === "settings" ? "Call settings" : t === "calls" ? "Call history" : "Versions"}</button>)}
+        {TABS.map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "questions" ? "Questions to save" : t === "knowledge" ? "Knowledge" : t === "settings" ? "Call settings" : t === "calls" ? "Call history" : "Versions"}</button>)}
       </div>
       {tab === "prompt" && <PromptTab agent={agent} prompts={prompts} onChanged={load} />}
       {(tab === "tools" || tab === "questions") && (can(me, "agents.edit") || can(me, "tools.custom")) && (
         <div className="assist-bar"><span className="hint">Tell Kaho Builder what you need and it sets it up.</span><AssistantButton onClick={() => setChatting(true)} /></div>)}
-      {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} />}
+      {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} focus={focusTools} />}
       {tab === "settings" && <SettingsTab agent={agent} limits={limits} languages={languages} onChanged={load} />}
       {tab === "calls" && <AgentCalls agent={agent} />}
       {tab === "questions" && <QuestionsTab agent={agent} onChanged={load} />}
       {tab === "knowledge" && <KnowledgeTab agent={agent} onChanged={load} />}
       {tab === "versions" && <VersionsTab agent={agent} confirm={confirm} onChanged={load} />}
-      {chatting && <Assistant agentId={agent.id} onClose={() => setChatting(false)} onApplied={() => load()} onShow={() => { setTab("tools"); setChatting(false); }} />}
+      {chatting && <Assistant agentId={agent.id} onClose={() => setChatting(false)} onApplied={() => load()} onShow={() => { setTab("tools"); setFocusTools(true); setChatting(false); }} />}
       {confirmNode}
     </section>
   );
@@ -378,8 +383,9 @@ function PromptTab({ agent, prompts, onChanged }) {
   );
 }
 
-function ToolsTab({ agent, tools, onChanged }) {
+function ToolsTab({ agent, tools, onChanged, focus = false }) {
   const toast = useToast();
+  const card = useRef(null);
   const [picked, setPicked] = useState(agent.tools);
   // When the agent changes underneath (Kaho Builder adds a tool, a version is restored) the switches follow,
   // so a later "Save tools" can never undo what was just set up.
@@ -389,7 +395,7 @@ function ToolsTab({ agent, tools, onChanged }) {
   const save = async () => { try { await patch(`/api/agents/${agent.id}`, { tools: picked }); toast("Saved as a draft. Publish it when you are ready."); onChanged(); } catch (e) { toast(e.message, true); } };
   const questions = agent.settings.capture_fields ?? [];
   const row = (t) => (
-    <div key={t.name} className="toggle-line">
+    <div key={t.name} className="toggle-line" data-made-by={t.made_by}>
       <div>
         <b>{t.label || TOOL_LABELS[t.name]}</b>
         {t.made_by === "builder" && <span className="made-by" title="Set up for you by Kaho Builder"><Icon name="spark" />Kaho Builder</span>}
@@ -403,8 +409,14 @@ function ToolsTab({ agent, tools, onChanged }) {
     </div>
   );
   const own = tools.filter((t) => t.custom);
+  // Sent here by Kaho Builder: bring what it made into view, newest Builder tool first.
+  useEffect(() => {
+    if (!focus || !card.current) return;
+    const made = [...card.current.querySelectorAll('[data-made-by="builder"]')].pop();
+    (made ?? card.current).scrollIntoView?.({ behavior: "smooth", block: "center" });
+  }, [focus, tools.length]);
   return (
-    <div className="card" style={{ maxWidth: 760 }}>
+    <div className="card" style={{ maxWidth: 760 }} ref={card}>
       <div className="card-head"><span className="card-title">What this agent can do on a call</span></div>
       {tools.filter((t) => !t.custom).map(row)}
       {own.length > 0 && (
