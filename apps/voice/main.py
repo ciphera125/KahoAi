@@ -156,14 +156,34 @@ is not recorded.
 }
 
 
+def keypad_enabled() -> bool:
+    """Whether digits the caller presses on their phone reach the agent (DTMF_INPUT)."""
+    return (os.environ.get("DTMF_INPUT") or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def keypad_processors() -> list:
+    """Turns pressed digits into one line of caller text ("DTMF: 12#"), when switched on. A
+    pause of two seconds or a # ends the number."""
+    if not keypad_enabled():
+        return []
+    from pipecat.processors.aggregators.dtmf_aggregator import DTMFAggregator
+
+    return [DTMFAggregator(timeout=2.0)]
+
+
+_KEYPAD_RULE = ("A caller line that starts with \"DTMF:\" is digits they pressed on their phone "
+                "keypad. Treat it as what they typed, and do not read it back digit by digit.")
+
+
 def voice_rules(mode: str = "auto", recorded: bool | None = None) -> str:
     """How to speak, for a call in this language mode (language.py). Everything but the
     language paragraphs is the same for every mode, so a mode cannot lose a rule.
     `recorded` says whether this call is recorded, so the agent can answer a caller who
     asks; None says nothing about it."""
     about = _ABOUT_RECORDING.get(recorded, "")
+    keypad = f"{_KEYPAD_RULE}\n" if keypad_enabled() else ""
     return (f"{_VOICE_BEFORE}\n{language.language_rules(mode)}\n\n"
-            f"{about + chr(10) if about else ''}{_VOICE_AFTER}")
+            f"{about + chr(10) if about else ''}{keypad}{_VOICE_AFTER}")
 
 
 # Follow-the-caller is the default, and what every call had before language modes.
@@ -1486,6 +1506,7 @@ def build_worker(
     pipeline = Pipeline(
         [
             transport.input(),
+            *keypad_processors(),
             stt,
             NormalizeTranscripts(),
             *([follow_proc] if follow_proc else []),
