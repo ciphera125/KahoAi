@@ -88,3 +88,13 @@ None of these has been started. Say which to take first.
   https://www.coval.dev/blog/bland-ai-review-2026-features-pricing-and-when-to-use-it,
   https://www.retellai.com/blog/bland-ai-reviews
 - Agni documentation (unconfirmed as the product meant): https://agni-docs-frontend.vercel.app
+
+## Status update, 2026-11-08 (later)
+
+Built since the list above: **starter templates**, **knowledge base** (documents the agent searches mid-call),
+**call webhook** (signed, with summary, answers and sentiment), **public API** (agents, place a call, list and
+fetch calls), **campaign retries** (up to 3, 1 to 24 hours apart, only after no answer), **voicemail hang-up**
+(Plivo machine detection; off by default, untried on a real call), **usage** (minutes by day and agent),
+and **call review** (happy, neutral or unhappy).
+Still missing: browser test calls, keypad (DTMF) input, more Indian languages, calendar booking,
+WhatsApp or SMS follow-up, a flow designer, billing, and a full audit log.

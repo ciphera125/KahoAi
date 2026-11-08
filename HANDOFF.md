@@ -1955,3 +1955,14 @@ saves only after a yes. Every page offers the same page sizes, 10, 25, 50. Compe
 **Needs the owner:** the assistant and "Test this agent" both need `GROQ_API_KEY` in `backend/.env`;
 until then they say so. Nothing has been tried by eye in a browser. The voice-side changes of earlier
 today are still unheard on a real call.
+
+### 2026-11-08 (night): Kaho Builder tuned, and the competitor gaps closed where possible
+
+Kaho Builder builds at once with Undo (measured 16 of 16 on the real model across eight phrasings; opt-in
+live test `GROQ_LIVE`). New: templates, knowledge base (`search_knowledge`, Studio and voice), call webhook
+(migration 019), public API calls, bulk retries (021), voicemail hang-up setting, usage page, call sentiment
+(022). Migrations 019 to 022 are applied to the live Supabase. All LLM calls in the Studio use the key in
+`backend/.env` through `models/llm.js`. Local test DB needed the `anon` and `authenticated` roles created
+(done). Looked at in a real browser: Builder panel, Usage, Settings webhook tab, New agent templates,
+agent Knowledge tab; two layout bugs found and fixed that tests could not see.
+**Not verified on a real call:** voicemail hang-up, the knowledge tool, the webhook against a real receiver.
