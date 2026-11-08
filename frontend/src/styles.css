@@ -493,3 +493,12 @@ nav.rail { padding-top: var(--s3); }
 
 .explain { margin-bottom: var(--s4); }
 .explain p { margin: 4px 0 0; }
+
+/* the call dialog */
+.call-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin-bottom: var(--s3); }
+.call-foot { justify-content: flex-start; margin-top: var(--s3); }
+a.btn.ghost { border-color: var(--border); background: var(--surface); height: 36px; padding: 0 14px; }
+a.btn.ghost:hover { background: var(--hover); border-color: var(--text-3); }
+.call-actions button.primary { height: 36px; }
+.row-buttons { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.row-buttons .btn { height: 30px; padding: 0 10px; }

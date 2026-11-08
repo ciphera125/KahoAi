@@ -193,10 +193,11 @@ export function checkPage(page, perPage) {
 }
 
 /** One page of the organization's calls, newest first; only with `peers` if given. */
-export async function page(orgId, { page: p, perPage, peers = null, q = null }) {
+export async function page(orgId, { page: p, perPage, peers = null, q = null, agentId = null }) {
   const { page: n, perPage: size } = checkPage(p, perPage);
   const params = [orgId];
   let where = "WHERE org_id = $1";
+  if (agentId) { params.push(agentId); where += ` AND agent_id = $${params.length}`; }
   if (peers) { params.push(peers); where += ` AND peer = ANY($${params.length})`; }
   if (q) { // what was said: the summary or any line of the call; websearch syntax never raises on odd input
     params.push(q);
@@ -418,4 +419,19 @@ export async function recordingOf(orgId, callId) {
     "SELECT recording_path AS path, recording_bytes::int AS bytes, recording_mime AS mime FROM calls WHERE call_id = $1 AND org_id = $2 AND recording_path IS NOT NULL",
     [callId, orgId]));
   return rows[0] ?? null;
+}
+
+/** What a call's text transcript and its file names are built from. */
+export async function forFiles(orgId, callId) {
+  if (!CALL_ID.test(String(callId))) throw new NotFoundError("call");
+  const { rows } = await inOrg(orgId, (db) => db.query(
+    `SELECT c.call_id, c.peer, c.started_at, c.duration_secs, c.agent_id, a.name AS agent_name,
+       (SELECT ct.name FROM contact_numbers cn JOIN contacts ct ON ct.id = cn.contact_id AND ct.org_id = cn.org_id
+        WHERE cn.number = c.peer AND cn.org_id = c.org_id LIMIT 1) AS contact_name
+     FROM calls c LEFT JOIN agents a ON a.id = c.agent_id AND a.org_id = c.org_id
+     WHERE c.call_id = $1 AND c.org_id = $2`, [callId, orgId]));
+  if (!rows[0]) throw new NotFoundError("call");
+  const r = rows[0];
+  return { callId: r.call_id, peer: r.peer, name: r.contact_name, agent: r.agent_name,
+    startedAt: r.started_at ? r.started_at.toISOString() : null, durationSecs: r.duration_secs };
 }

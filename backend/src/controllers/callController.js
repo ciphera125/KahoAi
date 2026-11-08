@@ -2,6 +2,7 @@ import { config } from "../config/env.js";
 import * as Agent from "../models/Agent.js";
 import * as Call from "../models/Call.js";
 import * as CallAnswer from "../models/CallAnswer.js";
+import { fileStem, transcriptText } from "../models/transcriptText.js";
 import * as Contact from "../models/Contact.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 import { OutsideWindowError, placeCall } from "../services/calling.js";
@@ -40,7 +41,11 @@ export async function list(req, res) {
   const org = req.user.org_id;
   const q = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 100) : "";
   if (req.query.q !== undefined && typeof req.query.q !== "string") throw new ValidationError("q must be text");
-  const page = await Call.page(org, { page: req.query.page, perPage: req.query.per_page, q: q || null });
+  const agentId = req.query.agent_id;
+  if (agentId !== undefined && !(typeof agentId === "string" && /^ag_[0-9a-f]{12}$/.test(agentId))) {
+    throw new ValidationError("agent_id is not an agent id");
+  }
+  const page = await Call.page(org, { page: req.query.page, perPage: req.query.per_page, q: q || null, agentId });
   res.json({ ...page, calls: await named(org, page.calls) });
 }
 
@@ -76,6 +81,17 @@ export async function transcriptCsv(req, res) {
   res.set("Content-Type", "text/csv; charset=utf-8");
   res.set("Content-Disposition", `attachment; filename="call-${req.params.callId}.csv"`);
   res.send(lines.join("\r\n") + "\r\n");
+}
+
+/** The call as plain text, for the "Download transcript" button. */
+export async function transcriptTxt(req, res) {
+  const org = req.user.org_id;
+  const [turns, meta, answers] = await Promise.all([
+    Call.turns(org, req.params.callId), Call.forFiles(org, req.params.callId),
+    CallAnswer.forCall(org, req.params.callId)]);
+  res.set("Content-Type", "text/plain; charset=utf-8");
+  res.set("Content-Disposition", `attachment; filename="${fileStem(meta)}.txt"`);
+  res.send(transcriptText({ ...meta, turns, answers }));
 }
 
 export async function toolCallsList(req, res) {

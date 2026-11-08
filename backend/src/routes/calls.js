@@ -13,6 +13,7 @@ router.get("/calls/:callId/recording", calls.recording);
 router.get("/calls/:callId/answers", calls.answers);
 router.get("/calls/:callId/transcript", calls.transcript);
 router.get("/calls/:callId/transcript.csv", calls.transcriptCsv);
+router.get("/calls/:callId/transcript.txt", calls.transcriptTxt);
 router.get("/calls/:callId/stream", calls.stream);
 router.get("/contacts/:contactId/calls", calls.forContact);
 router.get("/contacts/:contactId/answers", calls.contactAnswers);

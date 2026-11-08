@@ -1,11 +1,10 @@
 import { messages } from "../transcript.js";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
 import { ApiError, get, post } from "../api.js";
 import { debounce } from "../debounce.js";
-import { fmtBytes } from "../format.js";
-import { callsUrl, recordingMessage } from "../recording.js";
+import { callsUrl } from "../recording.js";
 import { serverView } from "../paginate.js";
+import CallDetail from "../components/CallDetail.jsx";
 import { fmtDur, Icon, initials, Modal, OutcomePill, Pager, plural, useToast, whenShort } from "../ui.jsx";
 
 export default function Calls() {
@@ -151,84 +150,8 @@ function History({ reload, onWatch }) {
         </button>
       ))}
       {data && <Pager view={serverView({ page, total: data.total, size: 10 })} size={10} onPage={setPage} />}
-      {view && <TranscriptModal call={view} onClose={() => setView(null)} />}
+      {view && <CallDetail call={view} onClose={() => setView(null)} />}
     </div>
-  );
-}
-
-/** What the agent wrote down on this call, as a plain list. */
-function SavedAnswers({ callId }) {
-  const [answers, setAnswers] = useState(null);
-  useEffect(() => { get(`/api/calls/${encodeURIComponent(callId)}/answers`).then(setAnswers).catch(() => setAnswers([])); }, [callId]);
-  if (!answers?.length) return null;
-  return (
-    <div className="answers">
-      <div className="card-title" style={{ marginBottom: 6 }}>Saved on this call</div>
-      {answers.map((a) => (
-        <div key={a.id} className="answer-line">
-          <span className="muted">{a.label}</span>
-          <b>{a.value}</b>
-          {a.raw_text && a.raw_text !== a.value && <span className="hint">heard: “{a.raw_text}”</span>}
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function TranscriptModal({ call, onClose }) {
-  const [turns, setTurns] = useState(null);
-  useEffect(() => { get(`/api/calls/${encodeURIComponent(call.call_id)}/transcript`).then(setTurns).catch(() => setTurns([])); }, [call.call_id]);
-  return (
-    <Modal title={call.contact_name || call.peer || "Call"} onClose={onClose} wide>
-      <div className="muted" style={{ marginBottom: "var(--s3)" }}>{[call.peer, whenShort(call.started_at), fmtDur(call.duration_secs), call.agent_name].filter(Boolean).join(" · ")}</div>
-      {call.has_recording && <RecordingPlayer callId={call.call_id} />}
-      <SavedAnswers callId={call.call_id} />
-      <div className="chat" style={{ maxHeight: "60vh", border: "1px solid var(--border)", borderRadius: "var(--r-md)" }}>
-        {!turns && <div className="hint">Loading…</div>}
-        {turns && turns.length === 0 && <div className="hint">Nothing was said on this call.</div>}
-        {turns?.map((t, i) => <div key={i} className={`msg ${t.role}`}>{t.text}<time>{t.at ? new Date(t.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</time></div>)}
-      </div>
-      <div className="actions"><a className="ghost" href={`/api/calls/${encodeURIComponent(call.call_id)}/transcript.csv`} download><Icon name="download" />Download CSV</a></div>
-    </Modal>
-  );
-}
-
-function RecordingPlayer({ callId }) {
-  const [rec, setRec] = useState(null);
-  const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
-  const retried = useRef(false);
-  const audio = useRef();
-  const load = async () => {
-    setBusy(true); setError("");
-    try { setRec(await get(`/api/calls/${encodeURIComponent(callId)}/recording`)); }
-    catch (e) { setError(recordingMessage(e)); } finally { setBusy(false); }
-  };
-  // A signed link lasts 10 minutes; if playback fails after that, fetch a fresh one once and resume.
-  const expired = async () => {
-    if (retried.current) { setError("The recording could not be played. Try again."); return; }
-    retried.current = true;
-    const at = audio.current?.currentTime || 0;
-    try {
-      const fresh = await get(`/api/calls/${encodeURIComponent(callId)}/recording`);
-      setRec(fresh);
-      requestAnimationFrame(() => { if (audio.current) { audio.current.currentTime = at; audio.current.play().catch(() => {}); } });
-    } catch (e) { setError(recordingMessage(e)); }
-  };
-  return (
-    <motion.div className="rec-player" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.25 }}>
-      <div className="rec-head"><Icon name="mic" /><b>Call recording</b>{rec && <span className="muted">{[rec.mime?.replace("audio/", ""), fmtBytes(rec.bytes)].filter(Boolean).join(" · ")}</span>}</div>
-      {!rec && <button type="button" className="primary" onClick={load} disabled={busy}><Icon name="play" />{busy ? "Loading…" : "Play recording"}</button>}
-      <AnimatePresence>
-        {rec && (
-          <motion.div key="audio" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} className="rec-audio">
-            <audio ref={audio} controls autoPlay preload="none" src={rec.url} onError={expired} />
-            <a className="ghost btn small-btn" href={rec.download_url} download><Icon name="download" />Download</a>
-          </motion.div>
-        )}
-      </AnimatePresence>
-      {error && <div className="field-err" role="alert">{error}</div>}
-    </motion.div>
   );
 }
 
