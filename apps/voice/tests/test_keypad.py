@@ -1,11 +1,10 @@
 """Keypad (DTMF) input: pressed digits reach the agent as text, when it is switched on."""
 
+import main
 import pytest
 from pipecat.audio.dtmf.types import KeypadEntry
 from pipecat.frames.frames import InputDTMFFrame, TranscriptionFrame
 from pipecat.tests.utils import SleepFrame, run_test
-
-import main
 
 pytestmark = pytest.mark.asyncio
 
