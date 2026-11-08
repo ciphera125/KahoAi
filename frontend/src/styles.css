@@ -521,3 +521,34 @@ ul.plain li { margin-top: 4px; }
 details.more { margin: var(--s3) 0; border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s2) var(--s3); }
 details.more > summary { cursor: pointer; font-weight: 500; padding: 4px 0; }
 details.more[open] > summary { margin-bottom: var(--s3); }
+
+/* the two buttons on a call row: the same size, one filled and one outlined, on the Studio's colours */
+.row-buttons { gap: 8px; flex-wrap: nowrap; }
+.row-buttons .btn { width: 112px; height: 32px; padding: 0; justify-content: center; font-weight: 500; }
+.row-buttons .btn.listen { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.row-buttons .btn.listen:hover { background: var(--accent); color: var(--on-accent); }
+.row-buttons a.btn.ghost { background: var(--surface); border: 1px solid var(--border); color: var(--text); height: 32px; }
+
+/* notifications */
+.bell-count { position: absolute; top: -4px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+  font: 600 10px/16px var(--mono); color: #fff; background: var(--bad); }
+.notif-panel { width: 380px; max-width: 92vw; max-height: 72vh; overflow: auto; padding: 0; right: 0; }
+.notif-head { display: flex; justify-content: space-between; align-items: center; padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); z-index: 1; }
+.notif-item { display: flex; gap: var(--s3); align-items: flex-start; width: 100%; padding: var(--s3) var(--s4); text-align: left;
+  background: none; border: 0; border-bottom: 1px solid var(--border); color: inherit; cursor: pointer; border-radius: 0; }
+.notif-item:hover { background: var(--hover); }
+.notif-item.new { background: var(--accent-soft); }
+.notif-icon { flex: none; width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; background: var(--surface-2); color: var(--accent); }
+.notif-icon svg.i { width: 15px; height: 15px; }
+.notif-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.notif-text { overflow-wrap: anywhere; }
+.notif-dot { flex: none; width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--accent); }
+.notif-more { display: block; width: 100%; padding: var(--s3); text-align: center; }
+/* sidebar: room between the name and the organization under it */
+.logo .brand { display: flex; flex-direction: column; gap: 6px; }
+/* the three dots at the end of a row are easy to see and to hit */
+.row-actions .icon-btn { width: 38px; height: 38px; color: var(--text-2); border: 1px solid var(--border); background: var(--surface); }
+.row-actions .icon-btn svg.i { width: 20px; height: 20px; }
+.row-actions .icon-btn:hover:not(:disabled) { background: var(--hover); color: var(--text); border-color: var(--text-3); }
+.row-actions { display: flex; justify-content: flex-end; align-items: center; }

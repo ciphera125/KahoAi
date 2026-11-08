@@ -119,6 +119,7 @@ function NewCall({ agents, numbers, languages, onPlace }) {
 function History({ reload, onWatch }) {
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
+  const [size, setSize] = useState(10);
   const [view, setView] = useState(null);
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
@@ -126,9 +127,9 @@ function History({ reload, onWatch }) {
   useEffect(() => () => applyQuery.cancel(), [applyQuery]);
   useEffect(() => {
     let live = true;
-    get(callsUrl({ page, perPage: 10, q })).then((d) => { if (live) setData(d); }).catch(() => {});
+    get(callsUrl({ page, perPage: size, q })).then((d) => { if (live) setData(d); }).catch(() => {});
     return () => { live = false; };
-  }, [page, reload, q]);
+  }, [page, size, reload, q]);
   return (
     <div className="card">
       <div className="card-head"><span className="card-title">Call history</span><span className="muted">{data ? plural(data.total, "call") : ""}</span></div>
@@ -149,7 +150,7 @@ function History({ reload, onWatch }) {
           <span className="call-meta">{c.has_recording && <span className="rec-badge" title="This call was recorded"><Icon name="mic" />Recording</span>}<OutcomePill status={c.status} /></span>
         </button>
       ))}
-      {data && <Pager view={serverView({ page, total: data.total, size: 10 })} size={10} onPage={setPage} />}
+      {data && <Pager view={serverView({ page, total: data.total, size })} size={size} onPage={setPage} onSize={(n) => { setSize(n); setPage(1); }} />}
       {view && <CallDetail call={view} onClose={() => setView(null)} />}
     </div>
   );

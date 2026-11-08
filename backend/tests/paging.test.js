@@ -18,7 +18,7 @@ describe("the contact list is paged and searchable on the server", () => {
     expect(p1.body.contacts).toHaveLength(10);
     expect(p1.body.contacts[0].name).toBe("Person 000");
     expect((await b.get("/api/contacts?page=3&per_page=10")).body.contacts).toHaveLength(3);
-    expect((await b.get("/api/contacts?per_page=7")).body.error).toBe("per_page must be one of 10, 20, 25, 50, 100");
+    expect((await b.get("/api/contacts?per_page=7")).body.error).toBe("per_page must be one of 10, 25, 50");
   });
 
   it("searches by name, number and tag without loading everyone", async () => {

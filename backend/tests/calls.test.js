@@ -92,7 +92,7 @@ describe("calls in the Studio", () => {
     expect(p1.calls[0]).toMatchObject({ call_id: "call-0011", agent_name: "EMI", contact_name: "Asha", status: "answered",
       successful: true, has_transcript: true, turns: 3, caller_turns: 2 });
     expect((await b.get("/api/calls?page=2&per_page=10")).body.calls).toHaveLength(2);
-    expect((await b.get("/api/calls?per_page=7")).body.error).toBe("per_page must be one of 10, 20, 25, 50");
+    expect((await b.get("/api/calls?per_page=7")).body.error).toBe("per_page must be one of 10, 25, 50");
   });
 
   it("shows a call ringing for over 15 minutes as unknown, and a short call as not successful", async () => {

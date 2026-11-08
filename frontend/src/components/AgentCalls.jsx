@@ -7,21 +7,20 @@ import { dayWord } from "../time.js";
 import CallDetail from "./CallDetail.jsx";
 import { fmtDur, Icon, OutcomePill, Pager, Spinner, useToast } from "../ui.jsx";
 
-const PER_PAGE = 10;
-
 export default function AgentCalls({ agent }) {
   const toast = useToast();
   const [data, setData] = useState(null);
   const [page, setPage] = useState(1);
+  const [size, setSize] = useState(10);
   const [open, setOpen] = useState(null);
 
   useEffect(() => {
     let live = true;
-    get(`/api/calls?agent_id=${agent.id}&page=${page}&per_page=${PER_PAGE}`)
+    get(`/api/calls?agent_id=${agent.id}&page=${page}&per_page=${size}`)
       .then((d) => { if (live) setData(d); })
       .catch((e) => toast(e.message, true));
     return () => { live = false; };
-  }, [agent.id, page, toast]);
+  }, [agent.id, page, size, toast]);
 
   if (!data) return <Spinner />;
   const time = (iso) => (iso ? new Date(iso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "numeric", minute: "2-digit", hour12: true }) : "");
@@ -32,12 +31,12 @@ export default function AgentCalls({ agent }) {
         Every call made by {agent.name}. Open one to read it, play the recording or download either.
       </p>
       <div className="card list">
-        <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr) 80px 120px 150px" }}>
+        <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr) 70px 110px 240px" }}>
           <span>Person</span><span>When</span><span>Length</span><span>How it went</span><span />
         </div>
         {data.calls.length === 0 && <div className="empty">{agent.name} has not been on a call yet.</div>}
         {data.calls.map((c) => (
-          <div key={c.call_id} className="row" style={{ gridTemplateColumns: "minmax(0,1.4fr) minmax(0,1fr) 80px 120px 150px" }}>
+          <div key={c.call_id} className="row" style={{ gridTemplateColumns: "minmax(0,1.3fr) minmax(0,1fr) 70px 110px 240px" }}>
             <div style={{ minWidth: 0 }}>
               <button type="button" className="link ellip" onClick={() => setOpen(c)}>{c.contact_name || c.peer || "Unknown caller"}</button>
               {c.contact_name && <div className="muted ellip">{c.peer}</div>}
@@ -46,13 +45,13 @@ export default function AgentCalls({ agent }) {
             <span className="muted">{fmtDur(c.duration_secs)}</span>
             <span><OutcomePill status={c.status} /></span>
             <span className="row-buttons">
-              {c.has_transcript && <a className="btn ghost" href={`/api/calls/${encodeURIComponent(c.call_id)}/transcript.txt`} download title="Download the transcript"><Icon name="download" />Transcript</a>}
-              {c.has_recording && <button type="button" className="btn ghost" onClick={() => setOpen(c)} title="Play the recording"><Icon name="play" />Listen</button>}
+              {c.has_recording && <button type="button" className="btn listen" onClick={() => setOpen(c)} title="Play the recording"><Icon name="play" />Listen</button>}
+              {c.has_transcript && <a className="btn ghost" href={`/api/calls/${encodeURIComponent(c.call_id)}/transcript.csv`} download title="Download the transcript (opens in Excel or Google Sheets)"><Icon name="download" />Transcript</a>}
             </span>
           </div>
         ))}
       </div>
-      <Pager view={serverView({ page, total: data.total, size: PER_PAGE })} size={PER_PAGE} onPage={setPage} />
+      <Pager view={serverView({ page, total: data.total, size })} size={size} onPage={setPage} onSize={(n) => { setSize(n); setPage(1); }} />
       {open && <CallDetail call={open} onClose={() => setOpen(null)} />}
     </div>
   );

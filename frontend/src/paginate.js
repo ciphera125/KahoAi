@@ -2,7 +2,7 @@
 // prompts, numbers, team, tags, tasks) are cut into pages here, so a page never grows
 // down the screen as the list does. Lists that are big enough to page on the server
 // (calls, contacts) keep doing that.
-export const SIZES = [10, 25, 50, 100];
+export const SIZES = [10, 25, 50]; // always these three, on every page
 
 export function paginate(items, page, size = 10) {
   const per = Number.isInteger(size) && size > 0 ? size : 10;

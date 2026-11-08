@@ -9,7 +9,7 @@ export default function Agents() {
   const [agents, setAgents] = useState(null);
   const [creating, setCreating] = useState(false);
   useEffect(() => { get("/api/agents").then(setAgents).catch((e) => toast(e.message, true)); }, []);
-  const [shown, pager] = usePaged(agents ?? [], 12);
+  const [shown, pager] = usePaged(agents ?? [], 10);
   if (!agents) return <Spinner />;
   return (
     <section>

@@ -8,7 +8,7 @@ import { STATUS_SQL, SUCCESS_SQL } from "./Call.js";
 
 const MAX_NAME = 80;
 const MAX_NUMBERS = 50;
-export const PAGE_SIZES = [10, 20, 25, 50, 100];
+export const PAGE_SIZES = [10, 25, 50];
 
 const SHOW = `SELECT c.id, c.name, c.dnc, c.consent, c.created_at, c.details,
     coalesce((SELECT array_agg(ct.tag_id ORDER BY ct.position) FROM contact_tags ct WHERE ct.contact_id = c.id), '{}') AS tags,

@@ -5,7 +5,9 @@ import { hexId } from "../utils/crypto.js";
 
 export const MAX_ITEMS = 200;
 const MAX_TEXT = 160;
-const VIEWS = new Set(["dashboard", "calls", "contacts", "agents", "prompts", "numbers", "team", "errors", "leads"]);
+// Every page a notification may send you to. A name that is not here is saved without a link.
+const VIEWS = new Set(["dashboard", "calls", "contacts", "agents", "prompts", "numbers", "team", "errors", "leads",
+  "tasks", "your-tools", "tool-calls", "tags", "settings", "bulk", "live"]);
 
 export async function add(orgId, kind, text, { view = null, ref = null, actor = null } = {}) {
   await inOrg(orgId, async (db) => {
@@ -19,10 +21,13 @@ export async function add(orgId, kind, text, { view = null, ref = null, actor = 
   });
 }
 
-export async function recent(orgId, limit = 30) {
+/** Newest first. `since` is when this person last looked: anything after it is marked new. */
+export async function recent(orgId, limit = 30, since = null) {
+  const n = Math.min(Math.max(1, Number(limit) || 30), MAX_ITEMS);
   const { rows } = await inOrg(orgId, (db) => db.query(`SELECT id, at, kind, text, view, ref, actor FROM activity
-    WHERE org_id = $1 ORDER BY at DESC LIMIT $2`, [orgId, Math.min(limit, MAX_ITEMS)]));
-  return rows.map((r) => ({ ...r, at: r.at.toISOString() }));
+    WHERE org_id = $1 ORDER BY at DESC LIMIT $2`, [orgId, n]));
+  const seen = since ? new Date(since).getTime() : null;
+  return rows.map((r) => ({ ...r, at: r.at.toISOString(), unread: seen === null || r.at.getTime() > seen }));
 }
 
 export async function unread(orgId, since) {

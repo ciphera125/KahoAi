@@ -87,7 +87,7 @@ export default function CallDetail({ call, onClose }) {
             <Icon name="play" />Play recording
           </button>
         )}
-        <a className="btn ghost" href={`/api/calls/${id}/transcript.txt`} download><Icon name="download" />Download transcript</a>
+        <a className="btn ghost" href={`/api/calls/${id}/transcript.csv`} download title="Opens in Excel or Google Sheets"><Icon name="download" />Download transcript</a>
       </div>
 
       {call.has_recording && <Player callId={call.call_id} open={playing} onFailed={() => setPlaying(false)} />}
@@ -102,9 +102,6 @@ export default function CallDetail({ call, onClose }) {
         ))}
       </div>
 
-      <div className="actions call-foot">
-        <a className="btn ghost" href={`/api/calls/${id}/transcript.csv`} download><Icon name="download" />Download as spreadsheet (CSV)</a>
-      </div>
     </Modal>
   );
 }

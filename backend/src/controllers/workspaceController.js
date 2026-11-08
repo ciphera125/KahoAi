@@ -58,12 +58,15 @@ export function providers(_req, res) {
 }
 
 export async function notifications(req, res) {
-  const [items, unread] = await Promise.all([Activity.recent(req.user.org_id, 30), Activity.unread(req.user.org_id, req.user.seen_at)]);
+  const [items, unread] = await Promise.all([
+    Activity.recent(req.user.org_id, req.query.limit ?? 30, req.user.seen_at), Activity.unread(req.user.org_id, req.user.seen_at)]);
   res.json({ items, unread });
 }
 
 export async function notificationsSeen(req, res) {
   const [latest] = await Activity.recent(req.user.org_id, 1);
-  if (latest) await User.markSeen(req.user.org_id, req.user.id, latest.at);
+  // One millisecond past it: the feed's time is cut to milliseconds but the stored one is not,
+  // so without this the newest item stayed unread after "Mark all read".
+  if (latest) await User.markSeen(req.user.org_id, req.user.id, new Date(Date.parse(latest.at) + 1));
   res.json({ unread: 0 });
 }

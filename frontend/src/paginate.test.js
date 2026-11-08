@@ -52,3 +52,8 @@ test("a list paged by the server gets the same footer from its total", async () 
   assert.deepEqual(serverView({ page: 3, total: 23, size: 10 }), { page: 3, pages: 3, total: 23, from: 21, to: 23 });
   assert.deepEqual(serverView({ page: 1, total: 0, size: 10 }), { page: 1, pages: 1, total: 0, from: 0, to: 0 });
 });
+
+test("every page offers the same three sizes, and the server accepts exactly those", async () => {
+  const { SIZES } = await import("./paginate.js");
+  assert.deepEqual(SIZES, [10, 25, 50]);
+});

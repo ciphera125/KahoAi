@@ -178,7 +178,7 @@ export async function ingest(callId, events) {
 
 // --- what the Studio shows -----------------------------------------------------
 
-export const PAGE_SIZES = [10, 20, 25, 50];
+export const PAGE_SIZES = [10, 25, 50]; // the same three choices on every page of the Studio
 
 const FIELDS = `call_id, peer, direction, started_at, duration_secs, turns, summary, caller_turns, lead, has_transcript,
   ${STATUS_SQL} AS status, cause, cost, agent_id, ${SUCCESS_SQL} AS successful,

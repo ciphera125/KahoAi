@@ -206,36 +206,55 @@ function ThemeToggle() {
   );
 }
 
+// What each kind of notification is about, as an icon.
+const KIND_ICON = { call: "call", agent: "agent", prompt: "prompt", account: "team", error: "warn", lead: "contacts" };
+
 function Bell() {
   const [feed, setFeed] = useState({ items: [], unread: 0 });
   const [open, setOpen] = useState(false);
+  const [older, setOlder] = useState(false);
+  const wrap = useRef();
   const navigate = useNavigate();
-  const load = useCallback(() => get("/api/notifications").then(setFeed).catch(() => {}), []);
+  const load = useCallback(() => get(`/api/notifications${older ? "?limit=100" : ""}`).then(setFeed).catch(() => {}), [older]);
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+  // Anywhere outside the panel, or Escape, closes it.
+  useEffect(() => {
+    if (!open) return undefined;
+    const away = (e) => { if (!wrap.current?.contains(e.target)) setOpen(false); };
+    const esc = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("mousedown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
   const markRead = async () => { await post("/api/notifications/seen").catch(() => {}); load(); };
-  const openItem = (n) => {
-    setOpen(false);
-    if (n.view) navigate(`/${n.view}`);
-  };
+  const openItem = (n) => { setOpen(false); if (n.view) navigate(`/${n.view}`); };
   return (
-    <div className="menu-wrap">
-      <button type="button" className="icon-btn" title="Notifications" onClick={() => setOpen((v) => !v)} style={{ position: "relative" }}>
+    <div className="menu-wrap" ref={wrap}>
+      <button type="button" className="icon-btn" title="Notifications" aria-haspopup="true" aria-expanded={open}
+        onClick={() => setOpen((v) => !v)} style={{ position: "relative" }}>
         <Icon name="bell" />
-        {feed.unread > 0 && <span style={{ position: "absolute", top: -4, right: -4, minWidth: 16, height: 16, padding: "0 4px", borderRadius: 8, font: "600 10px/16px var(--mono)", color: "#fff", background: "var(--bad)" }}>{feed.unread > 9 ? "9+" : feed.unread}</span>}
+        {feed.unread > 0 && <span className="bell-count">{feed.unread > 9 ? "9+" : feed.unread}</span>}
       </button>
       {open && (
-        <div className="menu" style={{ width: 340, maxHeight: "70vh", overflow: "auto", padding: 0 }} onClick={(e) => e.stopPropagation()}>
-          <div className="card-head" style={{ padding: "var(--s3) var(--s4)", margin: 0, borderBottom: "1px solid var(--border)" }}>
-            <b>Notifications</b>
-            {feed.unread > 0 && <button type="button" className="link small-btn" onClick={markRead}>Mark all read</button>}
+        <div className="menu notif-panel" onClick={(e) => e.stopPropagation()}>
+          <div className="notif-head">
+            <div><b>Notifications</b><div className="muted">{feed.unread > 0 ? `${feed.unread} new` : "You are all caught up"}</div></div>
+            {feed.unread > 0 && <button type="button" className="link small-btn" onClick={markRead}>Mark all as read</button>}
           </div>
-          {feed.items.length === 0 && <div className="empty" style={{ padding: "var(--s6)" }}>Nothing yet.</div>}
+          {feed.items.length === 0 && <div className="empty" style={{ padding: "var(--s6)" }}>Nothing yet. Things that happen in your organization show up here.</div>}
           {feed.items.map((n) => (
-            <button key={n.id} type="button" className="nav-item" style={{ width: "100%", height: "auto", padding: "var(--s3) var(--s4)", textAlign: "left", display: "block", borderRadius: 0 }} onClick={() => openItem(n)}>
-              <div>{n.text}</div>
-              <div className="muted" style={{ marginTop: 2 }}>{[n.actor, ago(n.at)].filter(Boolean).join(" · ")}</div>
+            <button key={n.id} type="button" className={`notif-item${n.unread ? " new" : ""}`} onClick={() => openItem(n)}>
+              <span className="notif-icon"><Icon name={KIND_ICON[n.kind] ?? "bell"} /></span>
+              <span className="notif-body">
+                <span className="notif-text">{n.text}</span>
+                <span className="muted">{[n.actor, ago(n.at)].filter(Boolean).join(" · ")}</span>
+              </span>
+              {n.unread && <i className="notif-dot" aria-label="New" />}
             </button>
           ))}
+          {!older && feed.items.length >= 30 && (
+            <button type="button" className="link notif-more" onClick={() => setOlder(true)}>Show older</button>
+          )}
         </div>
       )}
     </div>
