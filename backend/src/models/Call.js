@@ -424,6 +424,14 @@ export async function recordingOf(orgId, callId) {
   return rows[0] ?? null;
 }
 
+/** How a call ended, in a few fields, for the public API. */
+export async function summaryOf(orgId, callId) {
+  const { rows } = await inOrg(orgId, (db) => db.query(
+    "SELECT direction, summary, lead FROM calls WHERE call_id = $1 AND org_id = $2", [String(callId), orgId]));
+  if (!rows[0]) throw new NotFoundError("call");
+  return { direction: rows[0].direction, summary: rows[0].summary, lead: Boolean(rows[0].lead) };
+}
+
 /** What a call's text transcript and its file names are built from. */
 export async function forFiles(orgId, callId) {
   if (!CALL_ID.test(String(callId))) throw new NotFoundError("call");
@@ -435,6 +443,6 @@ export async function forFiles(orgId, callId) {
      WHERE c.call_id = $1 AND c.org_id = $2`, [callId, orgId]));
   if (!rows[0]) throw new NotFoundError("call");
   const r = rows[0];
-  return { callId: r.call_id, peer: r.peer, name: r.contact_name, agent: r.agent_name,
+  return { callId: r.call_id, peer: r.peer, name: r.contact_name, agent: r.agent_name, agentId: r.agent_id,
     startedAt: r.started_at ? r.started_at.toISOString() : null, durationSecs: r.duration_secs };
 }
