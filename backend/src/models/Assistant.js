@@ -11,6 +11,8 @@
 //  2. Everything lands in the agent's DRAFT. Nothing a caller hears changes until it is published.
 //  3. It prefers the simple outcome: "write down" needs no technical detail; "look up" needs the
 //     web address of the person's own system, which it asks for in the chat.
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { config } from "../config/env.js";
 import { HttpError, ValidationError } from "../utils/errors.js";
 import { logger } from "../utils/logger.js";
 import { checkCaptureFields, get as getAgent, update as updateAgent } from "./Agent.js";
@@ -75,6 +77,22 @@ const PROPOSE = {
   },
 };
 
+/**
+ * Words the model chose, made safe to write into an agent's prompt: one plain line, with nothing that
+ * looks like a heading, a list marker or a {{variable}}, and never our own heading. What the model
+ * writes can describe a question or a tool; it cannot add a rule of its own.
+ */
+export function oneLine(text, max = 120) {
+  return String(text ?? "")
+    .replace(/\{\{|\}\}/g, "")
+    .replace(/added by kaho builder/gi, "")
+    .replace(/[\r\n\t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/^(?:[-#*>•]+\s*|\d+[.)]\s+)+/, "")
+    .trim()
+    .slice(0, max);
+}
+
 /** The proposal as the Studio would accept it, or null. The same validators the forms use. */
 export function checkProposal(raw) {
   if (!raw || typeof raw !== "object") return null;
@@ -83,18 +101,21 @@ export function checkProposal(raw) {
     if (!summary) return null;
     if (raw.kind === "write_down") {
       if (!Array.isArray(raw.fields) || raw.fields.length === 0) return null;
-      return { kind: "write_down", summary, fields: checkCaptureFields(raw.fields) };
+      const fields = raw.fields.map((f) => (f && typeof f === "object"
+        ? { ...f, label: oneLine(f.label, 60), ask: oneLine(f.ask, 200),
+          choices: Array.isArray(f.choices) ? f.choices.map((c) => oneLine(c, 60)) : f.choices } : f));
+      return { kind: "write_down", summary, fields: checkCaptureFields(fields) };
     }
     if (raw.kind === "look_up") {
-      const label = (typeof raw.label === "string" && raw.label.trim() ? raw.label : summary.replace(/^the agent will (now )?/i, "")).trim().replace(/\.$/, "");
+      const label = oneLine((typeof raw.label === "string" && raw.label.trim() ? raw.label : summary.replace(/^the agent will (now )?/i, "")).replace(/\.$/, ""), 60);
       if (!label) return null;
       if (raw.inputs !== undefined && !Array.isArray(raw.inputs)) return null;
       const out = { kind: "look_up", summary, label: label.charAt(0).toUpperCase() + label.slice(1, 60),
-        description: String(raw.description ?? "").slice(0, 400),
+        description: oneLine(raw.description, 300),
         url: typeof raw.url === "string" ? raw.url.trim().slice(0, 300) : "",
-        inputs: (raw.inputs ?? []).slice(0, 10).map((i) => ({ label: String(i?.label ?? "").slice(0, 60),
+        inputs: (raw.inputs ?? []).slice(0, 10).map((i) => ({ label: oneLine(i?.label, 60),
           type: ["text", "number", "yes_no"].includes(i?.type) ? i.type : "text", required: i?.required !== false })),
-        say_while_waiting: String(raw.say_while_waiting ?? "").slice(0, 120) };
+        say_while_waiting: oneLine(raw.say_while_waiting, 120) };
       if (out.inputs.some((i) => !i.label)) return null;
       return out;
     }
@@ -114,6 +135,33 @@ function checkMessages(messages) {
     if (m.content.length > MAX_CHARS) throw new ValidationError(`a message can be at most ${MAX_CHARS} characters`);
     return { role: m.role, content: m.content };
   });
+}
+
+// --- undo tokens: signed, so only what the Builder itself built can be taken back -----------------
+
+const UNDO_TTL_MS = 24 * 3600 * 1000;
+const undoKey = () => createHmac("sha256", Buffer.from(config.SECRETS_KEY, "hex")).update("kaho-builder-undo").digest();
+const sign = (body) => createHmac("sha256", undoKey()).update(body).digest("base64url");
+
+/** The undo for one build, tied to this organization and agent and valid for a day. */
+function seal(orgId, agentId, undo) {
+  const body = Buffer.from(JSON.stringify({ ...undo, org: orgId, agent: agentId, exp: Date.now() + UNDO_TTL_MS })).toString("base64url");
+  return `${body}.${sign(body)}`;
+}
+
+function unseal(orgId, agentId, token) {
+  const bad = () => new ValidationError("that is not something I can undo");
+  if (typeof token !== "string" || token.length > 4000) throw bad();
+  const [body, mac, extra] = token.split(".");
+  if (!body || !mac || extra !== undefined) throw bad();
+  const want = Buffer.from(sign(body));
+  const got = Buffer.from(mac);
+  if (want.length !== got.length || !timingSafeEqual(want, got)) throw bad();
+  let u;
+  try { u = JSON.parse(Buffer.from(body, "base64url").toString("utf8")); } catch { throw bad(); }
+  if (u.org !== orgId || u.agent !== agentId) throw bad();
+  if (!(u.exp > Date.now())) throw new ValidationError("That was too long ago for me to undo from here. Remove it by hand on the agent.");
+  return u;
 }
 
 // --- the line in the prompt that makes the agent use what was built -----------------------------
@@ -211,7 +259,7 @@ export async function converse({ orgId, role, agentId, messages }) {
   if (proposal.kind === "write_down") {
     if (!can(role, "agents.edit")) throw new HttpError(403, "your role does not allow changing agents; ask an admin of this organization");
     const built = await buildWriteDown(orgId, agent, proposal);
-    return { reply: proposal.summary, created: { kind: "write_down", names: built.names, draft: true, agent_id: agent.id }, undo: built.undo };
+    return { reply: proposal.summary, created: { kind: "write_down", names: built.names, draft: true, agent_id: agent.id }, undo: seal(orgId, agent.id, built.undo) };
   }
   if (!can(role, "tools.custom")) throw new HttpError(403, "your role does not allow making tools; ask an admin of this organization");
   if (!proposal.url) {
@@ -220,7 +268,7 @@ export async function converse({ orgId, role, agentId, messages }) {
   const problem = urlProblem(proposal.url);
   if (problem) return { reply: `${problem} Could you check the address?`, created: null };
   const built = await buildLookUp(orgId, agent, proposal);
-  return { reply: proposal.summary, created: { kind: "look_up", names: built.names, draft: true, agent_id: agent.id }, undo: built.undo };
+  return { reply: proposal.summary, created: { kind: "look_up", names: built.names, draft: true, agent_id: agent.id }, undo: seal(orgId, agent.id, built.undo) };
 }
 
 // --- undoing -------------------------------------------------------------------------------------
@@ -244,7 +292,7 @@ function checkUndo(raw) {
 
 /** Take back what the assistant just built, and only that: what was there before is left alone. */
 export async function undo({ orgId, role, agentId, undo: raw }) {
-  const u = checkUndo(raw);
+  const u = checkUndo(unseal(orgId, String(agentId ?? ""), raw));
   const agent = await getAgent(orgId, agentId);
   if (u.kind === "write_down") {
     if (!can(role, "agents.edit")) throw new HttpError(403, "your role does not allow changing agents; ask an admin of this organization");
@@ -252,7 +300,9 @@ export async function undo({ orgId, role, agentId, undo: raw }) {
     const tools = u.addedSave ? agent.tools.filter((t) => t !== "save_answer") : agent.tools;
     await updateAgent(orgId, agent.id, { tools, settings: { capture_fields: fields } });
   } else {
-    if (!can(role, "tools.custom")) throw new HttpError(403, "your role does not allow making tools; ask an admin of this organization");
+    if (!can(role, "tools.custom") || !can(role, "agents.edit")) {
+      throw new HttpError(403, "your role does not allow making tools; ask an admin of this organization");
+    }
     const tool = await CustomTool.get(orgId, u.toolId); // another organization's tool is a 404
     await updateAgent(orgId, agent.id, { tools: agent.tools.filter((t) => t !== tool.name) });
     await CustomTool.remove(orgId, u.toolId);

@@ -1,3 +1,4 @@
+import { assistantPerDay, assistantPerMinute } from "../middleware/rateLimit.js";
 import * as audit from "../controllers/auditController.js";
 import { listTemplates } from "../models/templates.js";
 import * as assistant from "../controllers/assistantController.js";
@@ -25,7 +26,7 @@ router.get("/roles", ws.roles);
 router.get("/audit", requirePermission("org.settings"), audit.list);
 router.get("/audit.csv", requirePermission("org.settings"), audit.csv);
 router.get("/templates", (req, res) => res.json(listTemplates()));
-router.post("/assistant/message", assistant.message);
+router.post("/assistant/message", assistantPerMinute, assistantPerDay, assistant.message);
 router.post("/assistant/undo", assistant.undo);
 router.get("/avatars", ws.avatars);
 router.patch("/me/profile", ws.updateProfile);

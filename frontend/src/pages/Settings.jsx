@@ -251,6 +251,7 @@ function Webhook() {
         so your system updates without anyone copying anything. Each message is signed with a secret so your system can tell it really came from us.</p>
       <div className="field"><label className="f" htmlFor="wh-url">Web address</label>
         <input id="wh-url" value={url} disabled={!editable} placeholder="https://yourcompany.com/kaho/calls" onChange={(e) => setUrl(e.target.value)} /></div>
+      {!editable && s.webhook_configured && <p className="hint">A webhook is set up. Only people who manage the organization can see its address.</p>}
       {secret && (
         <div className="notice"><b>Your signing secret</b> (shown once, copy it now)
           <code className="secret">{secret}</code></div>

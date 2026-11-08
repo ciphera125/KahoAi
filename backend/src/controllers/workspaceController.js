@@ -1,7 +1,7 @@
 import { note } from "./notify.js";
 import { ValidationError } from "../utils/errors.js";
 import { AVATARS } from "../models/avatars.js";
-import { PERMISSIONS, ROLES } from "../models/permissions.js";
+import { can, PERMISSIONS, ROLES } from "../models/permissions.js";
 import * as OrgSettings from "../models/OrgSettings.js";
 import { LANGUAGES } from "../models/language.js";
 import { config } from "../config/env.js";
@@ -82,7 +82,10 @@ export function roles(_req, res) {
 }
 
 export async function orgSettings(req, res) {
-  res.json(await OrgSettings.get(req.user.org_id));
+  const settings = await OrgSettings.get(req.user.org_id);
+  // The webhook address can carry a token in its query, so only those who manage settings see it.
+  const manages = can(req.user.role, "org.settings");
+  res.json({ ...settings, webhook_configured: Boolean(settings.webhook_url), webhook_url: manages ? settings.webhook_url : null });
 }
 
 export async function updateOrgSettings(req, res) {

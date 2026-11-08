@@ -35,6 +35,9 @@ const schema = z.object({
   IP_RATE_LIMIT_PER_MIN: int(6000, 1, 10_000_000),
   AUTH_RATE_LIMIT_PER_MIN: int(20, 1, 10_000),
   // Calls placed through the public API, per organization (not per key: keys are free to make).
+  // Kaho Builder costs model tokens: per organization, a short burst limit and a daily ceiling.
+  ASSISTANT_PER_MIN: int(15, 1, 1000),
+  ASSISTANT_PER_DAY: int(300, 1, 10000),
   API_CALLS_PER_MIN: int(10, 1, 1000),
   API_CALLS_PER_DAY: int(500, 1, 2000),
   PUBLIC_HOST: z.string().optional(),

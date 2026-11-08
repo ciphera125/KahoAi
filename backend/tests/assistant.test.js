@@ -309,7 +309,8 @@ describe("undoing it", () => {
     scripted(propose(LOOK_UP));
     const made = (await talk(b, { agent_id: a.id, messages: said("orders") })).body;
     const other = await owner({ email: "zoya@other.in", organization: "Other" });
-    expect((await other.post("/api/assistant/undo").send({ agent_id: a.id, undo: made.undo })).status).toBe(404);
+    // A token is tied to the organization it was made in, so another organization's is simply not valid.
+    expect((await other.post("/api/assistant/undo").send({ agent_id: a.id, undo: made.undo })).status).toBe(400);
     const viewer = await asRole(b, "viewer");
     expect((await viewer.post("/api/assistant/undo").send({ agent_id: a.id, undo: made.undo })).status).toBe(403);
     expect((await b.get("/api/custom-tools")).body).toHaveLength(1);

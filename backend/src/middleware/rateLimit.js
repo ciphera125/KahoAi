@@ -62,6 +62,13 @@ export const apiCallsPerMinute = rateLimit({ ...common, limit: config.API_CALLS_
 export const apiCallsPerDay = rateLimit({ ...common, windowMs: 86_400_000, limit: config.API_CALLS_PER_DAY, handler: callsRefused,
   keyGenerator: (req) => `o:${req.apiOrgId}`, store: store("apicalls-day") });
 
+const builderRefused = (_req, res) => res.status(429).json({
+  error: "Too many messages to Kaho Builder in a short while. Please wait a moment and try again." });
+export const assistantPerMinute = rateLimit({ ...common, limit: config.ASSISTANT_PER_MIN, handler: builderRefused,
+  keyGenerator: (req) => `o:${req.user?.org_id ?? "none"}`, store: store("builder-min") });
+export const assistantPerDay = rateLimit({ ...common, windowMs: 86_400_000, limit: config.ASSISTANT_PER_DAY, handler: builderRefused,
+  keyGenerator: (req) => `o:${req.user?.org_id ?? "none"}`, store: store("builder-day") });
+
 /** Forget every count (tests). */
 export const resetRateLimits = () => Promise.all(memoryStores.map((m) => m.resetAll()));
 export const closeRedis = () => redis?.quit().catch(() => {});
