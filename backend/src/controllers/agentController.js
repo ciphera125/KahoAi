@@ -38,7 +38,6 @@ export async function check(req, res) {
 /** Try the draft in a short simulated conversation. Costs tokens, so it is not open to
  * every member: an owner or admin runs it. */
 export async function test(req, res) {
-  if (!["owner", "admin"].includes(req.user.role)) throw forbidden("Only an owner or admin can test an agent.");
   const result = await AgentTest.run(req.user.org_id, req.params.agentId,
     { messages: req.body?.messages ?? null, user: req.user });
   res.json(result);

@@ -36,7 +36,7 @@ describe("organizations", () => {
     const a = await owner();
     await owner({ name: "Bilal", email: "bilal@beta.in", organization: "Beta" });
     const m = await member(a);
-    expect(m.user).toMatchObject({ role: "member", org_id: a.user.org_id, org_name: "Acme" });
+    expect(m.user).toMatchObject({ role: "viewer", org_id: a.user.org_id, org_name: "Acme" });
   });
 });
 
@@ -154,9 +154,9 @@ describe("roles", () => {
     const o = await owner();
     const m = await member(o);
     await o.patch(`/api/team/${m.user.id}`).send({ role: "admin" });
-    expect((await o.patch(`/api/team/${o.user.id}`).send({ role: "member" })).body.error).toBe("you cannot change your own role");
-    expect((await m.patch(`/api/team/${o.user.id}`).send({ role: "member" })).status).toBe(403);
-    expect((await o.patch(`/api/team/${m.user.id}`).send({ role: "owner" })).body.error).toBe("role must be admin or member");
+    expect((await o.patch(`/api/team/${o.user.id}`).send({ role: "viewer" })).body.error).toBe("you cannot change your own role");
+    expect((await m.patch(`/api/team/${o.user.id}`).send({ role: "viewer" })).status).toBe(403);
+    expect((await o.patch(`/api/team/${m.user.id}`).send({ role: "owner" })).body.error).toBe("role must be one of: admin, manager, builder, operator, viewer");
   });
 
   it("removes a member, ending their sessions at once; admins cannot remove admins or the owner", async () => {

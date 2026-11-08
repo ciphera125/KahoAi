@@ -1,3 +1,7 @@
+import { ValidationError } from "../utils/errors.js";
+import { AVATARS } from "../models/avatars.js";
+import { PERMISSIONS, ROLES } from "../models/permissions.js";
+import * as OrgSettings from "../models/OrgSettings.js";
 import { LANGUAGES } from "../models/language.js";
 import { config } from "../config/env.js";
 import * as User from "../models/User.js";
@@ -69,4 +73,32 @@ export async function notificationsSeen(req, res) {
   // so without this the newest item stayed unread after "Mark all read".
   if (latest) await User.markSeen(req.user.org_id, req.user.id, new Date(Date.parse(latest.at) + 1));
   res.json({ unread: 0 });
+}
+
+/** Every role and what it may do: the table the server enforces, for the Settings page to print. */
+export function roles(_req, res) {
+  res.json({ roles: ROLES, permissions: PERMISSIONS });
+}
+
+export async function orgSettings(req, res) {
+  res.json(await OrgSettings.get(req.user.org_id));
+}
+
+export async function updateOrgSettings(req, res) {
+  const next = await OrgSettings.update(req.user.org_id, req.body ?? {});
+  await Activity.add(req.user.org_id, "account", `${req.user.name} changed the organization's call settings`,
+    { view: "settings", actor: req.user.name });
+  res.json(next);
+}
+
+export function avatars(_req, res) {
+  res.json(AVATARS);
+}
+
+/** What a person changes about themselves. Today: their icon. */
+export async function updateProfile(req, res) {
+  const { avatar } = req.body ?? {};
+  if (avatar === undefined) throw new ValidationError("say which icon, or null to remove it");
+  const saved = await User.setAvatar(req.user.id, avatar);
+  res.json({ avatar: saved });
 }

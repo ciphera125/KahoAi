@@ -50,10 +50,10 @@ describe("organizations", () => {
     const code = (await acme.get("/api/me")).body.invite_code;
     const r = await other.post("/api/orgs/join").send({ invite: code });
     expect(r.status).toBe(200);
-    expect((await other.get("/api/me")).body).toMatchObject({ org_name: "Acme", role: "member" });
+    expect((await other.get("/api/me")).body).toMatchObject({ org_name: "Acme", role: "viewer" });
     // A member there: admin-only things are refused, in that organization only.
     expect((await other.post("/api/numbers").send({ provider: "plivo", number: "+918065520552", credentials: {} })).status).toBe(403);
-    expect((await acme.get("/api/team")).body.map((u) => [u.name, u.role])).toEqual([["Asha Rao", "owner"], ["Ravi", "member"]]);
+    expect((await acme.get("/api/team")).body.map((u) => [u.name, u.role])).toEqual([["Asha Rao", "owner"], ["Ravi", "viewer"]]);
     // Still the owner of their own.
     const own = (await other.get("/api/orgs")).body.find((o) => o.name === "Other");
     await other.post(`/api/orgs/${own.id}/switch`);
@@ -76,7 +76,7 @@ describe("organizations", () => {
   it("a member made in an organization by invite still works as before", async () => {
     const acme = await owner();
     const m = await member(acme);
-    expect((await m.get("/api/me")).body).toMatchObject({ org_name: "Acme", role: "member" });
+    expect((await m.get("/api/me")).body).toMatchObject({ org_name: "Acme", role: "viewer" });
     expect((await m.get("/api/orgs")).body.map((o) => o.name)).toEqual(["Acme"]);
   });
 

@@ -65,7 +65,7 @@ describe("accounts", () => {
     const code = (await o.get("/api/me")).body.invite_code;
     const ok = await browser().post("/api/auth/signup").send({ name: "Ravi", email: "ravi@acme.in", password: "12345678", invite: code });
     expect(ok.status).toBe(200);
-    expect(ok.body.role).toBe("member");
+    expect(ok.body.role).toBe("viewer"); // someone who joins can only look until an admin gives them a role
     const reuse = await browser().post("/api/auth/signup").send({ name: "Y", email: "y@y.in", password: "12345678", invite: code });
     expect(reuse.status).toBe(403);
   });

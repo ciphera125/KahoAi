@@ -26,8 +26,8 @@ import { DEFAULT_MAX_SECS } from "./dialer.js";
 const LOCK = 727275;
 const DEADLINE_GRACE_SECS = 120;
 
-function windowText(w) {
-  return `Waiting for the agent's calling window (${w.start}–${w.end}, ${w.timezone}).`;
+function windowText(w, whose = "agent") {
+  return `Waiting for ${whose === "organization" ? "your organization's" : "the agent's"} calling window (${w.start}\u2013${w.end}, ${w.timezone}).`;
 }
 
 /** The hours a bulk call keeps to: the agent's window, or TRAI's when the agent has none switched on. */
@@ -50,7 +50,7 @@ async function dialOne(run, item, now) {
   } catch (err) {
     if (err instanceof OutsideWindowError) {
       await BulkCall.mark(item.id, { status: "queued", placed_at: null });
-      return windowText(err.window);
+      return windowText(err.window, err.whose);
     }
     if (err.stage === "preflight") {
       // Nothing was dialled: the voice server is down, not this person's number.

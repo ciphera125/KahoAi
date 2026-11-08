@@ -10,6 +10,7 @@ import { KINDS as CAPTURE_KINDS } from "./answerValue.js";
 import { DEFAULT_LANGUAGE, LANGUAGE_CHOICES, LANGUAGE_VALUES } from "./language.js";
 import { fill as fillVariables, offered } from "./variables.js";
 import { standing as testStanding } from "./AgentTest.js";
+import { get as orgSettings } from "./OrgSettings.js";
 import { idForNumber as contactIdForNumber } from "./Contact.js";
 import { namesFor as customToolNames, forCall as customToolsForCall, labelsFor as customToolLabels } from "./CustomTool.js";
 import { promptProblems, variablesOf } from "./promptCheck.js";
@@ -68,7 +69,7 @@ function checkCaptureFields(raw) {
 export const OUTSIDE_WINDOW = "This call is getting outside the call window that we had decided for this particular agent.";
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-function checkWindow(current, changes) {
+export function checkWindow(current, changes) {
   if (changes === null || typeof changes !== "object" || Array.isArray(changes)) {
     throw new ValidationError("the calling window must be an object");
   }
@@ -429,6 +430,8 @@ export async function callConfig(agentId, { caller = null } = {}) {
     const a = rows[0];
     if (!a) return null;
     const s = settingsOf(a.settings);
+    // The organization's own cap on how long any call can be, whatever this agent says.
+    const orgCap = (await orgSettings(a.org_id).catch(() => null))?.max_minutes ?? null;
     // The prompt is filled in here, before it ever reaches the model, so the agent is
     // handed plain words and cannot read a {{variable}} out loud.
     const prompt = await fillVariables(a.prompt || "", {
@@ -438,7 +441,7 @@ export async function callConfig(agentId, { caller = null } = {}) {
     return { agent_id: a.id, org_id: a.org_id, name: a.name, prompt: prompt || null,
       tools: a.tools, opening_line: s.opening_line || null,
       custom_tools: await customToolsForCall(a.org_id, a.tools.filter((t) => !KNOWN_TOOLS.includes(t))),
-      max_secs: s.max_minutes * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
+      max_secs: Math.min(s.max_minutes, orgCap ?? Infinity) * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
       capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, language: s.language,
       version: a.version };
   } catch (err) {

@@ -1,15 +1,15 @@
 import { Router } from "express";
 import * as calls from "../controllers/callController.js";
-import { requireAdmin } from "../middleware/auth.js";
+import { requirePermission } from "../middleware/auth.js";
 
 const router = Router();
 router.get("/dashboard", calls.dashboard);
-router.post("/dashboard/sync", requireAdmin, calls.sync);
+router.post("/dashboard/sync", requirePermission("numbers.manage"), calls.sync);
 router.get("/calls", calls.list);
 router.get("/calls/tools", calls.toolCallsList);
 router.get("/calls/active", calls.activeCalls);
-router.post("/calls", calls.place);
-router.get("/calls/:callId/recording", calls.recording);
+router.post("/calls", requirePermission("calls.place"), calls.place);
+router.get("/calls/:callId/recording", requirePermission("recordings.listen"), calls.recording);
 router.get("/calls/:callId/answers", calls.answers);
 router.get("/calls/:callId/transcript", calls.transcript);
 router.get("/calls/:callId/transcript.csv", calls.transcriptCsv);

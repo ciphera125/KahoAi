@@ -1,3 +1,4 @@
+import * as OrgSettings from "../models/OrgSettings.js";
 // Placing one call: every rule a call must pass, in one place, for a call from
 // the Calls page and for each row of a bulk call alike.
 import { LANGUAGE_CHOICES, LANGUAGE_VALUES } from "../models/language.js";
@@ -12,8 +13,12 @@ import { CALL_ID, normalizeNumber } from "../utils/phone.js";
 
 /** The agent's calling window is closed right now. */
 export class OutsideWindowError extends HttpError {
-  constructor(window) {
-    super(400, Agent.OUTSIDE_WINDOW);
+  /** `whose` is "agent" (that agent's calling window) or "organization" (the admin's, for everyone). */
+  constructor(window, whose = "agent") {
+    super(400, whose === "organization"
+      ? `Your organization only allows calls between ${window.start} and ${window.end} (${window.timezone}).`
+      : Agent.OUTSIDE_WINDOW);
+    this.whose = whose;
     this.code = "outside_call_window";
     this.window = { start: window.start, end: window.end, timezone: window.timezone };
   }
@@ -37,6 +42,9 @@ export async function placeCall(org, { fromId, to: raw, agentId, language = null
   const to = dialer.checkNumber(normalizeNumber(String(raw ?? "")), "The number");
   // TRAI: a person who asked not to be called is never dialled, until someone clears it on purpose.
   if (await Contact.isDnc(org, to)) throw new ValidationError(`${to} is marked Do not call in Contacts`);
+  // The organization's own calling hours hold for every call, whatever the agent is set to.
+  const orgSettings = await OrgSettings.get(org);
+  if (!Agent.inCallWindow(orgSettings.call_window, now)) throw new OutsideWindowError(orgSettings.call_window, "organization");
   let agent = null;
   if (agentId) {
     agent = await Agent.callConfig(agentId);

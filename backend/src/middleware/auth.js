@@ -1,3 +1,4 @@
+import { can } from "../models/permissions.js";
 import { config } from "../config/env.js";
 import * as User from "../models/User.js";
 import { forbidden, HttpError } from "../utils/errors.js";
@@ -33,4 +34,15 @@ export function requireOwner(req, _res, next) {
 export function requireAdmin(req, _res, next) {
   if (!["owner", "admin"].includes(req.user?.role)) return next(forbidden("only an admin of this organization can do this"));
   next();
+}
+
+/** A route that needs one named permission (models/permissions.js). The server is the only
+ * thing that decides: hiding a button in the page is a courtesy, not a check. */
+export function requirePermission(permission) {
+  return (req, _res, next) => {
+    if (!can(req.user?.role, permission)) {
+      return next(forbidden("your role does not allow this; ask an admin of this organization"));
+    }
+    next();
+  };
 }

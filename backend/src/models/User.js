@@ -11,6 +11,8 @@
 // themselves; a slower per-email ceiling catches guessing spread over many
 // addresses. A browser that has signed in before carries a device cookie and
 // has its own count (OWASP "device cookies"). Counts live in PostgreSQL.
+import { AVATARS } from "./avatars.js";
+import { ASSIGNABLE, BELOW_ADMIN, DEFAULT_ROLE, can, permissionsOf } from "./permissions.js";
 import { randomBytes } from "node:crypto";
 import { asSystem, inOrg, systemQuery } from "../db/pool.js";
 import { hexId, safeEqual, scryptHashAsync, sha256, token } from "../utils/crypto.js";
@@ -29,20 +31,20 @@ const LOCKOUTS = [
 const INVITE_SECS = 7 * 24 * 3600;
 const MIN_PASSWORD = 8, MAX_PASSWORD = 200;
 const EMAIL = /^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,24}$/;
-export const ROLES = ["owner", "admin", "member"];
 
 const DUMMY_SALT = randomBytes(16);
 const asToken = (raw) => (typeof raw === "string" && raw.length > 0 && raw.length <= 200 ? raw : null);
 const words = (raw) => String(raw ?? "").split(/\s+/).filter(Boolean).join(" ");
 
 // The person, and their role in the organization `m` (a membership) is for.
-const USER_COLS = `u.id, u.name, u.email, u.company, m.role, u.created_at, u.seen_at, m.org_id, o.name AS org_name`;
+const USER_COLS = `u.id, u.name, u.email, u.company, m.role, u.created_at, u.seen_at, u.avatar, m.org_id, o.name AS org_name`;
 export const MAX_ORGS = 20;
 
 export function publicUser(u) {
   const iso = (d) => (d ? new Date(d).toISOString() : null);
   return { id: u.id, name: u.name, email: u.email, company: u.company, role: u.role, org_id: u.org_id,
-    org_name: u.org_name, created_at: iso(u.created_at), seen_at: iso(u.seen_at) };
+    org_name: u.org_name, created_at: iso(u.created_at), seen_at: iso(u.seen_at), avatar: u.avatar ?? null,
+    permissions: permissionsOf(u.role) };
 }
 
 export async function hasAccounts() {
@@ -226,13 +228,14 @@ export async function markSeen(orgId, userId, at) {
 /** Everyone in the organization, with when they were last active. */
 export async function members(orgId) {
   // People are visible across organizations only through their membership of this one.
-  const { rows } = await asSystem((db) => db.query(`SELECT u.id, u.name, u.email, m.role, m.created_at
+  const { rows } = await asSystem((db) => db.query(`SELECT u.id, u.name, u.email, u.avatar, m.role, m.created_at
     FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1
-    ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, m.created_at`, [orgId]));
+    ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 WHEN 'builder' THEN 3
+      WHEN 'operator' THEN 4 ELSE 5 END, m.created_at`, [orgId]));
   const active = rows.length ? (await systemQuery("SELECT user_id, max(last_seen_at) AS at FROM sessions WHERE user_id = ANY($1) GROUP BY user_id",
     [rows.map((u) => u.id)])).rows : [];
   const last = Object.fromEntries(active.map((a) => [a.user_id, a.at.toISOString()]));
-  return rows.map((u) => ({ id: u.id, name: u.name, email: u.email, role: u.role, created_at: u.created_at.toISOString(),
+  return rows.map((u) => ({ id: u.id, name: u.name, email: u.email, avatar: u.avatar ?? null, role: u.role, created_at: u.created_at.toISOString(),
     last_active: last[u.id] ?? null }));
 }
 
@@ -243,14 +246,17 @@ async function teammate(db, orgId, userId) {
   return rows[0];
 }
 
-/** The owner makes members admins and admins members. */
+/** Give someone a role. The owner may give any role but owner; an admin may give the four
+ * below admin, and cannot touch another admin. The owner's own role never changes. */
 export async function changeRole(actor, userId, role) {
-  if (actor.role !== "owner") throw forbidden("only the organization's owner can change roles");
+  if (!can(actor.role, "team.roles")) throw forbidden("your role does not allow changing roles");
   if (userId === actor.id) throw new ValidationError("you cannot change your own role");
-  if (!["admin", "member"].includes(role)) throw new ValidationError("role must be admin or member");
+  if (!ASSIGNABLE.includes(role)) throw new ValidationError(`role must be one of: ${ASSIGNABLE.join(", ")}`);
+  if (actor.role !== "owner" && !BELOW_ADMIN.includes(role)) throw forbidden("only the owner can make someone an admin");
   return asSystem(async (db) => {
     const target = await teammate(db, actor.org_id, userId);
     if (target.role === "owner") throw forbidden("the owner's role cannot be changed");
+    if (target.role === "admin" && actor.role !== "owner") throw forbidden("only the owner can change an admin's role");
     await db.query("UPDATE memberships SET role = $1 WHERE user_id = $2 AND org_id = $3", [role, target.id, actor.org_id]);
     return { id: target.id, name: target.name, role };
   });
@@ -317,8 +323,15 @@ export async function joinOrganization(userId, invite) {
     if (!rows[0]) throw new AuthError("That invite code is not valid. Codes work once, for a week; ask for a new one.", 403);
     const { rows: [{ n }] } = await db.query("SELECT count(*)::int AS n FROM memberships WHERE user_id = $1", [userId]);
     if (n >= MAX_ORGS) throw new ValidationError(`you can be in at most ${MAX_ORGS} organizations`);
-    await db.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING",
-      [userId, rows[0].org_id]);
+    await db.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+      [userId, rows[0].org_id, DEFAULT_ROLE]);
     return rows[0].org_id;
   });
+}
+
+/** Choose (or clear) the icon shown for this person. Only one of AVATARS, or null. */
+export async function setAvatar(userId, avatar) {
+  if (avatar !== null && !AVATARS.includes(avatar)) throw new ValidationError("pick one of the icons offered");
+  await asSystem((db) => db.query("UPDATE users SET avatar = $2 WHERE id = $1", [userId, avatar]));
+  return avatar;
 }

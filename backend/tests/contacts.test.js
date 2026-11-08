@@ -102,6 +102,7 @@ describe("contacts", () => {
     const ids = [];
     for (const name of ["A", "B", "C"]) ids.push((await o.post("/api/contacts").send({ name })).body.id);
     const m = await member(o);
+    await o.patch(`/api/team/${m.user.id}`).send({ role: "operator" }); // a caller keeps contacts but cannot delete them
     expect((await m.post("/api/contacts/delete").send({ ids })).status).toBe(403);
     expect((await m.post("/api/contacts").send({ name: "D" })).status).toBe(200);
     expect((await o.post("/api/contacts/delete").send({ ids: [...ids.slice(0, 2), "nope"] })).body).toEqual({ deleted: 2 });
