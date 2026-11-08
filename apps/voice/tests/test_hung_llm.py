@@ -76,6 +76,7 @@ async def test_a_hung_llm_gets_the_filler_then_the_apology_then_the_call_ends(hu
 async def test_a_hung_greeting_after_the_recording_notice_is_still_caught(hung_call, monkeypatch):
     """The notice is bot speech too: it must not stand in for the greeting it precedes."""
     monkeypatch.setenv("RECORDING_ENABLED", "true")
+    monkeypatch.setenv("RECORDING_NOTICE_ENABLED", "true")  # off by default since 2026-11-08
     tts = hung_call
     aborts = []
 

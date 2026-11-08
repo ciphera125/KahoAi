@@ -28,7 +28,7 @@ def logger(tmp_path):
 
 def pushed(frame, direction=FrameDirection.DOWNSTREAM):
     """A FramePushed as an observer receives it; only `.frame` and `.direction`
-    are read. Downstream is the copy that counts — see the logger."""
+    are read. Downstream is the copy that counts, see the logger."""
     return FramePushed(
         source=None, destination=None, frame=frame, direction=direction, timestamp=0
     )

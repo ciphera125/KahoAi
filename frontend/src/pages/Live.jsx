@@ -23,10 +23,10 @@ export default function Live() {
           {calls.map((c) => (
             <div key={c.call_id} className="row" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) 80px minmax(0,1fr) 120px" }}>
               <span className="ellip">{c.contact_name || c.peer || "Unknown"}</span>
-              <span className="ellip">{c.agent_name || c.agent_id || "—"}</span>
+              <span className="ellip">{c.agent_name || c.agent_id || "-"}</span>
               <span><span className={`badge ${c.status === "answered" ? "ok" : ""}`}>{c.status}</span></span>
               <span className="muted ellip">{c.call_id}</span>
-              <span className="muted">{c.started_at ? whenShort(c.started_at) : "—"}</span>
+              <span className="muted">{c.started_at ? whenShort(c.started_at) : "-"}</span>
             </div>
           ))}
         </div>

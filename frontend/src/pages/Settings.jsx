@@ -12,7 +12,7 @@ export default function Settings() {
   return (
     <section>
       <header className="page">
-        <div><h1>Settings</h1><div className="sub">Workspace configuration and limits.</div></div>
+        <div><h1>Settings</h1><div className="sub">Your organization's details and limits, and the keys other systems use to send you tasks.</div></div>
       </header>
       <div className="card" style={{ maxWidth: 640 }}>
         <h2 style={{ margin: "0 0 var(--s4)" }}>Organization</h2>
@@ -41,7 +41,7 @@ export default function Settings() {
           {(settings.tools || []).map((t) => (
             <div key={t.name} className="row" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,2fr)" }}>
               <span className="code">{t.name}</span>
-              <span className="muted">{t.help || "—"}</span>
+              <span className="muted">{t.help || "-"}</span>
             </div>
           ))}
         </div>

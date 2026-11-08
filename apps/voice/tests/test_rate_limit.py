@@ -1,5 +1,5 @@
 """ConnectionLimiter: the pure accounting behind the /ws rate limit, with no
-server, no websocket, no I/O — just the two counters and the clock."""
+server, no websocket, no I/O, just the two counters and the clock."""
 
 import pytest
 from rate_limit import (

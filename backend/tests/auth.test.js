@@ -162,7 +162,7 @@ describe("accounts", () => {
     await o.patch(`/api/team/${m.user.id}`).send({ role: "admin" });
     // A third member for the admin to try changing.
     const m2 = await member(o, { name: "Priya", email: "priya@acme.in", password: "12345678" });
-    // The admin cannot change roles — only the owner can.
+    // The admin cannot change roles, only the owner can.
     expect((await m.patch(`/api/team/${m2.user.id}`).send({ role: "admin" })).status).toBe(403);
     expect((await m.patch(`/api/team/${m2.user.id}`).send({ role: "admin" })).body.error).toMatch(/owner/);
     // The owner can.

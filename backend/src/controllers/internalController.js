@@ -7,6 +7,7 @@ import * as ErrorLog from "../models/ErrorLog.js";
 import * as Lead from "../models/Lead.js";
 import * as CallAnswer from "../models/CallAnswer.js";
 import * as CallTool from "../models/CallTool.js";
+import { publishCallFiles } from "../services/callFiles.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 
 /** Never an error: a call must start even if this lookup fails. */
@@ -36,11 +37,16 @@ export async function dnc(req, res) {
 export async function ingest(req, res) {
   await Call.ingest(req.params.callId, req.body?.events);
   res.json({ ok: true });
+  // The call is over (or its summary has arrived): its transcript can be saved in Storage. After
+  // the answer, so the voice service is never kept waiting on it.
+  const events = Array.isArray(req.body?.events) ? req.body.events : [];
+  if (events.some((e) => e && ["call_end", "summary"].includes(e.event))) publishCallFiles(req.params.callId);
 }
 
 export async function recordingReport(req, res) {
   await Call.setRecording(req.params.callId, req.body ?? {});
   res.json({ ok: true });
+  publishCallFiles(req.params.callId); // gives it its readable name; never throws, and not waited for
 }
 
 /** The agent saving what the caller just said. Everything about who it belongs to comes

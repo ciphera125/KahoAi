@@ -41,10 +41,10 @@ export const Icon = ({ name, ...rest }) => (
 /* ---------- formatters ---------- */
 export const initials = (name) => (name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
 export const plural = (n, w) => `${(n ?? 0).toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
-export const fmtDur = (s) => (s == null ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s) % 60).padStart(2, "0")}`);
+export const fmtDur = (s) => (s == null ? "-" : `${Math.floor(s / 60)}:${String(Math.round(s) % 60).padStart(2, "0")}`);
 export const fmtTalk = (s) => (!s ? "0s" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`);
 export function whenShort(iso) {
-  if (!iso) return "—";
+  if (!iso) return "-";
   const d = new Date(iso);
   return `${d.toLocaleDateString([], { day: "numeric", month: "short" })}, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
 }
@@ -105,7 +105,7 @@ export function Menu({ items }) {
 }
 
 /** A primary-button dropdown (same panel as Menu, a labeled trigger instead
- * of the triple-dot) — for "+ Add X" buttons that need to offer a choice. */
+ * of the triple-dot), for "+ Add X" buttons that need to offer a choice. */
 export function DropdownButton({ label, icon, items }) {
   const [open, setOpen] = useState(false);
   const ref = useRef();

@@ -1,7 +1,7 @@
 // Answers the agent collected on a call: "On what date will you pay?" -> 2026-12-15.
 //
 // The voice service sends only the field and what it heard. Everything that decides who
-// the answer belongs to — the organization and the contact — is looked up here from the
+// the answer belongs to, the organization and the contact, is looked up here from the
 // call, never taken from the request, because the model is on the other end of it and a
 // model can be talked into anything.
 import { asSystem, inOrg } from "../db/pool.js";

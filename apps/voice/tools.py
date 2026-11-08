@@ -90,6 +90,13 @@ class CallContext:
     # Which caller turn we are on, for the Studio's idempotency key: the same answer
     # sent twice on one turn is one answer, a correction on a later turn is a new one.
     turn_number: Callable[[], int] | None = None
+    # How this call is meant to be spoken (language.py), for the closing line.
+    language_mode: str = "auto"
+    # Set by whoever builds the pipeline: speaks a line now, in the agent's voice.
+    say: Callable[[str], Awaitable[None]] | None = None
+    # Set by whoever builds the pipeline: the words the model has said so far in this
+    # response. A goodbye said in the same breath as end_call is not in the transcript yet.
+    reply_text: Callable[[], str] | None = None
     # Room for per-call state a deployment's tools want to share (a looked-up
     # customer, a chosen slot) without reaching for globals.
     state: dict = field(default_factory=dict)
@@ -271,8 +278,53 @@ async def end_call(args: dict, call: CallContext) -> dict:
     if call.transcript is not None and not caller_said_goodbye(call.transcript.turns):
         return {"error": "the caller has not said goodbye, so do not hang up; keep helping, "
                 "or ask if there is anything else you can do for them"}
+    await _say_goodbye_if_missing(call)
     await call.hang_up()
     return {"status": "ending"}
+
+
+_CLOSING = re.compile(
+    r"thank|thanks|goodbye|good bye|bye\b|take care|have a (?:great|good|nice)|धन्यवाद|शुक्रिया|"
+    r"अलविदा|नमस्ते|नमस्कार|दिन (?:शुभ|अच्छा)|फिर मिलेंगे|खुश रहिए",
+    re.IGNORECASE,
+)
+_DEVANAGARI = re.compile(r"[\u0900-\u097F]")
+GOODBYE_EN = "Thanks for talking. Goodbye!"
+GOODBYE_HI = "बात करने के लिए धन्यवाद। नमस्ते!"
+
+
+def said_goodbye(text: str | None) -> bool:
+    """Whether these words already close the call."""
+    return bool(text and _CLOSING.search(text))
+
+
+def closing_line(mode: str, last_caller_text: str | None) -> str:
+    """The line that ends a call that had none, in the language the call is in: fixed for
+    english, hindi and mix; for auto, whichever the caller last spoke."""
+    if mode in ("hindi", "mix"):
+        return GOODBYE_HI
+    if mode == "english":
+        return GOODBYE_EN
+    return GOODBYE_HI if last_caller_text and _DEVANAGARI.search(last_caller_text) else GOODBYE_EN
+
+
+async def _say_goodbye_if_missing(call: CallContext) -> None:
+    """The persona is asked to say goodbye before hanging up, and the model does not always.
+    A call that just stops reads as being cut off, so when no goodbye was said in this
+    response the agent says one first. Never allowed to stop the hang-up."""
+    if call.say is None:
+        return
+    try:
+        said = call.reply_text() if call.reply_text is not None else ""
+        if said_goodbye(said):
+            return
+        callers = [t for who, t in (call.transcript.turns if call.transcript is not None else [])
+                   if who == "caller"]
+        await call.say(closing_line(call.language_mode, callers[-1] if callers else None))
+        if call.transcript is not None:
+            call.transcript.event("goodbye_spoken")
+    except Exception as e:  # noqa: BLE001 -- the call must still end
+        logger.warning(f"Could not say goodbye before hanging up: {type(e).__name__}")
 
 
 def leads_dir() -> Path:

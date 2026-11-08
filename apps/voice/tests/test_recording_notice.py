@@ -24,10 +24,12 @@ def call(monkeypatch, tmp_path):
         "LATENCY_LOG_PATH": str(tmp_path / "turns.jsonl"),
         "RECORDING_DIR": str(tmp_path / "recordings"),
         "RECORDING_ENABLED": "true",
+        # Off by default since 2026-11-08; these tests are about the notice when it is wanted.
+        "RECORDING_NOTICE_ENABLED": "true",
         "SUMMARY_ENABLED": "false",
     }.items():
         monkeypatch.setenv(name, value)
-    for name in ("RECORDING_NOTICE", "RECORDING_NOTICE_ENABLED", "TTS_FALLBACK_PROVIDER"):
+    for name in ("RECORDING_NOTICE", "TTS_FALLBACK_PROVIDER"):
         monkeypatch.delenv(name, raising=False)
     tts, llm = SpeakingTTS(), GreetingLLM()
     monkeypatch.setattr(main, "DeepgramSTTService", PassThrough)
@@ -104,3 +106,12 @@ async def test_the_notice_wording_can_be_changed(call, monkeypatch):
     await opening(call, said=2)
     assert call.tts.said == ["Yeh call record ho sakti hai.", GREETING]
     assert "Yeh call record ho sakti hai." in call.llm.requests[0][-1]["content"]
+
+
+async def test_by_default_a_call_opens_with_just_the_greeting_and_no_notice(call, monkeypatch):
+    # The owner's decision (2026-11-08): a call does not open by announcing it is recorded.
+    # The agent says so if the caller asks (tests/test_recording_ask.py).
+    monkeypatch.delenv("RECORDING_NOTICE_ENABLED", raising=False)
+    await opening(call, said=1)
+    assert call.tts.said == [GREETING]
+    assert DEFAULT_NOTICE not in call.llm.requests[0][-1]["content"]

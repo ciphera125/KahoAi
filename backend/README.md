@@ -1,4 +1,4 @@
-# Kaho AI Studio — backend
+# Kaho AI Studio, backend
 
 The Studio's API: Node + Express (MVC), PostgreSQL, one organization per customer
 with strict tenant isolation. It replaces the old single-process `apps/voice/admin.py`.

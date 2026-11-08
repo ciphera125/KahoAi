@@ -1,11 +1,11 @@
 """Make one small real test call to each provider and report OK or the error.
 
 Each check exercises the same credentials and model the agent itself uses, so a
-green run here means the pipeline's config is actually valid — not just that the
+green run here means the pipeline's config is actually valid, not just that the
 key exists. The calls are deliberately tiny (0.3s of silence to transcribe, a
 two-character phrase to synthesize), so the spend is negligible.
 
-Never prints API key values — only whether each call succeeded, and the
+Never prints API key values, only whether each call succeeded, and the
 provider's own error message if it didn't.
 """
 import io
@@ -32,7 +32,7 @@ def env(name: str) -> str | None:
 
 
 def silent_wav(seconds: float = 0.3, sample_rate: int = 16000) -> bytes:
-    """A mono PCM16 WAV of silence — just enough to exercise a transcription."""
+    """A mono PCM16 WAV of silence, just enough to exercise a transcription."""
     buf = io.BytesIO()
     with wave.open(buf, "wb") as wf:
         wf.setnchannels(1)
@@ -164,7 +164,7 @@ def check_elevenlabs() -> tuple[bool, str]:
         hint = ""
         if e.response.status_code == 402:
             hint = (
-                " — on the free plan, pick a voice from your own dashboard;"
+                ", on the free plan, pick a voice from your own dashboard;"
                 " Voice Library voices are paid-only over the API"
             )
         return False, f"HTTP {e.response.status_code}: {e.response.text.strip()[:200]}{hint}"
@@ -373,7 +373,7 @@ def main() -> int:
     load_dotenv(ROOT / ".env")
     # The same CA setup the server does at startup. Without it the checks that
     # go over a raw websocket (Smallest) fail with CERTIFICATE_VERIFY_FAILED on
-    # the python.org macOS build, which has no system CA bundle — reporting a
+    # the python.org macOS build, which has no system CA bundle, reporting a
     # dead provider when the key, voice and model are all fine (seen 2026-10-15).
     # httpx-based checks never hit this: they carry certifi themselves.
     ensure_ca_bundle()

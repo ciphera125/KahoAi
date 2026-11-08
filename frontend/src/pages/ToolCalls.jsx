@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { get } from "../api.js";
-import { Icon, Spinner, useToast, whenShort } from "../ui.jsx";
+import { Icon, Spinner, usePaged, useToast, whenShort } from "../ui.jsx";
 
 const STATUS_WORDS = { worked: "Worked", failed: "Did not work", refused: "Not one of its tools" };
 
@@ -27,6 +27,7 @@ export default function ToolCalls() {
   }, [query, toast]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { get("/api/agents").then(setAgents).catch(() => {}); }, []);
+  const [shownCalls, callPager] = usePaged(data?.calls ?? [], 10);
 
   const tools = useMemo(() => [...new Set(
     (data?.calls ?? []).flatMap((c) => c.turns.flatMap((t) => t.calls.map((x) => x.tool))))].sort(), [data]);
@@ -35,7 +36,7 @@ export default function ToolCalls() {
   return (
     <section>
       <header className="page">
-        <div><h1>Tools</h1><div className="sub">What your agents did on each call, and what happened when it did not work.</div></div>
+        <div><h1>Tool history</h1><div className="sub">A record of every time an agent used a tool on a call, and whether it worked. To give an agent a tool, go to Agents, then Tools.</div></div>
         <div className="head-actions">
           <label className="switch-inline">
             <input type="checkbox" checked={technical} onChange={(e) => setTechnical(e.target.checked)} />
@@ -74,7 +75,8 @@ export default function ToolCalls() {
       {!data && <Spinner />}
       {data?.calls.length === 0 && <div className="card"><p className="hint">
         Nothing here yet. This fills up as agents use tools on calls.</p></div>}
-      {data?.calls.map((call) => <CallNode key={call.call_id} call={call} technical={technical} />)}
+      {shownCalls.map((call) => <CallNode key={call.call_id} call={call} technical={technical} />)}
+      {data && data.calls.length > 0 && callPager}
     </section>
   );
 }
@@ -100,7 +102,7 @@ function CallNode({ call, technical }) {
       {open && call.turns.map((turn, i) => (
         <div key={i} className="tree-turn">
           <div className="hint tree-said">
-            {turn.turn ? <>Turn {turn.turn}{turn.said ? <> — they said “{turn.said}”</> : null}</> : "Outside any turn"}
+            {turn.turn ? <>Turn {turn.turn}{turn.said ? <>, they said “{turn.said}”</> : null}</> : "Outside any turn"}
           </div>
           {turn.calls.map((c) => <ToolNode key={c.id} call={c} technical={technical} />)}
         </div>

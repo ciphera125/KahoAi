@@ -33,7 +33,7 @@ function menuButton(items) {
   return el("div", { className: "menu-wrap", onclick: (e) => e.stopPropagation() }, btn, menu);
 }
 function tagChip(id) { const t = S.tags.find((x) => x.id === id); if (!t) return null; const s = el("span", { className: "tag", textContent: t.name }); s.style.setProperty("--tc", `var(--t-${t.color})`); return s; }
-const fmtDur = (s) => s == null ? "—" : `${Math.floor(s / 60)}:${String(Math.round(s) % 60).padStart(2, "0")}`;
+const fmtDur = (s) => s == null ? "-" : `${Math.floor(s / 60)}:${String(Math.round(s) % 60).padStart(2, "0")}`;
 const fmtTalk = (s) => !s ? "0s" : s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, "0")}s`;
 function dayLabel(d) {
   const today = new Date(); const y = new Date(); y.setDate(today.getDate() - 1);
@@ -41,7 +41,7 @@ function dayLabel(d) {
   if (d.toDateString() === y.toDateString()) return "Yesterday";
   return d.toLocaleDateString([], { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 }
-function whenShort(iso) { if (!iso) return "—"; const d = new Date(iso); const l = dayLabel(d); return `${l === "Today" || l === "Yesterday" ? l : d.toLocaleDateString([], { day: "numeric", month: "short" })}, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`; }
+function whenShort(iso) { if (!iso) return "-"; const d = new Date(iso); const l = dayLabel(d); return `${l === "Today" || l === "Yesterday" ? l : d.toLocaleDateString([], { day: "numeric", month: "short" })}, ${d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`; }
 const ago = (iso) => { const s = (Date.now() - new Date(iso)) / 1000; if (s < 60) return "just now"; if (s < 3600) return `${Math.floor(s / 60)} min ago`; if (s < 86400) return `${Math.floor(s / 3600)} h ago`; return whenShort(iso); };
 const outcomePill = (status) => el("span", { className: "pill " + (status || "unknown"), textContent: OUTCOME[status] || "Unknown" });
 
@@ -137,7 +137,7 @@ $("me-btn").onclick = async () => {
   const m = S.me; $("pr-avatar").textContent = initials(m.name); $("pr-name").textContent = m.name; $("pr-role").textContent = `${m.role === "owner" ? "Owner" : "Member"}${m.company ? " · " + m.company : ""}`;
   const c = m.counts;
   $("pr-stats").replaceChildren(...[["Numbers linked", c.numbers], ["Agents", c.agents], ["Prompts", c.prompts], ["Contacts", c.contacts], ["Calls", c.calls], ["People in workspace", c.members]].map(([k, v]) => el("div", {}, el("b", { textContent: v.toLocaleString() }), el("span", { textContent: k }))));
-  $("pr-details").replaceChildren(...[["Email", m.email], ["Company", m.company || "—"], ["Role", m.role === "owner" ? "Owner" : "Member"], ["Member since", new Date(m.created_at).toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" })], ["Team", m.members.map((x) => x.name).join(", ")]].flatMap(([k, v]) => [el("dt", { textContent: k }), el("dd", { textContent: v })]));
+  $("pr-details").replaceChildren(...[["Email", m.email], ["Company", m.company || "-"], ["Role", m.role === "owner" ? "Owner" : "Member"], ["Member since", new Date(m.created_at).toLocaleDateString([], { day: "numeric", month: "long", year: "numeric" })], ["Team", m.members.map((x) => x.name).join(", ")]].flatMap(([k, v]) => [el("dt", { textContent: k }), el("dd", { textContent: v })]));
   renderInvite(m.invite_code, m.invite_expires);
   $("pr-scrim").classList.add("open");
 };
@@ -206,7 +206,7 @@ async function loadDashboard() {
     el("div", { className: "insight" }, icon("i-bulb"), el("span", { textContent: `A call counts as successful when the person picked up and really talked: at least two replies of their own, or their details saved. ${d.rates.conversion}% of picked-up calls got there.` })));
   // Best time to call
   const max = Math.max(1, ...d.by_hour.map((h) => h.calls));
-  const cells = d.by_hour.map((h) => { const c = el("div", { title: `${h.hour}:00 — ${plural(h.calls, "call")}, ${h.answer_rate}% picked up`, textContent: h.calls ? `${Math.round(h.answer_rate)}` : "" }); if (h.calls) c.style.background = `color-mix(in srgb, var(--teal) ${20 + (60 * h.answer_rate) / 100}%, transparent)`; c.style.opacity = h.calls ? 0.55 + (0.45 * h.calls) / max : 1; return c; });
+  const cells = d.by_hour.map((h) => { const c = el("div", { title: `${h.hour}:00, ${plural(h.calls, "call")}, ${h.answer_rate}% picked up`, textContent: h.calls ? `${Math.round(h.answer_rate)}` : "" }); if (h.calls) c.style.background = `color-mix(in srgb, var(--teal) ${20 + (60 * h.answer_rate) / 100}%, transparent)`; c.style.opacity = h.calls ? 0.55 + (0.45 * h.calls) / max : 1; return c; });
   const labels = d.by_hour.map((h) => el("span", { textContent: h.hour % 6 === 0 ? (h.hour === 0 ? "12a" : h.hour === 12 ? "12p" : h.hour < 12 ? `${h.hour}a` : `${h.hour - 12}p`) : "" }));
   const best = d.best_hour;
   $("hours").replaceChildren(el("div", { className: "hours" }, ...cells), el("div", { className: "hour-labels" }, ...labels),
@@ -308,7 +308,7 @@ function renderContacts() {
       el("div", { className: "who" }, el("div", { className: "avatar", textContent: initials(c.name) }), el("div", { style: "min-width:0" }, el("b", { className: "ellip", textContent: c.name }), c.dnc ? el("span", { className: "pill dnc", style: "height:20px;font-size:11px;margin-top:4px", textContent: "Do not call" }) : el("span", { className: "muted", textContent: c.call_count ? plural(c.call_count, "call") : "Not called yet" }))),
       el("div", {}, first ? el("span", { className: "num", textContent: first.number }) : el("span", { className: "muted", textContent: "No number" }), c.numbers.length > 1 ? el("span", { className: "muted", textContent: `  +${c.numbers.length - 1}` }) : null),
       el("div", { className: "tags" }, ...contactTags(c).map(tagChip)),
-      el("div", { style: "min-width:0" }, lc ? el("div", {}, el("div", { className: "muted", textContent: whenShort(lc.started_at) }), el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" }, outcomePill(lc.status), lc.status === "answered" && lc.duration_secs != null ? el("span", { className: "muted", textContent: fmtDur(lc.duration_secs) }) : null)) : el("span", { className: "muted", textContent: "—" })),
+      el("div", { style: "min-width:0" }, lc ? el("div", {}, el("div", { className: "muted", textContent: whenShort(lc.started_at) }), el("div", { style: "display:flex;gap:6px;align-items:center;margin-top:4px" }, outcomePill(lc.status), lc.status === "answered" && lc.duration_secs != null ? el("span", { className: "muted", textContent: fmtDur(lc.duration_secs) }) : null)) : el("span", { className: "muted", textContent: "-" })),
       el("div", { className: "row-actions" }, callBtn, menuButton([["Edit", () => openDrawer(c.id, true)], [c.dnc ? "Allow calls again" : "Mark Do not call", () => setDnc(c, !c.dnc)], ["Delete", () => deleteContact(c), true]])));
     const panel = el("div", { className: "history" + (isOpen ? " open" : "") }, el("div", {}, el("div", { className: "history-inner", id: `h-${c.id}` })));
     row.onclick = () => toggleHistory(c.id);
@@ -360,10 +360,10 @@ async function loadHistory() {
       acts.append(view, csv);
     }
     group.append(el("div", { className: "h-row" },
-      el("span", { className: "num", textContent: when ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "—" }),
+      el("span", { className: "num", textContent: when ? when.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "-" }),
       el("span", { className: "muted", textContent: call.direction === "inbound" ? "Incoming" : call.direction === "outbound" ? "Outgoing" : "Call" }),
       el("span", {}, outcomePill(call.status)),
-      el("span", { className: "num", textContent: call.status === "answered" ? fmtDur(call.duration_secs) : "—" }),
+      el("span", { className: "num", textContent: call.status === "answered" ? fmtDur(call.duration_secs) : "-" }),
       el("span", { className: "summary", textContent: call.summary || (call.agent_name ? `Agent: ${call.agent_name}` : call.turns ? `${plural(call.turns, "turn")}, no summary` : call.status === "answered" ? "No conversation" : ""), title: call.summary || "" }),
       acts));
   }

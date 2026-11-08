@@ -47,7 +47,7 @@ def _bare_service(monkeypatch, **kwargs):
 
 class HungServer:
     """Accepts a connection and never answers: no response, no close, no
-    error — the same shape as the live stall this is guarding against.
+    error, the same shape as the live stall this is guarding against.
 
     Python 3.13's Server.wait_closed() waits for open connections to finish,
     not just for the listening socket to shut down, so a connection this

@@ -2,7 +2,7 @@
 --
 -- The Studio makes the request, not the voice service: the auth header is decrypted
 -- here, used, and never leaves this process. The model is told the tool's name, what it
--- is for and what to collect — never the URL, the headers or anything behind them.
+-- is for and what to collect, never the URL, the headers or anything behind them.
 
 CREATE TABLE custom_tools (
   id             text PRIMARY KEY CHECK (id ~ '^ct_[0-9a-f]{12}$'),

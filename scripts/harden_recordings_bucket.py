@@ -1,4 +1,4 @@
-"""One-off: lock the recordings bucket down (private, size cap, audio only).
+"""One-off: lock the recordings bucket down (private, size cap, audio and transcripts only).
 
     python scripts/harden_recordings_bucket.py          # show what it would change
     python scripts/harden_recordings_bucket.py --apply  # change it
@@ -17,7 +17,8 @@ from dotenv import load_dotenv
 WANT = {
     "public": False,
     "file_size_limit": 50 * 1024 * 1024,
-    "allowed_mime_types": ["audio/opus", "audio/ogg", "audio/wav", "audio/x-wav"],
+    # Audio, and the plain-text transcript saved beside each recording.
+    "allowed_mime_types": ["audio/opus", "audio/ogg", "audio/wav", "audio/x-wav", "text/plain"],
 }
 
 

@@ -10,7 +10,7 @@ Deepgram Aura, ElevenLabs, Sarvam or Smallest (TTS)
 
 ```
 apps/voice/          Pipecat voice agent
-apps/voice/prompts/  Agent personas — the prompt decides how the bot behaves
+apps/voice/prompts/  Agent personas, the prompt decides how the bot behaves
 scripts/             Command-line helpers to run and test the agent
 ```
 
@@ -26,7 +26,7 @@ python scripts/check_providers.py
 
 On macOS the local audio transport needs PortAudio: `brew install portaudio`.
 The first run also triggers the microphone permission prompt, which can stall
-startup once — grant it and run again.
+startup once, grant it and run again.
 
 ## Run
 
@@ -63,7 +63,7 @@ cd apps/voice && venv/bin/pytest -q
 
 **The voice service has to run in `ap-south-1` (Mumbai).** This does not apply
 while we develop locally, and nothing in the repo pins a region yet, but every
-turn crosses the network three times — STT, LLM, TTS — so hosting outside India
+turn crosses the network three times, STT, LLM, TTS, so hosting outside India
 adds round-trip latency to all three on every turn. See `CLAUDE.md` for the
 other open items.
 

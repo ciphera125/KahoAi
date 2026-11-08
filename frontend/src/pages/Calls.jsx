@@ -102,7 +102,7 @@ function NewCall({ agents, numbers, languages, onPlace }) {
       </div>
       <div className="field"><label className="f">Call from</label>
         <select value={fromId} onChange={(e) => setFromId(e.target.value)}>
-          {numbers.length === 0 && <option value="">No numbers yet — add one on Numbers</option>}
+          {numbers.length === 0 && <option value="">No numbers yet, add one on Numbers</option>}
           {numbers.map((n) => <option key={n.id} value={n.id} disabled={n.status !== "active"}>{n.number} · {n.provider_label}{n.status !== "active" ? " (not ready)" : ""}</option>)}
         </select>
       </div>

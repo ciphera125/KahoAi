@@ -23,7 +23,7 @@ export default function Prompts() {
   return (
     <section>
       <header className="page">
-        <div><h1>Prompts</h1><div className="sub">Every prompt in your organization and the agent it belongs to.</div></div>
+        <div><h1>Prompts</h1><div className="sub">A prompt is the instructions an agent follows on a call. Here is every prompt in your organization and the agent it belongs to.</div></div>
         <div className="head-actions"><button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New prompt</button></div>
       </header>
       <div className="card list">

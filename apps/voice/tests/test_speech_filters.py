@@ -4,10 +4,11 @@ import pytest
 
 async def test_dashes_become_commas():
     """An em-dash is a pause when spoken, and some voices read it aloud."""
+    dash = chr(0x2014)   # built here so no source file has to contain one
     out = await main.SpokenPunctuationFilter().filter(
-        "I'm not sure what you need—could you tell me more?"
+        f"I'm not sure what you need{dash}could you tell me more?"
     )
-    assert "—" not in out
+    assert dash not in out
     assert out == "I'm not sure what you need, could you tell me more?"
 
 
@@ -28,7 +29,7 @@ def test_markdown_filter_runs_first():
 
 
 async def test_spaced_dash_does_not_double_space():
-    out = await main.SpokenPunctuationFilter().filter("nine to five — closed Sunday")
+    out = await main.SpokenPunctuationFilter().filter(f"nine to five {chr(0x2014)} closed Sunday")
     assert out == "nine to five, closed Sunday"
 
 

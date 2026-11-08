@@ -22,7 +22,7 @@ export default function Tags() {
   return (
     <section>
       <header className="page">
-        <div><h1>Tags</h1><div className="sub">Labels you can attach to contacts for filtering and organization.</div></div>
+        <div><h1>Tags</h1><div className="sub">Short labels, like “VIP”, that you put on contacts so you can find and group them.</div></div>
         <div className="head-actions"><button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New tag</button></div>
       </header>
       <div className="card list">

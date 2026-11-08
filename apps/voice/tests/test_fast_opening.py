@@ -104,9 +104,11 @@ def call(monkeypatch, tmp_path):
     for name, value in {"DEEPGRAM_API_KEY": "k", "CALL_LOG_DIR": str(tmp_path / "calls"),
                         "LATENCY_LOG_PATH": str(tmp_path / "turns.jsonl"),
                         "RECORDING_DIR": str(tmp_path / "rec"), "RECORDING_ENABLED": "true",
-                        "SUMMARY_ENABLED": "false", "GREETING_LEAD_SECS": "0.2"}.items():
+                        "SUMMARY_ENABLED": "false", "GREETING_LEAD_SECS": "0.2",
+                        # Off by default since 2026-11-08; these tests are about it when wanted.
+                        "RECORDING_NOTICE_ENABLED": "true"}.items():
         monkeypatch.setenv(name, value)
-    for name in ("RECORDING_NOTICE", "RECORDING_NOTICE_ENABLED", "TTS_FALLBACK_PROVIDER"):
+    for name in ("RECORDING_NOTICE", "TTS_FALLBACK_PROVIDER"):
         monkeypatch.delenv(name, raising=False)
     tts, llm = SpeakingTTS(), GreetingLLM()
     monkeypatch.setattr(main, "DeepgramSTTService", PassThrough)
@@ -183,6 +185,7 @@ def test_the_server_sends_the_notice_first_and_hands_it_to_the_pipeline(monkeypa
                                                                pcm(tone(RATE // 2)), RATE))
     monkeypatch.setattr(server, "_prespoken_notice", notice)
     monkeypatch.setattr(server, "_ws_limiter", None)
+    monkeypatch.setenv("RECORDING_NOTICE_ENABLED", "true")  # off by default since 2026-11-08
     monkeypatch.setenv("PLIVO_AUTH_ID", "MAID")
     monkeypatch.setenv("PLIVO_AUTH_TOKEN", "tok")
     seen = {}

@@ -2,7 +2,7 @@
 
 Deliberately dumb: one plain-text line per call, no JSON, nothing to parse
 with anything fancier than `tail` or `grep`. Not a substitute for the structured
-logs (`logs/turns.jsonl`, `logs/calls/`) — this exists only so a scan of
+logs (`logs/turns.jsonl`, `logs/calls/`), this exists only so a scan of
 `logs/groq_usage.log` answers "did anything call Groq, and from where" without
 reading code.
 

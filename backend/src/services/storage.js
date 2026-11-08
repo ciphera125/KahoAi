@@ -55,3 +55,39 @@ export async function deleteRecording(path) {
     return false;
   }
 }
+
+// --- moving and writing objects, for a call's readable names and its transcript ---------------
+
+async function storageCall(method, path, { body, headers = {} } = {}) {
+  const key = config.SUPABASE_SECRET_KEY;
+  try {
+    const r = await fetch(`${config.SUPABASE_URL.replace(/\/+$/, "")}/storage/v1${path}`, {
+      method, body,
+      headers: { Authorization: `Bearer ${key}`, apikey: key, ...headers },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    if (!r.ok) throw new Error(`storage answered ${r.status}`);
+    return true;
+  } catch (err) {
+    logger.warn({ reason: String(err?.message ?? err).replaceAll(key, "[redacted]").slice(0, 200) }, "storage call failed");
+    return false;
+  }
+}
+
+const inBucket = (path) => `/object/${encodeURIComponent(config.SUPABASE_RECORDINGS_BUCKET)}/${path.split("/").map(encodeURIComponent).join("/")}`;
+
+/** Rename an object in the bucket. true when it is now at `to`. */
+export async function moveRecording(from, to) {
+  if (!recordingsConfigured()) return false;
+  return storageCall("POST", "/object/move", {
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bucketId: config.SUPABASE_RECORDINGS_BUCKET, sourceKey: from, destinationKey: to }),
+  });
+}
+
+/** Write a text file into the bucket, replacing one of the same name. */
+export async function putText(path, text) {
+  if (!recordingsConfigured()) return false;
+  return storageCall("POST", inBucket(path), {
+    headers: { "Content-Type": "text/plain; charset=utf-8", "x-upsert": "true" }, body: text });
+}

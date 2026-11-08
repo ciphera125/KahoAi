@@ -45,7 +45,7 @@ export function prepareRows(rows) {
     try {
       number = checkNumber(normalizeNumber(raw), "The number");
     } catch {
-      return { position, name: name || raw || "—", number: raw || "—", status: "skipped", reason: "not a phone number" };
+      return { position, name: name || raw || "-", number: raw || "-", status: "skipped", reason: "not a phone number" };
     }
     if (!name) name = number;
     if (seen.has(number)) return { position, name, number, status: "skipped", reason: "already in this list" };
@@ -195,7 +195,7 @@ export async function claim(runId, n) {
   return rows.sort((a, b) => a.position - b.position);
 }
 
-// Only these columns may be set dynamically — everything else is silently
+// Only these columns may be set dynamically, everything else is silently
 // dropped, so a future caller that accidentally passes user input cannot
 // inject column names into the UPDATE statement.
 const ITEM_COLS = new Set(["status", "reason", "call_id", "outcome", "placed_at", "finished_at"]);

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
 import AgentCalls from "../components/AgentCalls.jsx";
-import { Icon, Menu, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { Icon, Menu, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 const TOOL_LABELS = {
   end_call: "End the call", capture_lead: "Save details", transfer_to_human: "Transfer to a person", call_webhook: "Your system (webhook)",
@@ -240,6 +240,7 @@ function VersionsTab({ agent, confirm, onChanged }) {
   const [versions, setVersions] = useState(null);
   const load = useCallback(() => get(`/api/agents/${agent.id}/versions`).then(setVersions).catch((e) => toast(e.message, true)), [agent.id, toast]);
   useEffect(() => { load(); }, [load]);
+  const [shownVersions, versionPager] = usePaged(versions ?? []);
   if (!versions) return <Spinner />;
 
   const restore = async (v) => {
@@ -255,7 +256,7 @@ function VersionsTab({ agent, confirm, onChanged }) {
       <div className="card-head"><span className="card-title">Every version that has been live</span></div>
       <table className="rows">
         <tbody>
-          {versions.map((v) => (
+          {shownVersions.map((v) => (
             <tr key={v.id}>
               <td style={{ width: 90 }}><b>Version {v.number}</b></td>
               <td>
@@ -268,6 +269,7 @@ function VersionsTab({ agent, confirm, onChanged }) {
           ))}
         </tbody>
       </table>
+      {versionPager}
     </div>
   );
 }

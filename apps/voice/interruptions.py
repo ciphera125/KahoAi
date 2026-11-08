@@ -56,7 +56,8 @@ BACKCHANNEL_WORDS = frozenset(
 
 # Split on whitespace and punctuation rather than matching word characters:
 # Devanagari vowel signs are not \w, so "हाँ" would be cut into pieces.
-_SPLIT = re.compile(r"[\s.,!?;:\"“”()\-–—…।]+")
+# Dashes are written as escapes: an em dash can join two words in a transcript, and must split them.
+_SPLIT = re.compile(r"[\s.,!?;:\"“”()\-\u2013\u2014 …।]+")
 
 
 def words_of(text: str) -> list[str]:

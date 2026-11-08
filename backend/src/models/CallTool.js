@@ -1,7 +1,7 @@
 // The tools an agent runs during a call, as the Studio sees them.
 //
 // The voice service sends the call id and what the model asked for. Everything that
-// decides *whose* data may be touched — the organization, and the person on the phone —
+// decides *whose* data may be touched, the organization, and the person on the phone,
 // is looked up here from the call row. A model can say anything; it cannot say who it is.
 //
 // Every reply is shaped for the agent to act on: `ok`, and a `message` it can say when

@@ -114,7 +114,7 @@ def main() -> int:
     if not (groq_key and dg_key and args.model):
         sys.exit("Need GROQ_API_KEY, DEEPGRAM_API_KEY and a --model / GROQ_MODEL_ID.")
 
-    import main as agent  # noqa: PLC0415 — needs sys.path set above
+    import main as agent  # noqa: PLC0415, needs sys.path set above
 
     system = agent.load_system_prompt()
     run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + (f"-{args.label}" if args.label else "")

@@ -502,3 +502,22 @@ a.btn.ghost:hover { background: var(--hover); border-color: var(--text-3); }
 .call-actions button.primary { height: 36px; }
 .row-buttons { display: flex; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
 .row-buttons .btn { height: 30px; padding: 0 10px; }
+
+/* the calls-per-day chart explains itself */
+.chart { display: flex; gap: var(--s2); }
+.chart .y-axis { display: flex; flex-direction: column; justify-content: space-between; height: 160px; font: 11px var(--mono); color: var(--text-3); text-align: right; min-width: 22px; }
+.chart .bars { flex: 1; background: repeating-linear-gradient(to top, transparent 0 calc(50% - 1px), var(--border) calc(50% - 1px) 50%); }
+.x-axis { display: flex; justify-content: space-between; margin: 4px 0 0 calc(22px + var(--s2)); font-size: 11px; color: var(--text-3); }
+.legend { display: flex; gap: var(--s4); font-size: 12px; color: var(--text-2); margin-bottom: var(--s2); }
+.legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; }
+.swatch.all { background: var(--surface-2); border: 1px solid var(--border); }
+.swatch.picked { background: var(--accent); }
+
+/* your own tools, compact */
+ul.plain { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-2); }
+ul.plain li { margin-top: 4px; }
+.mini-row { display: grid; grid-template-columns: 1.4fr 1fr auto auto; gap: var(--s2); align-items: center; margin-bottom: var(--s2); }
+@media (max-width: 720px) { .mini-row { grid-template-columns: 1fr; } }
+details.more { margin: var(--s3) 0; border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--s2) var(--s3); }
+details.more > summary { cursor: pointer; font-weight: 500; padding: 4px 0; }
+details.more[open] > summary { margin-bottom: var(--s3); }

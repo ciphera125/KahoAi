@@ -1,4 +1,4 @@
-# Kaho AI Studio — frontend
+# Kaho AI Studio, frontend
 
 The Studio as a React single-page app, with a real URL per screen
 (`/dashboard`, `/calls`, `/contacts`, `/bulk`, `/bulk/:id`, `/agents`, `/agents/:id`, `/prompts`,
@@ -21,7 +21,7 @@ npm test           # node --test: the CSV reader for bulk calls
 ## Serving in production (important)
 
 Because the app uses real paths, the host must serve `index.html` for any
-unknown path — otherwise a refresh on `/calls` 404s. This **SPA fallback** is
+unknown path, otherwise a refresh on `/calls` 404s. This **SPA fallback** is
 built into the dev server and `npm run preview`; on a static host (Nginx, S3 +
 CloudFront, Netlify, …) configure "rewrite all to /index.html". Serve `/api`
 from the backend on the same origin (a reverse proxy), so the session cookie and

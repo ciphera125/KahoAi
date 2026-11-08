@@ -1,5 +1,9 @@
 import http from "node:http";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+
+// These tests are about signing links to a recording where it was uploaded. Giving it a readable
+// name happens in the background and has its own tests (callFiles.test.js).
+vi.mock("../src/services/callFiles.js", () => ({ publishCallFiles: async () => {} }));
 import { config } from "../src/config/env.js";
 import { db, freshDb, internal, line, owner, OURS } from "./helpers.js";
 
@@ -101,7 +105,7 @@ describe("recordings are linked to calls", () => {
     expect(r.status).toBe(200);
     expect(r.body).toEqual({
       url: `${config.SUPABASE_URL}/storage/v1/object/sign/call-recordings/2026/11/call-rec-1.opus?token=tok123`,
-      download_url: `${config.SUPABASE_URL}/storage/v1/object/sign/call-recordings/2026/11/call-rec-1.opus?token=tok123&download=call-rec-1.opus`,
+      download_url: `${config.SUPABASE_URL}/storage/v1/object/sign/call-recordings/2026/11/call-rec-1.opus?token=tok123&download=unknown_undated_callrec1.opus`,
       expires_in: 600, mime: "audio/opus", bytes: 4096,
     });
     expect(fakeLog[0]).toMatchObject({ auth: `Bearer ${config.SUPABASE_SECRET_KEY}` });

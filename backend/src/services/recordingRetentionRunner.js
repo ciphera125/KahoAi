@@ -14,15 +14,20 @@ const BATCH = 200;
 export async function runOnce({ days = config.RECORDING_RETENTION_DAYS } = {}) {
   if (!recordingsConfigured()) return 0;
   const { rows } = await systemQuery(
-    `SELECT call_id, recording_path FROM calls
+    `SELECT call_id, recording_path, transcript_path FROM calls
       WHERE recording_path IS NOT NULL AND recording_at < now() - ($1 * interval '1 day')
       ORDER BY recording_at LIMIT ${BATCH}`, [days]);
   let deleted = 0;
-  for (const { call_id: id, recording_path: path } of rows) {
+  for (const { call_id: id, recording_path: path, transcript_path: transcript } of rows) {
     if (!(await deleteRecording(path))) continue;
+    // The transcript saved beside it goes with it. If that one cannot be deleted now it is
+    // kept linked, and the pass that finds it again is the one that retries.
+    const transcriptGone = !transcript || (await deleteRecording(transcript));
     await systemQuery(
-      "UPDATE calls SET recording_path = NULL, recording_bytes = NULL, recording_mime = NULL, recording_at = NULL WHERE call_id = $1 AND recording_path = $2",
-      [id, path]);
+      `UPDATE calls SET recording_path = NULL, recording_bytes = NULL, recording_mime = NULL, recording_at = NULL,
+         transcript_path = CASE WHEN $3 THEN NULL ELSE transcript_path END
+       WHERE call_id = $1 AND recording_path = $2`,
+      [id, path, transcriptGone]);
     deleted++;
   }
   if (deleted) logger.info({ deleted }, "expired call recordings deleted from Storage");

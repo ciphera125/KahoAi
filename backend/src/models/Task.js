@@ -1,7 +1,7 @@
 // Tasks: what a reminder agent rings people about.
 //
-// They arrive three ways — typed in the Studio, pushed in by the customer's own system,
-// or added by the agent during a call — and a CSV upload is meant to join them later.
+// They arrive three ways, typed in the Studio, pushed in by the customer's own system,
+// or added by the agent during a call, and a CSV upload is meant to join them later.
 // Whichever way, the organization is decided by the server (the session, the API key, or
 // the call), never by what was sent.
 import { inOrg, asSystem } from "../db/pool.js";

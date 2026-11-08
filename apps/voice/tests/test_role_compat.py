@@ -1,4 +1,4 @@
-"""The developer role must never reach the model — Qwen 400s on it."""
+"""The developer role must never reach the model, Qwen 400s on it."""
 
 import main
 

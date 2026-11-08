@@ -1,10 +1,10 @@
-# Kaho AI — working notes
+# Kaho AI, working notes
 
 A voice AI calling agent for the Indian market. No web app yet. It runs on your
 mic and speakers, or takes and places real phone calls through Plivo.
 
 Built clean-room. Every non-obvious decision is logged in `CLEANROOM.md` with
-the source or the measurement behind it — add a row when you make another one.
+the source or the measurement behind it, add a row when you make another one.
 
 ## Session handoff
 
@@ -192,7 +192,7 @@ Every prompt or flow that references a tool must be checked against the tools ac
 
 **Prompts are data, not code.** A persona file says who the agent is and what it
 knows. `VOICE_RULES` in `main.py` says how to speak and is always prepended.
-Keep them apart, and keep `VOICE_RULES` short — it is re-sent on every turn of
+Keep them apart, and keep `VOICE_RULES` short, it is re-sent on every turn of
 every call.
 
 **Enforce in code what you can.** The prompt asks for speakable text; the text
@@ -201,7 +201,7 @@ would hear it, add a filter rather than another sentence of prompt.
 
 **Never state a fact the persona was not given.** This has broken twice. Phrase
 the rule as sourcing ("only say what you were given"), never as absence ("you
-have no prices") — the absence phrasing makes personas refuse facts they do
+have no prices"), the absence phrasing makes personas refuse facts they do
 have.
 
 **Tune against measurements, not vibes.** Latency knobs are env vars precisely

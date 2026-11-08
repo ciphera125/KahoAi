@@ -182,7 +182,7 @@ def test_a_connection_over_the_global_concurrent_cap_is_rejected(client, monkeyp
     real websocket open: TestClient's websocket support does not handle two
     genuinely concurrent connections from one test process cleanly, and the
     limiter itself (which IP takes which slot) is already covered in
-    test_rate_limit.py — this test is only about stream()'s own wiring to it."""
+    test_rate_limit.py, this test is only about stream()'s own wiring to it."""
     monkeypatch.setenv("WS_RATE_LIMIT_PER_MINUTE", "100")
     monkeypatch.setenv("WS_MAX_CONCURRENT_CALLS", "1")
     _stub_run_call(monkeypatch)

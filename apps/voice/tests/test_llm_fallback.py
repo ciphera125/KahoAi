@@ -6,7 +6,7 @@ run, back when the fallback was wired to a real second model). Both models
 would be Groq's, on the same account and key, so this does NOT cover a
 Groq-wide outage: a known, accepted gap. The mechanism is tested here with
 two placeholder model names, independent of which models are actually
-approved for use — see GROQ_MODEL_ID / LLM_FALLBACK_MODEL_ID in .env.example
+approved for use, see GROQ_MODEL_ID / LLM_FALLBACK_MODEL_ID in .env.example
 for the current, pinned configuration (fallback is "off" by default).
 """
 

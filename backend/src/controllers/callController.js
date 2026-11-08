@@ -54,7 +54,8 @@ export async function recording(req, res) {
   const rec = await Call.recordingOf(req.user.org_id, req.params.callId);
   if (!rec) throw new NotFoundError("recording");
   const ext = rec.path.endsWith(".wav") ? "wav" : "opus";
-  const { url, download_url: downloadUrl } = await signRecording(rec.path, `${req.params.callId}.${ext}`);
+  const meta = await Call.forFiles(req.user.org_id, req.params.callId);
+  const { url, download_url: downloadUrl } = await signRecording(rec.path, `${fileStem(meta)}.${ext}`);
   res.json({ url, download_url: downloadUrl, expires_in: SIGNED_URL_SECS, mime: rec.mime, bytes: rec.bytes });
 }
 

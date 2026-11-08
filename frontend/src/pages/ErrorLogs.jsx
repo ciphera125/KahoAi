@@ -14,7 +14,7 @@ export default function ErrorLogs() {
   return (
     <section>
       <header className="page">
-        <div><h1>Error Logs</h1><div className="sub">System errors reported by the voice service during calls.</div></div>
+        <div><h1>Error Logs</h1><div className="sub">Problems the voice service ran into during calls, such as a voice or the AI not answering. Mostly useful for troubleshooting.</div></div>
         <div className="head-actions"><button className="ghost" onClick={load}>Refresh</button></div>
       </header>
       <div className="card list">
@@ -27,8 +27,8 @@ export default function ErrorLogs() {
             <span><span className={`badge ${BADGE[e.level] || ""}`}>{e.level}</span></span>
             <span className="code ellip">{e.source}</span>
             <span className="ellip" title={e.message}>{e.message}</span>
-            <span className="muted ellip">{e.call_id ? e.call_id.slice(0, 8) : "—"}</span>
-            <span className="muted">{e.at ? whenShort(e.at) : "—"}</span>
+            <span className="muted ellip">{e.call_id ? e.call_id.slice(0, 8) : "-"}</span>
+            <span className="muted">{e.at ? whenShort(e.at) : "-"}</span>
           </div>
         ))}
       </div>

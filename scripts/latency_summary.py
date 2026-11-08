@@ -61,7 +61,7 @@ def classify(record: dict) -> str | None:
 def load(path: Path) -> list[dict]:
     if not path.exists():
         sys.exit(
-            f"No timing log at {path}.\nRun the agent first — it writes one as it talks."
+            f"No timing log at {path}.\nRun the agent first, it writes one as it talks."
         )
     records = []
     for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):

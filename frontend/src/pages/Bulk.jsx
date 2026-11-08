@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { get, post } from "../api.js";
 import { parseCallList } from "../csv.js";
-import { Icon, Modal, OutcomePill, plural, Spinner, useConfirm, useToast, whenShort } from "../ui.jsx";
+import { Icon, Modal, OutcomePill, plural, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
 
 const STATUS_LABEL = { running: "Running", paused: "Paused", done: "Finished", cancelled: "Cancelled" };
 const ITEM_LABEL = { queued: "Waiting", dialling: "Dialling", calling: "On a call", done: "Done", skipped: "Skipped", failed: "Failed" };
@@ -26,6 +26,7 @@ function RunList() {
   const [creating, setCreating] = useState(false);
   const load = useCallback(() => get("/api/bulk-calls").then(setRuns).catch((e) => toast(e.message, true)), [toast]);
   useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  const [shownRuns, runPager] = usePaged(runs ?? []);
   return (
     <section>
       <header className="page">
@@ -41,7 +42,7 @@ function RunList() {
             <button className="primary" onClick={() => setCreating(true)}><Icon name="upload" />Upload a list</button>
           </div>
         )}
-        {runs?.map((r) => (
+        {shownRuns.map((r) => (
           <button type="button" key={r.id} className="row bulk-cols row-link" onClick={() => navigate(`/bulk/${r.id}`)}>
             <b className="ellip">{r.name}</b>
             <span className="ellip">{r.agent_name || <span className="muted">Agent deleted</span>}</span>
@@ -51,6 +52,7 @@ function RunList() {
           </button>
         ))}
       </div>
+      {runs && runPager}
       {creating && <NewRun onClose={() => setCreating(false)} onStarted={(run) => navigate(`/bulk/${run.id}`)} />}
     </section>
   );
@@ -121,7 +123,7 @@ function NewRun({ onClose, onStarted }) {
           <div className="row head" style={{ gridTemplateColumns: "40px minmax(0,1fr) minmax(0,1fr)" }}><span>#</span><span>Name</span><span>Number</span></div>
           {list.rows.slice(0, 5).map((r, i) => (
             <div key={i} className="row" style={{ gridTemplateColumns: "40px minmax(0,1fr) minmax(0,1fr)", minHeight: 36 }}>
-              <span className="muted num">{i + 1}</span><span className="ellip">{r.name || <span className="muted">—</span>}</span><span className="num ellip">{r.number || <span className="muted">missing</span>}</span>
+              <span className="muted num">{i + 1}</span><span className="ellip">{r.name || <span className="muted">-</span>}</span><span className="num ellip">{r.number || <span className="muted">missing</span>}</span>
             </div>
           ))}
           {list.rows.length > 5 && <div className="muted" style={{ padding: "8px var(--s4)" }}>and {plural(list.rows.length - 5, "more row")}</div>}
@@ -132,13 +134,13 @@ function NewRun({ onClose, onStarted }) {
         <div className="field"><label className="f">Name of this bulk call</label><input value={name} onChange={(e) => setName(e.target.value)} maxLength={80} placeholder="October EMI reminders" /></div>
         <div className="field"><label className="f">Agent</label>
           <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
-            {agents.length === 0 && <option value="">No agents yet — make one on Agents</option>}
+            {agents.length === 0 && <option value="">No agents yet, make one on Agents</option>}
             {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </div>
         <div className="field"><label className="f">Call from</label>
           <select value={fromId} onChange={(e) => setFromId(e.target.value)}>
-            {numbers.length === 0 && <option value="">No numbers yet — add one on Numbers</option>}
+            {numbers.length === 0 && <option value="">No numbers yet, add one on Numbers</option>}
             {numbers.map((n) => <option key={n.id} value={n.id} disabled={n.status !== "active"}>{n.number} · {n.provider_label}{n.status !== "active" ? " (not ready)" : ""}</option>)}
           </select>
         </div>
@@ -217,7 +219,7 @@ function RunDetail({ id }) {
             <b className="ellip">{i.name}</b>
             <span className="num ellip">{i.number}</span>
             <span><span className={`pill ${i.status === "calling" ? "live" : i.status === "failed" ? "failed" : i.status === "skipped" ? "muted" : i.status === "done" ? "answered" : "ringing"}`}>{ITEM_LABEL[i.status]}</span></span>
-            <span className="ellip">{i.outcome ? <OutcomePill status={i.outcome} /> : <span className="muted" title={i.reason || ""}>{i.reason || (i.placed_at ? `since ${whenShort(i.placed_at)}` : "—")}</span>}</span>
+            <span className="ellip">{i.outcome ? <OutcomePill status={i.outcome} /> : <span className="muted" title={i.reason || ""}>{i.reason || (i.placed_at ? `since ${whenShort(i.placed_at)}` : "-")}</span>}</span>
           </div>
         ))}
         {items.length > 500 && <div className="muted" style={{ padding: "var(--s3) var(--s4)" }}>Showing the first 500. Use the filter to narrow it down.</div>}

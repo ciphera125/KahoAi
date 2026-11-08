@@ -2,7 +2,7 @@
 
 A terminal-only pipeline: your mic/speakers -> Deepgram (STT) -> Groq (LLM)
 -> Deepgram, ElevenLabs, Sarvam, Smallest or Cartesia (TTS), with Silero VAD
-driving turn-taking. No web server, no browser — run it with `python main.py`
+driving turn-taking. No web server, no browser, run it with `python main.py`
 (or `./scripts/run_agent.sh`) and talk.
 
 TTS_PROVIDER picks the voice: Deepgram Aura is the default because it runs on
@@ -140,10 +140,30 @@ guess at a name or a number.
 """
 
 
-def voice_rules(mode: str = "auto") -> str:
+_ABOUT_RECORDING = {
+    # The call is no longer announced as recorded when it starts. If the caller asks, the
+    # agent says so plainly: it is told whether this call really is recorded, so what it
+    # says is true either way.
+    True: """\
+This call is being recorded. Do not bring it up unless the caller asks. If they ask
+whether it is recorded, say yes plainly, and that it is recorded for quality and
+follow-up.
+""",
+    False: """\
+This call is not recorded. Do not bring it up unless the caller asks, and then say it
+is not recorded.
+""",
+}
+
+
+def voice_rules(mode: str = "auto", recorded: bool | None = None) -> str:
     """How to speak, for a call in this language mode (language.py). Everything but the
-    language paragraphs is the same for every mode, so a mode cannot lose a rule."""
-    return f"{_VOICE_BEFORE}\n{language.language_rules(mode)}\n\n{_VOICE_AFTER}"
+    language paragraphs is the same for every mode, so a mode cannot lose a rule.
+    `recorded` says whether this call is recorded, so the agent can answer a caller who
+    asks; None says nothing about it."""
+    about = _ABOUT_RECORDING.get(recorded, "")
+    return (f"{_VOICE_BEFORE}\n{language.language_rules(mode)}\n\n"
+            f"{about + chr(10) if about else ''}{_VOICE_AFTER}")
 
 
 # Follow-the-caller is the default, and what every call had before language modes.
@@ -163,8 +183,8 @@ def ensure_ca_bundle() -> None:
 
     The python.org macOS builds leave .../etc/openssl/cert.pem unpopulated
     unless you run their "Install Certificates.command". HTTP still works,
-    because httpx carries its own certifi copy, but every websocket — our STT
-    and TTS both — dies on CERTIFICATE_VERIFY_FAILED. Setting SSL_CERT_FILE
+    because httpx carries its own certifi copy, but every websocket, our STT
+    and TTS both, dies on CERTIFICATE_VERIFY_FAILED. Setting SSL_CERT_FILE
     before the first handshake fixes it without touching the machine.
     """
     if os.environ.get("SSL_CERT_FILE"):
@@ -217,7 +237,7 @@ def build_vad() -> SileroVADAnalyzer:
     caller has to go quiet before we treat their turn as finished, so it is
     added to *every* reply's latency. Drop it and the agent feels sharp but
     starts talking over anyone who pauses to think, which on a real call means
-    interrupting someone mid-sentence while they recall a date or an amount —
+    interrupting someone mid-sentence while they recall a date or an amount,
     far more damaging than a short wait. Raise it and every answer drags.
 
     250ms is a starting point, not an answer. Tune it against recordings of the
@@ -312,7 +332,7 @@ class TurnTimingLogger(BaseObserver):
 
     Pipecat already measures each stage; this only writes what it reports to
     disk so runs can be compared after the fact instead of by squinting at a
-    scrolling terminal. TTFA is the number that matters — time to first audio,
+    scrolling terminal. TTFA is the number that matters, time to first audio,
     i.e. what the caller actually waits through.
 
     Pipecat's own metrics start when a *service* is handed work, so they cannot
@@ -425,10 +445,10 @@ class TurnTimingLogger(BaseObserver):
 
 
 def load_system_prompt(persona_path: Path | None = None, persona_text: str | None = None,
-                       language: str = "auto") -> str:
+                       language: str = "auto", recorded: bool | None = None) -> str:
     """Build the system instruction: the voice rules, then the chosen persona.
 
-    AGENT_SYSTEM_PROMPT_PATH swaps the persona without touching code — that file
+    AGENT_SYSTEM_PROMPT_PATH swaps the persona without touching code, that file
     alone decides what the agent is, knows and does. See apps/voice/prompts/.
     A per-call `persona_path` (an outbound call's agent) wins over it. This exits
     the process on an unreadable file, so a caller taking names from the network
@@ -439,7 +459,7 @@ def load_system_prompt(persona_path: Path | None = None, persona_text: str | Non
     """
     if persona_text and persona_text.strip():
         logger.info("Persona: saved prompt for this number")
-        return f"{voice_rules(language)}\n\n{persona_text.strip()}"
+        return f"{voice_rules(language, recorded)}\n\n{persona_text.strip()}"
     path = persona_path or Path(env("AGENT_SYSTEM_PROMPT_PATH") or DEFAULT_PROMPT_PATH)
     if not path.is_absolute():
         path = (HERE / path).resolve()
@@ -452,7 +472,7 @@ def load_system_prompt(persona_path: Path | None = None, persona_text: str | Non
         logger.error(f"The system prompt at {path} is empty.")
         sys.exit(1)
     logger.info(f"Persona: {path.name}")
-    return f"{voice_rules(language)}\n\n{persona}"
+    return f"{voice_rules(language, recorded)}\n\n{persona}"
 
 
 def require_env(*names: str) -> None:
@@ -758,12 +778,12 @@ class PortableGroqLLMService(GroqLLMService):
 
 def build_llm(
     persona_path: Path | None = None, on_fallback=None, persona_text: str | None = None,
-    on_tool_rejected=None, language: str = "auto",
+    on_tool_rejected=None, language: str = "auto", recorded: bool | None = None,
 ) -> GroqLLMService:
     provider = (env("LLM_PROVIDER") or "groq").lower()
     if provider not in SUPPORTED_LLM_PROVIDERS:
         logger.error(
-            f"LLM_PROVIDER={provider!r} isn't wired up yet — only "
+            f"LLM_PROVIDER={provider!r} isn't wired up yet, only "
             f"{', '.join(SUPPORTED_LLM_PROVIDERS)} is supported right now."
         )
         sys.exit(1)
@@ -795,7 +815,7 @@ def build_llm(
         on_tool_rejected=on_tool_rejected,
         settings=GroqLLMService.Settings(
             model=env("GROQ_MODEL_ID"),
-            system_instruction=load_system_prompt(persona_path, persona_text, language),
+            system_instruction=load_system_prompt(persona_path, persona_text, language, recorded),
             max_tokens=int(max_tokens) if max_tokens else None,
             temperature=float(temperature) if temperature else None,
             reasoning_effort=reasoning_effort,
@@ -863,6 +883,28 @@ def reply_max_sentences() -> int:
                        f"{DEFAULT_REPLY_MAX_SENTENCES}")
         return DEFAULT_REPLY_MAX_SENTENCES
     return value
+
+
+class ReplyTextRecorder(FrameProcessor):
+    """Remembers the words the model has said so far in the response it is giving now.
+
+    end_call needs it: a model that says goodbye and calls end_call in the same response has
+    not had that goodbye written to the transcript yet (it is recorded once spoken), so
+    without this the agent would say a second goodbye on top of its own. It sits straight
+    after the model, so the text of a response has always passed it before a tool call in
+    that response runs. Everything is passed on untouched."""
+
+    def __init__(self):
+        super().__init__()
+        self.text = ""
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, LLMFullResponseStartFrame):
+            self.text = ""
+        elif isinstance(frame, LLMTextFrame):
+            self.text += frame.text
+        await self.push_frame(frame, direction)
 
 
 class CapReplyLength(FrameProcessor):
@@ -935,9 +977,19 @@ def filler_line(caller_turns: list[str]) -> str:
 def recording_notice_text() -> str | None:
     """The notice a call opens with, or None if calls are not recorded or the
     notice is off. build_worker decides the same way."""
-    recorded = (env("RECORDING_ENABLED") or "true").strip().lower() == "true"
-    notice_on = (env("RECORDING_NOTICE_ENABLED") or "true").strip().lower() == "true"
-    return (env("RECORDING_NOTICE") or DEFAULT_NOTICE) if recorded and notice_on else None
+    if not (recording_enabled() and notice_enabled()):
+        return None
+    return env("RECORDING_NOTICE") or DEFAULT_NOTICE
+
+
+def recording_enabled() -> bool:
+    return (env("RECORDING_ENABLED") or "true").strip().lower() == "true"
+
+
+def notice_enabled() -> bool:
+    """Off unless RECORDING_NOTICE_ENABLED=true: the owner's decision (2026-11-08) is that a
+    call does not open by announcing it is recorded. The agent says so if asked."""
+    return (env("RECORDING_NOTICE_ENABLED") or "false").strip().lower() == "true"
 
 
 DEFAULT_GREETING_LEAD_SECS = 0.8  # Groq TTFAT ~0.46s + voice TTFA ~0.27s on ddedb4fd
@@ -974,7 +1026,7 @@ class SpokenPunctuationFilter(BaseTextFilter):
     """Normalise punctuation that reads badly when spoken.
 
     The prompt asks the model to avoid these, and mostly it does, but "mostly"
-    is not a guarantee you want between the LLM and the caller's ear — it still
+    is not a guarantee you want between the LLM and the caller's ear, it still
     slipped an em-dash through in testing. Anything we can enforce in code, we
     enforce in code, and leave the prompt to handle what only judgement can.
     """
@@ -983,9 +1035,9 @@ class SpokenPunctuationFilter(BaseTextFilter):
     REPLACEMENTS = {"…": "...", "“": '"', "”": '"', "‘": "'", "’": "'"}
 
     # A dash becomes the comma a speaker actually pauses on. It swallows the
-    # space around it too: an unspaced "need—could" would otherwise turn into
+    # space around it too: an unspaced "need, could" would otherwise turn into
     # "need,could" and be read as one slurred word.
-    DASHES = re.compile(r"\s*[—–]\s*")
+    DASHES = re.compile(r"\s*[\u2014\u2013]\s*")  # em and en dash, written as escapes
 
     async def filter(self, text: str) -> str:
         text = self.DASHES.sub(", ", text)
@@ -1105,7 +1157,7 @@ def text_aggregation_mode() -> TextAggregationMode:
     rather than waiting for the whole reply, so the caller hears the first
     sentence while the model is still writing the second. "token" forwards
     tokens as they arrive, shaving off the wait for the first sentence to end
-    at the cost of the engine having less context for prosody — it has to
+    at the cost of the engine having less context for prosody, it has to
     commit to an intonation before it knows where the sentence is going, which
     is what makes fragment-level synthesis sound choppy.
 
@@ -1145,7 +1197,7 @@ def build_tts(
     provider = (provider or env("TTS_PROVIDER") or "deepgram").lower()
     if provider not in SUPPORTED_TTS_PROVIDERS:
         logger.error(
-            f"TTS provider {provider!r} isn't wired up — expected one of "
+            f"TTS provider {provider!r} isn't wired up, expected one of "
             f"{', '.join(SUPPORTED_TTS_PROVIDERS)}."
         )
         sys.exit(1)
@@ -1311,7 +1363,7 @@ def build_worker(
 
     # keyterm biases nova-3 toward words it would otherwise mangle: brand names,
     # drug names, place names, anything domain-specific. Worth filling in per
-    # deployment — it is the main lever on mis-transcription. (nova-3 replaced
+    # deployment, it is the main lever on mis-transcription. (nova-3 replaced
     # the older `keywords` parameter with this one and rejects `keywords`.)
     keyterms = [t.strip() for t in (env("DEEPGRAM_KEYTERMS") or "").split(",") if t.strip()]
     stt = DeepgramSTTService(
@@ -1339,6 +1391,7 @@ def build_worker(
         ),
         persona_text=persona_text,
         language=language_mode,
+        recorded=recording_enabled(),
     )
     tts, tts_services, switcher = build_tts_stack()
 
@@ -1366,7 +1419,7 @@ def build_worker(
     # is said. RECORDING_NOTICE_ENABLED=false leaves it out; an unrecorded call never
     # hears it, since it would not be true.
     notice = None
-    notice_on = (env("RECORDING_NOTICE_ENABLED") or "true").strip().lower() == "true"
+    notice_on = notice_enabled()
     if recorder is not None and notice_on:
         notice = env("RECORDING_NOTICE") or DEFAULT_NOTICE
     # The server sends the notice itself the moment the call opens (notice_audio.py);
@@ -1426,6 +1479,10 @@ def build_worker(
     else:
         follow_proc = None
 
+    reply_recorder = ReplyTextRecorder()
+    call.reply_text = lambda: reply_recorder.text
+    call.language_mode = language_mode
+
     pipeline = Pipeline(
         [
             transport.input(),
@@ -1434,6 +1491,7 @@ def build_worker(
             *([follow_proc] if follow_proc else []),
             user_aggregator,
             llm,
+            reply_recorder,
             *([CapReplyLength(reply_max_sentences())] if reply_max_sentences() else []),
             tts,
             transport.output(),
@@ -1465,6 +1523,8 @@ def build_worker(
 
     async def say(text: str) -> None:
         await llm.push_frame(TTSSpeakFrame(text))
+
+    call.say = say  # the goodbye end_call speaks when the model forgot to
 
     async def switch_to(service) -> None:
         await llm.push_frame(ManuallySwitchServiceFrame(service=service))

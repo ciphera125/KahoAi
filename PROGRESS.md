@@ -66,7 +66,7 @@ expected (that database has no `anon` role); everything else must be green.
   one row; a correction on a later turn is a new row, so the change is visible.
 - **A past date is refused.** It is nearly always a mishearing, and silently storing one
   is worse than asking again.
-- **`variablesOf` lives in `promptCheck.js`, not `Agent.js`** — putting it in Agent.js
+- **`variablesOf` lives in `promptCheck.js`, not `Agent.js`**, putting it in Agent.js
   made Prompt.js import Agent.js, which imports Prompt.js.
 
 ### Step 3
@@ -81,7 +81,7 @@ expected (that database has no `anon` role); everything else must be green.
   call tools reuse the same column with `call_id:tool:turn`.
 - **The agent's task tools only ever see the contact on the call.** The model names a
   task id; a task that is not that contact's is simply not found. `get_tasks` returns id,
-  title, status and due date only — nothing it could read out by mistake.
+  title, status and due date only, nothing it could read out by mistake.
 - **A week runs Monday to Sunday** and every range is worked out in India's day, not UTC.
 - **A due date added on a call is set to 09:00 India time** on the day the caller named:
   a reminder is about the day, and nobody says a time out loud.

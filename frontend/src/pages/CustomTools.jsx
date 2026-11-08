@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
-import { Icon, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { dayWord } from "../time.js";
+import { Icon, Modal, Spinner, usePaged, useConfirm, useToast } from "../ui.jsx";
 
 const TYPES = [["text", "Words"], ["number", "A number"], ["yes_no", "Yes or no"]];
-const METHODS = ["POST", "GET", "PUT", "PATCH"];
+const METHODS = [["POST", "Send information (POST)"], ["GET", "Just ask (GET)"], ["PUT", "Replace (PUT)"], ["PATCH", "Update (PATCH)"]];
 
 const BLANK = {
   label: "", description: "", method: "POST", url: "", headers: {}, body_template: "{}",
   inputs: [], say_while_waiting: "", timeout_ms: 6000, extract: {},
 };
 
-/** Tools a customer defines themselves, each one a call to their own API. */
+/** Your own tools: a way for an agent to ask YOUR system something during a call. */
 export default function CustomTools() {
   const me = useMe();
   const toast = useToast();
@@ -21,6 +22,7 @@ export default function CustomTools() {
 
   const load = useCallback(() => get("/api/custom-tools").then(setTools).catch((e) => toast(e.message, true)), [toast]);
   useEffect(() => { load(); }, [load]);
+  const [shown, pager] = usePaged(tools ?? []);
 
   const remove = async (tool) => {
     if (!(await confirm({ title: `Delete ${tool.label}?`,
@@ -32,34 +34,48 @@ export default function CustomTools() {
     <section>
       <header className="page">
         <div><h1>Your own tools</h1>
-          <div className="sub">Let an agent call your system during a call: check an order, look up a balance.</div></div>
+          <div className="sub">Let an agent ask your own system something during a call, like “where is my order?”.</div></div>
         {isAdmin(me) && <div className="head-actions">
           <button className="primary" onClick={() => setEditing(BLANK)}><Icon name="plus" />New tool</button></div>}
       </header>
 
-      {!tools && <Spinner />}
-      {tools?.length === 0 && !editing && <div className="card"><p className="hint">
-        No tools yet. A tool is one request to an address you choose, with whatever the agent collects from the caller.
-      </p></div>}
+      <div className="card explain">
+        <b>Tools and your own tools: what is the difference?</b>
+        <ul className="plain">
+          <li><b>Tools</b> are what Kaho AI gives every agent: ending the call, saving details, reading tasks, and so on.
+            You switch them on for an agent under <i>Agents, then Tools</i>.</li>
+          <li><b>Your own tools</b> are ones you make here. Each one sends a question to your own system and tells the agent the answer.
+            Once it is made, switch it on for an agent in the same place.</li>
+          <li>To have the agent write down something the caller says (a payment date, an order number),
+            you do not need a tool: use <i>Questions to save</i> on the agent.</li>
+        </ul>
+      </div>
 
-      {tools?.map((t) => (
-        <div key={t.id} className="card" style={{ marginBottom: "var(--s3)" }}>
-          <div className="publish-state">
-            <div>
-              <b>{t.label}</b> <code className="hint">{t.name}</code>
-              <div className="hint">{t.description || "No note about when to use it."}</div>
-              <div className="hint">{t.method} · {t.inputs.length} thing{t.inputs.length === 1 ? "" : "s"} to collect
-                {t.last_test_at && <> · last test {t.last_test_ok ? "worked" : "failed"}: {t.last_test_note}</>}
-                {!t.last_test_at && <> · never tested</>}
-              </div>
-            </div>
-            {isAdmin(me) && <div style={{ display: "flex", gap: 8 }}>
-              <button className="ghost" onClick={() => setEditing(t)}>Edit</button>
-              <button className="ghost" onClick={() => remove(t)}>Delete</button>
-            </div>}
+      {!tools && <Spinner />}
+      {tools?.length === 0 && <div className="card"><p className="hint">
+        No tools yet. Press “New tool” and describe what the agent should be able to ask.</p></div>}
+
+      {tools?.length > 0 && (
+        <div className="card list">
+          <div className="row head" style={{ gridTemplateColumns: "minmax(0,1.2fr) minmax(0,1.6fr) 150px 150px" }}>
+            <span>Tool</span><span>When the agent uses it</span><span>Last test</span><span />
           </div>
+          {shown.map((t) => (
+            <div key={t.id} className="row" style={{ gridTemplateColumns: "minmax(0,1.2fr) minmax(0,1.6fr) 150px 150px" }}>
+              <div style={{ minWidth: 0 }}><b className="ellip">{t.label}</b>
+                <div className="muted ellip">{t.inputs.length ? `Collects: ${t.inputs.map((i) => i.label).join(", ")}` : "Collects nothing"}</div></div>
+              <span className="ellip muted" title={t.description}>{t.description || "No note yet"}</span>
+              <span>{t.last_test_at
+                ? <span className={`pill ${t.last_test_ok ? "live" : "muted"}`} title={t.last_test_note}>{t.last_test_ok ? "Worked" : "Failed"} · {dayWord(t.last_test_at)}</span>
+                : <span className="muted">Not tested</span>}</span>
+              <span className="row-buttons">{isAdmin(me) && <>
+                <button className="ghost" onClick={() => setEditing(t)}>Edit</button>
+                <button className="ghost" onClick={() => remove(t)} aria-label={`Delete ${t.label}`}><Icon name="trash" /></button></>}</span>
+            </div>
+          ))}
         </div>
-      ))}
+      )}
+      {tools?.length > 0 && pager}
 
       {editing && <ToolForm tool={editing} onClose={() => setEditing(null)}
         onSaved={() => { setEditing(null); load(); }} />}
@@ -107,7 +123,6 @@ function ToolForm({ tool, onClose, onSaved }) {
   };
 
   const runTest = async () => {
-    if (isNew) { toast("Save it first, then test it.", true); return; }
     setBusy(true);
     try { setResult(await post(`/api/custom-tools/${tool.id}/test`, {})); }
     catch (e) { toast(e.message, true); } finally { setBusy(false); }
@@ -116,90 +131,91 @@ function ToolForm({ tool, onClose, onSaved }) {
   const setInput = (i, patchIn) => set({ inputs: form.inputs.map((x, j) => (j === i ? { ...x, ...patchIn } : x)) });
 
   return (
-    <div className="card" style={{ maxWidth: 860 }}>
-      <div className="card-head"><span className="card-title">{isNew ? "New tool" : form.label}</span></div>
-
+    <Modal title={isNew ? "New tool" : form.label} onClose={onClose} wide>
       <div className="field"><label className="f">What is it called?</label>
         <input value={form.label} maxLength={60} placeholder="Check order status" onChange={(e) => set({ label: e.target.value })} />
-        <span className="hint">The agent sees this. {!isNew && <>Its short name stays <code>{tool.name}</code>.</>}</span></div>
+        <span className="hint">A short name for you to recognise it by.</span></div>
 
       <div className="field"><label className="f">When should the agent use it?</label>
         <textarea rows={2} value={form.description} maxLength={400}
           placeholder="Use when the caller asks where their order is."
           onChange={(e) => set({ description: e.target.value })} />
-        <span className="hint">This is what the agent reads to decide. Be plain and specific.</span></div>
+        <span className="hint">The agent reads this to decide when to use the tool, so be plain and specific.</span></div>
 
-      <div className="grid-2">
-        <div className="field"><label className="f">Method</label>
-          <select value={form.method} onChange={(e) => set({ method: e.target.value })}>
-            {METHODS.map((m) => <option key={m}>{m}</option>)}
-          </select></div>
-        <div className="field"><label className="f">Give up after (seconds)</label>
-          <input type="number" min={1} max={15} value={Math.round(form.timeout_ms / 1000)}
-            onChange={(e) => set({ timeout_ms: Number(e.target.value) * 1000 })} /></div>
-      </div>
-
-      <div className="field"><label className="f">Address</label>
+      <div className="field"><label className="f">Where should the question go?</label>
         <input value={form.url} placeholder="https://api.yourcompany.com/orders" onChange={(e) => set({ url: e.target.value })} />
-        <span className="hint">Must start with https. We will not call an address on a private network.</span></div>
+        <span className="hint">The web address of your system. It has to start with https.</span></div>
 
-      <div className="field"><label className="f">Headers</label>
-        {headerRows.map((row, i) => (
-          <div key={i} className="q-row" style={{ gridTemplateColumns: "1fr 1.4fr auto" }}>
-            <input placeholder="Authorization" value={row.name}
-              onChange={(e) => setHeaderRows((rs) => rs.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))} />
-            <input type="password" placeholder={row.kept ? "Saved — type to replace" : "Bearer …"} value={row.value}
-              onChange={(e) => setHeaderRows((rs) => rs.map((r, j) => (j === i ? { ...r, value: e.target.value, kept: false } : r)))} />
-            <button className="ghost" onClick={() => setHeaderRows((rs) => rs.filter((_, j) => j !== i))}><Icon name="trash" /></button>
-          </div>
-        ))}
-        <button className="ghost" onClick={() => setHeaderRows((rs) => [...rs, { name: "", value: "", kept: false }])}>
-          <Icon name="plus" />Add a header</button>
-        <span className="hint">Keys are encrypted and never shown again, never logged, and never given to the agent.</span></div>
-
-      <div className="field"><label className="f">What should the agent collect from the caller?</label>
+      <div className="field"><label className="f">What should the agent ask the caller for?</label>
+        {form.inputs.length === 0 && <span className="hint">Nothing yet. For an order lookup you would add “Order number”.</span>}
         {form.inputs.map((input, i) => (
-          <div key={i} className="q-row">
-            <input placeholder="Order number" value={input.label || ""} onChange={(e) => setInput(i, { label: e.target.value })} />
-            <select value={input.type || "text"} onChange={(e) => setInput(i, { type: e.target.value })}>
+          <div key={i} className="mini-row">
+            <input placeholder="Order number" value={input.label || ""} onChange={(e) => setInput(i, { label: e.target.value })} aria-label="What to ask for" />
+            <select value={input.type || "text"} onChange={(e) => setInput(i, { type: e.target.value })} aria-label="Kind of answer">
               {TYPES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select>
             <label className="switch-inline"><input type="checkbox" checked={!!input.required}
               onChange={(e) => setInput(i, { required: e.target.checked })} /> Must have</label>
-            <button className="ghost" onClick={() => set({ inputs: form.inputs.filter((_, j) => j !== i) })}><Icon name="trash" /></button>
-            <div className="field" style={{ gridColumn: "1 / -1" }}>
-              <input placeholder="An example, like A1" value={input.example || ""} onChange={(e) => setInput(i, { example: e.target.value })} />
+            <button className="ghost" onClick={() => set({ inputs: form.inputs.filter((_, j) => j !== i) })} aria-label="Remove"><Icon name="trash" /></button>
+          </div>
+        ))}
+        <button className="ghost" onClick={() => set({ inputs: [...form.inputs, { label: "", type: "text", required: true, example: "" }] })}>
+          <Icon name="plus" />Add something to ask for</button>
+        <span className="hint">Examples: order number, date of birth, the amount. The agent asks the caller for these and passes them on.</span></div>
+
+      <details className="more">
+        <summary>More options (how to send it, passwords, what to keep)</summary>
+
+        <div className="grid-2">
+          <div className="field"><label className="f">How to send it</label>
+            <select value={form.method} onChange={(e) => set({ method: e.target.value })}>
+              {METHODS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select></div>
+          <div className="field"><label className="f">Give up after (seconds)</label>
+            <input type="number" min={1} max={15} value={Math.round(form.timeout_ms / 1000)}
+              onChange={(e) => set({ timeout_ms: Number(e.target.value) * 1000 })} /></div>
+        </div>
+
+        <div className="field"><label className="f">Passwords or keys your system needs</label>
+          {headerRows.map((row, i) => (
+            <div key={i} className="mini-row" style={{ gridTemplateColumns: "1fr 1.4fr auto" }}>
+              <input placeholder="Authorization" value={row.name} aria-label="Name"
+                onChange={(e) => setHeaderRows((rs) => rs.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))} />
+              <input type="password" placeholder={row.kept ? "Saved. Type to replace." : "Bearer your-key"} value={row.value} aria-label="Value"
+                onChange={(e) => setHeaderRows((rs) => rs.map((r, j) => (j === i ? { ...r, value: e.target.value, kept: false } : r)))} />
+              <button className="ghost" onClick={() => setHeaderRows((rs) => rs.filter((_, j) => j !== i))} aria-label="Remove"><Icon name="trash" /></button>
             </div>
-          </div>
-        ))}
-        <button className="ghost" onClick={() => set({ inputs: [...form.inputs, { label: "", type: "text", required: false, example: "" }] })}>
-          <Icon name="plus" />Add something to collect</button></div>
+          ))}
+          <button className="ghost" onClick={() => setHeaderRows((rs) => [...rs, { name: "", value: "", kept: false }])}>
+            <Icon name="plus" />Add one</button>
+          <span className="hint">Only needed if your system asks for a key. It is stored encrypted, never shown again, and never given to the agent.</span></div>
 
-      {form.method !== "GET" && (
-        <div className="field"><label className="f">What to send</label>
-          <textarea rows={3} value={form.body_template} spellCheck={false}
-            onChange={(e) => set({ body_template: e.target.value })} />
-          <span className="hint">Write <code>{"{{input.order_number}}"}</code> where the collected value should go, inside your own quotes.</span></div>
-      )}
+        {form.method !== "GET" && (
+          <div className="field"><label className="f">What to send</label>
+            <textarea rows={3} value={form.body_template} spellCheck={false}
+              onChange={(e) => set({ body_template: e.target.value })} />
+            <span className="hint">Write <code>{"{{input.order_number}}"}</code> where the caller's answer should go, inside your own quotes.</span></div>
+        )}
 
-      <div className="field"><label className="f">Keep from the answer</label>
-        {extractRows.map((row, i) => (
-          <div key={i} className="q-row" style={{ gridTemplateColumns: "1fr 1.4fr auto" }}>
-            <input placeholder="order_status" value={row.name}
-              onChange={(e) => setExtractRows((rs) => rs.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))} />
-            <input placeholder="$.status" value={row.path}
-              onChange={(e) => setExtractRows((rs) => rs.map((r, j) => (j === i ? { ...r, path: e.target.value } : r)))} />
-            <button className="ghost" onClick={() => setExtractRows((rs) => rs.filter((_, j) => j !== i))}><Icon name="trash" /></button>
-          </div>
-        ))}
-        <button className="ghost" onClick={() => setExtractRows((rs) => [...rs, { name: "", path: "" }])}>
-          <Icon name="plus" />Keep a value</button>
-        <span className="hint">The agent is told these, and nothing else from the answer.</span></div>
+        <div className="field"><label className="f">Which part of the answer should the agent know?</label>
+          {extractRows.map((row, i) => (
+            <div key={i} className="mini-row" style={{ gridTemplateColumns: "1fr 1.4fr auto" }}>
+              <input placeholder="order_status" value={row.name} aria-label="Name for it"
+                onChange={(e) => setExtractRows((rs) => rs.map((r, j) => (j === i ? { ...r, name: e.target.value } : r)))} />
+              <input placeholder="$.status" value={row.path} aria-label="Where it is in the answer"
+                onChange={(e) => setExtractRows((rs) => rs.map((r, j) => (j === i ? { ...r, path: e.target.value } : r)))} />
+              <button className="ghost" onClick={() => setExtractRows((rs) => rs.filter((_, j) => j !== i))} aria-label="Remove"><Icon name="trash" /></button>
+            </div>
+          ))}
+          <button className="ghost" onClick={() => setExtractRows((rs) => [...rs, { name: "", path: "" }])}>
+            <Icon name="plus" />Add one</button>
+          <span className="hint">Your system answers with a lot of detail. Pick the bits the agent should say, like <code>$.status</code> for the order status. The agent sees only these.</span></div>
 
-      <div className="field"><label className="f">Say this while waiting</label>
-        <input value={form.say_while_waiting} maxLength={120} placeholder="One moment, let me check."
-          onChange={(e) => set({ say_while_waiting: e.target.value })} />
-        <span className="hint">So the caller does not sit in silence while your system answers.</span></div>
+        <div className="field"><label className="f">What should the agent say while it waits?</label>
+          <input value={form.say_while_waiting} maxLength={120} placeholder="One moment, let me check."
+            onChange={(e) => set({ say_while_waiting: e.target.value })} />
+          <span className="hint">So the caller does not sit in silence while your system answers.</span></div>
+      </details>
 
       {result && (
         <div className="answers">
@@ -212,11 +228,11 @@ function ToolForm({ tool, onClose, onSaved }) {
         </div>
       )}
 
-      <div className="actions">
-        <button className="primary" onClick={save} disabled={busy}>{busy ? "Working…" : "Save tool"}</button>
-        <button className="ghost" onClick={runTest} disabled={busy || isNew}>Test this tool</button>
+      <div className="actions" style={{ justifyContent: "flex-end" }}>
         <button className="ghost" onClick={onClose}>Close</button>
+        <button className="ghost" onClick={runTest} disabled={busy || isNew} title={isNew ? "Save it first, then test it" : ""}>Test this tool</button>
+        <button className="primary" onClick={save} disabled={busy || !form.label.trim() || !form.url.trim()}>{busy ? "Working…" : "Save tool"}</button>
       </div>
-    </div>
+    </Modal>
   );
 }
