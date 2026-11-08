@@ -5,6 +5,7 @@ import { requirePermission } from "../middleware/auth.js";
 const router = Router();
 router.get("/dashboard", calls.dashboard);
 router.post("/dashboard/sync", requirePermission("numbers.manage"), calls.sync);
+router.get("/usage", calls.usage);
 router.get("/calls", calls.list);
 router.get("/calls/tools", calls.toolCallsList);
 router.get("/calls/active", calls.activeCalls);

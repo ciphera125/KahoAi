@@ -424,6 +424,26 @@ export async function recordingOf(orgId, callId) {
   return rows[0] ?? null;
 }
 
+/** Minutes used over the last `days` days. Each call counts up to its next whole minute, the way carriers bill. */
+export async function usage(orgId, days) {
+  const d = Number(days);
+  if (!Number.isInteger(d) || d < 1 || d > 366) throw new ValidationError("days must be a whole number from 1 to 366");
+  const MIN = "GREATEST(CEIL(coalesce(c.duration_secs, 0) / 60.0), 0)::int";
+  const base = "FROM calls c WHERE c.org_id = $1 AND coalesce(c.duration_secs, 0) > 0 AND c.started_at > now() - make_interval(days => $2)";
+  return inOrg(orgId, async (db) => {
+    const [total, byAgent, byDay] = await Promise.all([
+      db.query(`SELECT count(*)::int AS calls, coalesce(sum(c.duration_secs), 0)::int AS seconds, coalesce(sum(${MIN}), 0)::int AS minutes ${base}`, [orgId, d]),
+      db.query(`SELECT c.agent_id, coalesce(a.name, 'Deleted agent') AS name, count(*)::int AS calls, sum(${MIN})::int AS minutes
+        FROM calls c LEFT JOIN agents a ON a.id = c.agent_id AND a.org_id = c.org_id
+        WHERE c.org_id = $1 AND coalesce(c.duration_secs, 0) > 0 AND c.started_at > now() - make_interval(days => $2)
+        GROUP BY c.agent_id, a.name ORDER BY minutes DESC, name`, [orgId, d]),
+      db.query(`SELECT to_char((c.started_at AT TIME ZONE 'Asia/Kolkata')::date, 'YYYY-MM-DD') AS day, count(*)::int AS calls, sum(${MIN})::int AS minutes ${base}
+        GROUP BY 1 ORDER BY 1`, [orgId, d]),
+    ]);
+    return { days: d, total: total.rows[0], by_agent: byAgent.rows, by_day: byDay.rows };
+  });
+}
+
 /** How a call ended, in a few fields, for the public API. */
 export async function summaryOf(orgId, callId) {
   const { rows } = await inOrg(orgId, (db) => db.query(

@@ -158,3 +158,26 @@ describe("recordings are linked to calls", () => {
     } finally { config.SUPABASE_URL = saved; }
   });
 });
+
+describe("usage: minutes used, by day and by agent", () => {
+  it("counts each call up to its next minute, by agent and by day, for this organization only", async () => {
+    const b = await owner();
+    const a = (await b.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." })).body;
+    const c = (await b.post("/api/agents").send({ name: "Sam", prompt: "You are Sam." })).body;
+    const mk = async (id, agent, secs) => {
+      await internal("put", `/internal/v1/calls/${id}`).send({ agent_id: agent.id, status: "answered", duration_secs: secs });
+      await db.query("UPDATE calls SET duration_secs = $2, started_at = now() WHERE call_id = $1", [id, secs]);
+    };
+    await mk("usage-call-1", a, 61); await mk("usage-call-2", a, 30); await mk("usage-call-3", c, 120);
+    const other = await owner({ email: "zoya@other.in", organization: "Other" });
+    const theirs = (await other.post("/api/agents").send({ name: "Theirs", prompt: "You are theirs." })).body;
+    await mk("usage-call-4", theirs, 600);
+    const u = (await b.get("/api/usage?days=7")).body;
+    expect(u.total).toMatchObject({ calls: 3, seconds: 211, minutes: 2 + 1 + 2 });
+    expect(u.by_agent.find((x) => x.name === "Ria")).toMatchObject({ calls: 2, minutes: 3 });
+    expect(u.by_agent.find((x) => x.name === "Sam")).toMatchObject({ calls: 1, minutes: 2 });
+    expect(u.by_day.reduce((s, d) => s + d.minutes, 0)).toBe(5);
+    expect((await b.get("/api/usage?days=0")).status).toBe(400);
+    expect((await b.get("/api/usage?days=400")).status).toBe(400);
+  });
+});

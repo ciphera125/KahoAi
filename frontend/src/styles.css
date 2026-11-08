@@ -637,3 +637,8 @@ table.matrix .no { color: var(--text-3); }
 .secret { display: block; margin-top: 6px; padding: 8px 10px; background: var(--surface-2); border-radius: var(--r-md); font-family: var(--mono); font-size: 12.5px; overflow-wrap: anywhere; user-select: all; }
 .file-pick { display: inline-flex; align-items: center; height: var(--field); padding: 0 14px; border: 1px solid var(--border-strong); border-radius: var(--r-md); cursor: pointer; font-weight: 600; font-size: 13px; }
 .file-pick:hover { background: var(--hover); }
+
+.usage-bars { display: flex; align-items: flex-end; gap: 4px; height: 160px; padding-top: var(--s3); overflow-x: auto; }
+.usage-bar { flex: 1 0 14px; max-width: 40px; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; gap: 4px; }
+.usage-bar i { width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; min-height: 4px; }
+.usage-bar span { font-size: 10px; color: var(--text-3); white-space: nowrap; }

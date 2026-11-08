@@ -200,3 +200,5 @@ export async function answers(req, res) {
 export async function contactAnswers(req, res) {
   res.json(await CallAnswer.forContact(req.user.org_id, req.params.contactId));
 }
+
+export async function usage(req, res) { res.json(await Call.usage(req.user.org_id, req.query.days ?? 30)); }
