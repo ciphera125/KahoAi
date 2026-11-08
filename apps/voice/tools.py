@@ -727,21 +727,24 @@ async def mark_task_done(args: dict, call: CallContext) -> dict:
         "answer only from what it returns."
     ),
     properties={
-        "question": {"type": "string", "description": "The caller's question, in a few plain words."},
+        "question": {"type": "string",
+                     "description": "The caller's question, in a few plain words."},
     },
     required=["question"],
 )
 async def search_knowledge(args: dict, call: CallContext) -> dict:
     reply = await _ask_studio(call, "search_knowledge", question=str(args.get("question") or ""))
     if reply is None:
-        return {"what_to_do": "I cannot check my documents just now. Say you are not sure and offer a follow-up."}
+        return {"what_to_do": "I cannot check my documents just now. "
+                "Say you are not sure and offer a follow-up."}
     if not reply.get("ok"):
         return {"what_to_do": reply.get("message") or "I could not check just now."}
     passages = reply.get("passages") or []
     if not passages:
-        return {"found": False, "what_to_do": reply.get("message") or "I do not have that in my documents."}
+        return {"found": False,
+                "what_to_do": reply.get("message") or "I do not have that in my documents."}
     return {"found": True, "passages": passages,
-            "what_to_do": "Answer only from these passages, in your own words and briefly."}
+            "what_to_do": "Answer only from these passages, in your own words, briefly."}
 
 
 @tool(
