@@ -34,6 +34,9 @@ const schema = z.object({
   API_RATE_LIMIT_PER_MIN: int(600, 1, 1_000_000),
   IP_RATE_LIMIT_PER_MIN: int(6000, 1, 10_000_000),
   AUTH_RATE_LIMIT_PER_MIN: int(20, 1, 10_000),
+  // Calls placed through the public API, per organization (not per key: keys are free to make).
+  API_CALLS_PER_MIN: int(10, 1, 1000),
+  API_CALLS_PER_DAY: int(500, 1, 2000),
   PUBLIC_HOST: z.string().optional(),
   PUBLIC_SCHEME: z.enum(["https", "http"]).default("https"),
   WEBHOOK_SECRET: z.string().optional(),

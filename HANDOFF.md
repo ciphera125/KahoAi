@@ -1983,3 +1983,15 @@ tab, searchable, 10/25/50, spreadsheet export. Role changes now name the real ro
 6. Undo accepts any tool id of the organization, not only ones the Builder made (needs the tools permission).
 7. A knowledge document's text is returned to the model verbatim, so a document can carry instructions
    (only people who can edit agents can add one).
+
+### 2026-11-08 (late): pen-test findings 1 and 4 fixed
+
+1. In production the address check refuses anything on this machine or its network: loopback, `localhost` and
+   `*.localhost`, `.local`/`.internal` names, and every IPv6 disguise (mapped, compatible, NAT64, 6to4, hex forms),
+   and a name is refused if any address it resolves to is private. Plain http to localhost still works while
+   developing. **The local Studio runs with `NODE_ENV=development`, so the loopback block is off here; the
+   deployment must set `NODE_ENV=production`.** Known gap left: the name is resolved once to check and again
+   to connect (DNS rebinding window).
+4. Placing calls through the API is limited per organization: `API_CALLS_PER_MIN` (10) and
+   `API_CALLS_PER_DAY` (500), shared by all keys. Reading calls and agents is not slowed. The consent flag is
+   still only asserted by the caller. Findings 2, 3, 5, 6 and 7 remain open.

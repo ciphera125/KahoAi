@@ -1,5 +1,6 @@
 // The API another system calls, with a key. Deliberately small and separate from the
 // Studio's own routes: no cookies, no session, and the organization fixed by the key.
+import { apiCallsPerDay, apiCallsPerMinute } from "../middleware/rateLimit.js";
 import { Router } from "express";
 import * as Task from "../models/Task.js";
 import * as Contact from "../models/Contact.js";
@@ -42,7 +43,7 @@ router.get("/agents", async (req, res) => {
 });
 
 /** Place a call. Same rules as the Studio: consent stated, Do not call honoured, calling hours kept. */
-router.post("/calls", async (req, res) => {
+router.post("/calls", apiCallsPerMinute, apiCallsPerDay, async (req, res) => {
   const body = req.body ?? {};
   if (body.consent !== true) throw new ValidationError("confirm that this person has agreed to be called");
   try {

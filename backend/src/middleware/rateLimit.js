@@ -53,6 +53,15 @@ export const sessionLimiter = rateLimit({ ...common, limit: config.API_RATE_LIMI
   keyGenerator: sessionKey, store: store("api") });
 export const authLimiter = rateLimit({ ...common, limit: config.AUTH_RATE_LIMIT_PER_MIN, store: store("auth") });
 
+// Placing calls through the API costs real money and rings real people, so it has its own, much
+// lower limits than reading: per organization, a short burst limit and a daily ceiling.
+const callsRefused = (_req, res) => res.status(429).json({
+  error: "too many calls placed through the API; wait a moment, or ask an admin to place them in bulk from the Studio" });
+export const apiCallsPerMinute = rateLimit({ ...common, limit: config.API_CALLS_PER_MIN, handler: callsRefused,
+  keyGenerator: (req) => `o:${req.apiOrgId}`, store: store("apicalls-min") });
+export const apiCallsPerDay = rateLimit({ ...common, windowMs: 86_400_000, limit: config.API_CALLS_PER_DAY, handler: callsRefused,
+  keyGenerator: (req) => `o:${req.apiOrgId}`, store: store("apicalls-day") });
+
 /** Forget every count (tests). */
 export const resetRateLimits = () => Promise.all(memoryStores.map((m) => m.resetAll()));
 export const closeRedis = () => redis?.quit().catch(() => {});
