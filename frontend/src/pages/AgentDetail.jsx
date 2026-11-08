@@ -22,12 +22,17 @@ export default function AgentDetail() {
   const [limits, setLimits] = useState({ max_minutes: 30, ring_secs: [15, 60] });
   const [check, setCheck] = useState({ problems: [], can_publish: true });
   const [languages, setLanguages] = useState([]);
-  const [focusTools, setFocusTools] = useState(false); // arrived from Kaho Builder: scroll to what it made
+  const [shown, setShown] = useState(null); // what Kaho Builder just made: { keys } to scroll to and highlight for a few seconds
   const TABS = ["prompt", "tools", "questions", "knowledge", "settings", "calls", "versions"];
   const [params] = useSearchParams();
   const [tab, setTab] = useState(TABS.includes(params.get("tab")) ? params.get("tab") : "prompt");
   // A link to ?tab=tools (from the Builder, say) opens that tab even when the agent is already on screen.
-  useEffect(() => { const t = params.get("tab"); if (TABS.includes(t)) { setTab(t); if (t === "tools") setFocusTools(true); } }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const t = params.get("tab");
+    if (!TABS.includes(t)) return;
+    setTab(t);
+    if (t === "tools") setShown({ keys: (params.get("show") ?? "").split(",").filter(Boolean).slice(0, 20) });
+  }, [params]); // eslint-disable-line react-hooks/exhaustive-deps
   const [chatting, setChatting] = useState(false);
 
   const load = useCallback(async () => {
@@ -63,13 +68,13 @@ export default function AgentDetail() {
       {tab === "prompt" && <PromptTab agent={agent} prompts={prompts} onChanged={load} />}
       {(tab === "tools" || tab === "questions") && (can(me, "agents.edit") || can(me, "tools.custom")) && (
         <div className="assist-bar"><span className="hint">Tell Kaho Builder what you need and it sets it up.</span><AssistantButton onClick={() => setChatting(true)} /></div>)}
-      {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} focus={focusTools} />}
+      {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} shown={shown} onShown={() => setShown(null)} />}
       {tab === "settings" && <SettingsTab agent={agent} limits={limits} languages={languages} onChanged={load} />}
       {tab === "calls" && <AgentCalls agent={agent} />}
       {tab === "questions" && <QuestionsTab agent={agent} onChanged={load} />}
       {tab === "knowledge" && <KnowledgeTab agent={agent} onChanged={load} />}
       {tab === "versions" && <VersionsTab agent={agent} confirm={confirm} onChanged={load} />}
-      {chatting && <Assistant agentId={agent.id} onClose={() => setChatting(false)} onApplied={() => load()} onShow={() => { setTab("tools"); setFocusTools(true); setChatting(false); }} />}
+      {chatting && <Assistant agentId={agent.id} onClose={() => setChatting(false)} onApplied={() => load()} onShow={(card) => { setTab("tools"); setShown({ keys: card?.keys ?? [] }); setChatting(false); }} />}
       {confirmNode}
     </section>
   );
@@ -383,10 +388,14 @@ function PromptTab({ agent, prompts, onChanged }) {
   );
 }
 
-function ToolsTab({ agent, tools, onChanged, focus = false }) {
+const FLASH_MS = 5000;
+const KIND_WORDS = { text: "words", number: "a number", date: "a date", yes_no: "yes or no", choice: "a choice", phone: "a phone number", amount: "an amount" };
+
+function ToolsTab({ agent, tools, onChanged, shown = null, onShown }) {
   const toast = useToast();
   const card = useRef(null);
   const [picked, setPicked] = useState(agent.tools);
+  const [flash, setFlash] = useState(new Set());
   // When the agent changes underneath (Kaho Builder adds a tool, a version is restored) the switches follow,
   // so a later "Save tools" can never undo what was just set up.
   const live = agent.tools.join("|");
@@ -394,14 +403,43 @@ function ToolsTab({ agent, tools, onChanged, focus = false }) {
   const toggle = (name) => setPicked((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]));
   const save = async () => { try { await patch(`/api/agents/${agent.id}`, { tools: picked }); toast("Saved as a draft. Publish it when you are ready."); onChanged(); } catch (e) { toast(e.message, true); } };
   const questions = agent.settings.capture_fields ?? [];
+
+  // Sent here by Kaho Builder: bring what it made into view and light it up for five seconds.
+  useEffect(() => {
+    if (!shown) return undefined;
+    const keys = new Set(shown.keys);
+    // A question it added also lights the "Save what the caller says" tool that holds it.
+    if (questions.some((q) => keys.has(q.key))) keys.add("save_answer");
+    setFlash(keys);
+    const scroll = setTimeout(() => {
+      const first = card.current?.querySelector("[data-flash='true']");
+      (first ?? card.current)?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    }, 150);
+    const off = setTimeout(() => { setFlash(new Set()); onShown?.(); }, FLASH_MS);
+    return () => { clearTimeout(scroll); clearTimeout(off); };
+  }, [shown]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const lit = (key) => flash.has(key);
   const row = (t) => (
-    <div key={t.name} className="toggle-line" data-made-by={t.made_by}>
+    <div key={t.name} className={`toggle-line${lit(t.name) ? " flash" : ""}`} data-flash={lit(t.name)}>
       <div>
         <b>{t.label || TOOL_LABELS[t.name]}</b>
         {t.made_by === "builder" && <span className="made-by" title="Set up for you by Kaho Builder"><Icon name="spark" />Kaho Builder</span>}
         <div className="hint">{t.description}</div>
         {t.name === "save_answer" && picked.includes("save_answer") && (
-          <div className="hint">{questions.length ? `Asks and saves: ${questions.map((f) => f.label).join(", ")}.` : "No questions yet. Add them on the Questions to save tab, or tell Kaho Builder."}</div>
+          questions.length === 0
+            ? <div className="hint">No questions yet. Add them on the Questions to save tab, or tell Kaho Builder.</div>
+            : (
+              <ul className="saved-questions" aria-label="Questions this tool asks and saves">
+                {questions.map((q) => (
+                  <li key={q.key} className={lit(q.key) ? "flash" : ""} data-flash={lit(q.key)}>
+                    <span className="sq-title">Save: {q.label}</span>
+                    {q.made_by === "builder" && <span className="made-by" title="Set up for you by Kaho Builder"><Icon name="spark" />Kaho Builder</span>}
+                    <span className="hint">{KIND_WORDS[q.kind] ?? q.kind}{q.ask ? ` · asked like: “${q.ask}”` : ""}</span>
+                  </li>
+                ))}
+              </ul>
+            )
         )}
         {!t.ready && <div className="hint" style={{ color: "var(--warn)" }}>Needs {t.needs} to be set on the server first.</div>}
       </div>
@@ -409,12 +447,6 @@ function ToolsTab({ agent, tools, onChanged, focus = false }) {
     </div>
   );
   const own = tools.filter((t) => t.custom);
-  // Sent here by Kaho Builder: bring what it made into view, newest Builder tool first.
-  useEffect(() => {
-    if (!focus || !card.current) return;
-    const made = [...card.current.querySelectorAll('[data-made-by="builder"]')].pop();
-    (made ?? card.current).scrollIntoView?.({ behavior: "smooth", block: "center" });
-  }, [focus, tools.length]);
   return (
     <div className="card" style={{ maxWidth: 760 }} ref={card}>
       <div className="card-head"><span className="card-title">What this agent can do on a call</span></div>

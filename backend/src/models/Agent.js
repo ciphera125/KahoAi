@@ -63,7 +63,8 @@ export function checkCaptureFields(raw) {
     }
     if (out.some((f) => f.key === key)) throw new ValidationError(`two questions share the short name '${key}'`);
     out.push({ key, label, kind: field.kind, choices, required: Boolean(field.required),
-      ask: cleanText(field.ask, 200, "example question", false) });
+      ask: cleanText(field.ask, 200, "example question", false),
+      ...(field.made_by === "builder" ? { made_by: "builder" } : {}) }); // who set it up, shown beside it
   }
   return out;
 }

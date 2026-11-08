@@ -193,13 +193,14 @@ async function removeFromPrompt(orgId, agent, lines) {
 async function buildWriteDown(orgId, agent, proposal) {
   const have = agent.settings.capture_fields ?? [];
   const isNew = proposal.fields.filter((f) => !have.some((h) => h.key === f.key));
-  const merged = [...have.filter((f) => !proposal.fields.some((n) => n.key === f.key)), ...proposal.fields];
+  const merged = [...have.filter((f) => !proposal.fields.some((n) => n.key === f.key)),
+    ...proposal.fields.map((f) => ({ ...f, made_by: "builder" }))];
   const addedSave = !agent.tools.includes("save_answer");
   const tools = addedSave ? [...agent.tools, "save_answer"] : agent.tools;
   await updateAgent(orgId, agent.id, { tools, settings: { capture_fields: merged } });
   const lines = isNew.map((f) => `- Ask the caller for their ${plain(f.label).toLowerCase()}${f.ask ? ` (for example: "${f.ask}")` : ""} and save it with the save_answer tool.`);
   await addToPrompt(orgId, agent, lines);
-  return { names: proposal.fields.map((f) => f.label),
+  return { names: proposal.fields.map((f) => f.label), keys: proposal.fields.map((f) => f.key),
     undo: { kind: "write_down", keys: isNew.map((f) => f.key), added_save_answer: addedSave, prompt_lines: lines } };
 }
 
@@ -214,7 +215,7 @@ async function buildLookUp(orgId, agent, proposal) {
   const when = proposal.description ? plain(proposal.description).replace(/^use (it )?(when )?/i, "") : plain(proposal.label).toLowerCase();
   const line = `- When ${when}, use the ${tool.name} tool${proposal.inputs.length ? ` with the caller's ${proposal.inputs.map((i) => plain(i.label).toLowerCase()).join(" and ")}` : ""}.`;
   await addToPrompt(orgId, agent, [line]);
-  return { names: [tool.label], undo: { kind: "look_up", tool_id: tool.id, prompt_lines: [line] } };
+  return { names: [tool.label], keys: [tool.name], undo: { kind: "look_up", tool_id: tool.id, prompt_lines: [line] } };
 }
 
 /**
@@ -260,7 +261,7 @@ export async function converse({ orgId, role, agentId, messages }) {
   if (proposal.kind === "write_down") {
     if (!can(role, "agents.edit")) throw new HttpError(403, "your role does not allow changing agents; ask an admin of this organization");
     const built = await buildWriteDown(orgId, agent, proposal);
-    return { reply: proposal.summary, created: { kind: "write_down", names: built.names, draft: true, agent_id: agent.id }, undo: seal(orgId, agent.id, built.undo) };
+    return { reply: proposal.summary, created: { kind: "write_down", names: built.names, keys: built.keys, draft: true, agent_id: agent.id }, undo: seal(orgId, agent.id, built.undo) };
   }
   if (!can(role, "tools.custom")) throw new HttpError(403, "your role does not allow making tools; ask an admin of this organization");
   if (!proposal.url) {
@@ -269,7 +270,7 @@ export async function converse({ orgId, role, agentId, messages }) {
   const problem = urlProblem(proposal.url);
   if (problem) return { reply: `${problem} Could you check the address?`, created: null };
   const built = await buildLookUp(orgId, agent, proposal);
-  return { reply: proposal.summary, created: { kind: "look_up", names: built.names, draft: true, agent_id: agent.id }, undo: seal(orgId, agent.id, built.undo) };
+  return { reply: proposal.summary, created: { kind: "look_up", names: built.names, keys: built.keys, draft: true, agent_id: agent.id }, undo: seal(orgId, agent.id, built.undo) };
 }
 
 // --- undoing -------------------------------------------------------------------------------------

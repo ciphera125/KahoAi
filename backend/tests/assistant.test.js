@@ -341,3 +341,35 @@ describe("showing what the Builder made", () => {
     expect((await b.get(`/api/agents/${a.id}`)).body.tools).toContain("check_order_status");
   });
 });
+
+describe("telling the page what was just made, so it can be shown", () => {
+  it("names the questions and marks them as the Builder's, leaving hand-made ones unmarked", async () => {
+    const b = await owner();
+    const a = await newAgent(b);
+    await b.patch(`/api/agents/${a.id}`).send({ settings: { capture_fields: [{ label: "Amount", kind: "amount" }] } });
+    scripted(propose(WRITE_DOWN));
+    const r = await talk(b, { agent_id: a.id, messages: said("ask for the payment date") });
+    expect(r.body.created.keys).toEqual(["payment_date"]);
+    const fields = (await b.get(`/api/agents/${a.id}`)).body.settings.capture_fields;
+    expect(fields.find((f) => f.key === "payment_date").made_by).toBe("builder");
+    expect(fields.find((f) => f.key === "amount").made_by).toBeUndefined();
+  });
+
+  it("keeps the marker when the questions are saved again from the form", async () => {
+    const b = await owner();
+    const a = await newAgent(b);
+    scripted(propose(WRITE_DOWN));
+    await talk(b, { agent_id: a.id, messages: said("payment date") });
+    const fields = (await b.get(`/api/agents/${a.id}`)).body.settings.capture_fields;
+    await b.patch(`/api/agents/${a.id}`).send({ settings: { capture_fields: fields } });
+    expect((await b.get(`/api/agents/${a.id}`)).body.settings.capture_fields[0].made_by).toBe("builder");
+  });
+
+  it("names the tool it made", async () => {
+    const b = await owner();
+    const a = await newAgent(b);
+    scripted(propose(LOOK_UP));
+    const r = await talk(b, { agent_id: a.id, messages: said("orders at api.example.com/orders") });
+    expect(r.body.created.keys).toEqual(["check_order_status"]);
+  });
+});

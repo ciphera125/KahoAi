@@ -670,3 +670,11 @@ table.matrix .no { color: var(--text-3); }
 .notif-dot { margin-top: 0; }
 .notif-body { padding: 2px 0; }
 .notif-head .link { margin-left: auto; white-space: nowrap; }
+
+.saved-questions { list-style: none; margin: var(--s3) 0 0; padding: 0; display: grid; gap: 6px; }
+.saved-questions li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px; padding: 8px 12px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--surface-2); }
+.sq-title { font-weight: 600; font-size: 13px; }
+/* what Kaho Builder just made: a gold glow that holds for five seconds, then fades */
+@keyframes flash-hold { 0%, 80% { box-shadow: 0 0 0 3px var(--gold), 0 0 18px rgba(240,165,24,.55); background-color: var(--gold-soft); } 100% { box-shadow: 0 0 0 0 transparent; background-color: transparent; } }
+.toggle-line.flash, .saved-questions li.flash { animation: flash-hold 5s ease-out both; border-radius: var(--r-md); }
+@media (prefers-reduced-motion: reduce) { .toggle-line.flash, .saved-questions li.flash { animation: none; box-shadow: 0 0 0 3px var(--gold); background-color: var(--gold-soft); } }

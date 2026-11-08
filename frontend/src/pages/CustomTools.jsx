@@ -82,7 +82,7 @@ export default function CustomTools() {
       )}
       {tools?.length > 0 && pager}
 
-      {chatting && <Assistant onClose={() => setChatting(false)} onApplied={() => load()} onShow={(card) => { setChatting(false); if (card?.agent_id) navigate(`/agents/${card.agent_id}?tab=tools`); }} />}
+      {chatting && <Assistant onClose={() => setChatting(false)} onApplied={() => load()} onShow={(card) => { setChatting(false); if (card?.agent_id) navigate(`/agents/${card.agent_id}?tab=tools&show=${encodeURIComponent((card.keys ?? []).join(","))}`); }} />}
       {editing && <ToolForm tool={editing} onClose={() => setEditing(null)}
         onSaved={() => { setEditing(null); load(); }} />}
       {confirmNode}
