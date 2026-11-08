@@ -1940,3 +1940,18 @@ Em dashes are gone everywhere. 901+ voice tests, 369 backend (plus the 5 known),
 **Still open:** none of the voice-side changes have been heard on a real call; the Supabase naming
 has run only against a fake Storage, so the first real call after this is the check; transcripts of
 unrecorded calls never expire.
+
+### 2026-11-08 (late night): roles, settings tabs, icons, assistant, notifications, research
+
+Done and live (backend restarted, migrations 017 and 018 applied to Supabase): six roles
+(owner, admin, manager, agent builder, caller, viewer) from one table in `models/permissions.js` that
+the server enforces and Settings prints; people who join by invite start as viewers; the one existing
+account is the owner. Organization-wide call rules (calling hours and a cap on call length) set by an
+admin in Settings, enforced on every call, bulk included. Profile icons from a server-kept list. Settings
+has four tabs. Notifications close on an outside click and mark what is new. The chat assistant
+(`models/Assistant.js`, `components/Assistant.jsx`) proposes tools and questions from plain words and
+saves only after a yes. Every page offers the same page sizes, 10, 25, 50. Competitor comparison is in
+`docs/COMPETITIVE.md`.
+**Needs the owner:** the assistant and "Test this agent" both need `GROQ_API_KEY` in `backend/.env`;
+until then they say so. Nothing has been tried by eye in a browser. The voice-side changes of earlier
+today are still unheard on a real call.
