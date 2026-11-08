@@ -1,6 +1,7 @@
 // Agents: a name, a description, the tools it may use, its call settings and
 // the one of its prompts it uses on calls. Numbers route to an agent, which is
 // what an inbound call on that number gets.
+import { findTemplate } from "./templates.js";
 import { config } from "../config/env.js";
 import { asSystem, inOrg } from "../db/pool.js";
 import { hexId } from "../utils/crypto.js";
@@ -194,6 +195,14 @@ export const get = (orgId, id) => inOrg(orgId, (db) => show(db, orgId, typeof id
 export async function names(orgId) {
   const { rows } = await inOrg(orgId, (db) => db.query("SELECT id, name FROM agents WHERE org_id = $1", [orgId]));
   return Object.fromEntries(rows.map((a) => [a.id, a.name]));
+}
+
+/** An agent made from a starter template: its prompt, its questions and the tool that saves them. */
+export async function createFromTemplate(orgId, id, { name, description } = {}) {
+  const t = findTemplate(id);
+  if (!t) throw new ValidationError("that template does not exist");
+  const made = await create(orgId, { name: name || t.name, description: description || t.description, prompt: t.prompt });
+  return update(orgId, made.id, { tools: [...new Set([...made.tools, "save_answer"])], settings: { capture_fields: checkCaptureFields(t.fields) } });
 }
 
 export async function create(orgId, { name, description, prompt }) {

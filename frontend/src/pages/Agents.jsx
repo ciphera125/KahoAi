@@ -48,17 +48,30 @@ export default function Agents() {
 function NewAgent({ onClose, onCreated }) {
   const toast = useToast();
   const [f, setF] = useState({ name: "", description: "", prompt: "" });
+  const [templates, setTemplates] = useState([]);
+  const [template, setTemplate] = useState(null);
+  useEffect(() => { get("/api/templates").then(setTemplates).catch(() => {}); }, []);
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF((v) => ({ ...v, [k]: e.target.value }));
   const create = async () => {
     setBusy(true);
-    try { const a = await post("/api/agents", f); toast("Agent created."); onCreated(a); } catch (e) { toast(e.message, true); } finally { setBusy(false); }
+    try { const a = await post("/api/agents", template ? { template: template.id, name: f.name || undefined } : f); toast("Agent created."); onCreated(a); } catch (e) { toast(e.message, true); } finally { setBusy(false); }
   };
   return (
     <Modal title="New agent" onClose={onClose} wide>
+      {templates.length > 0 && (
+        <div className="field"><label className="f">Start from a ready-made agent</label>
+          <div className="templates">
+            <button type="button" className={`template${template ? "" : " on"}`} onClick={() => setTemplate(null)}><b>Blank</b><span>Write your own prompt.</span></button>
+            {templates.map((t) => (
+              <button type="button" key={t.id} className={`template${template?.id === t.id ? " on" : ""}`}
+                onClick={() => { setTemplate(t); setF((v) => ({ ...v, name: v.name || t.name })); }}><b>{t.name}</b><span>{t.summary}</span></button>
+            ))}
+          </div></div>
+      )}
       <div className="field"><label className="f">Name</label><input value={f.name} onChange={set("name")} placeholder="EMI reminder" /></div>
-      <div className="field"><label className="f">Description</label><input value={f.description} onChange={set("description")} placeholder="Reminds borrowers a day before their EMI is due" /></div>
-      <div className="field"><label className="f">Prompt</label><textarea value={f.prompt} onChange={set("prompt")} placeholder="You are Riya from Acme Finance, calling to remind the person their EMI is due on…" /></div>
+      {!template && <div className="field"><label className="f">Description</label><input value={f.description} onChange={set("description")} placeholder="Reminds borrowers a day before their EMI is due" /></div>}
+      {!template && <div className="field"><label className="f">Prompt</label><textarea value={f.prompt} onChange={set("prompt")} placeholder="You are Riya from Acme Finance, calling to remind the person their EMI is due on…" /></div>}
       <div className="actions" style={{ justifyContent: "flex-end" }}><button className="ghost" onClick={onClose}>Cancel</button><button className="primary" onClick={create} disabled={busy}>Create agent</button></div>
     </Modal>
   );

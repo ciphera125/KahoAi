@@ -1,3 +1,4 @@
+import { listTemplates } from "../models/templates.js";
 import * as assistant from "../controllers/assistantController.js";
 import { Router } from "express";
 import * as ws from "../controllers/workspaceController.js";
@@ -20,6 +21,7 @@ router.post("/orgs/join", authLimiter, orgs.join);
 router.post("/orgs/:orgId/switch", orgs.switchTo);
 router.get("/team", auth.team);
 router.get("/roles", ws.roles);
+router.get("/templates", (req, res) => res.json(listTemplates()));
 router.post("/assistant/message", assistant.message);
 router.post("/assistant/undo", assistant.undo);
 router.get("/avatars", ws.avatars);

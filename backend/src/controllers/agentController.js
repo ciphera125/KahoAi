@@ -12,8 +12,10 @@ export async function list(_req, res) {
 }
 
 export async function create(req, res) {
-  const { name, description, prompt } = req.body ?? {};
-  const agent = await Agent.create(req.user.org_id, { name, description, prompt });
+  const { name, description, prompt, template } = req.body ?? {};
+  const agent = template === undefined
+    ? await Agent.create(req.user.org_id, { name, description, prompt })
+    : await Agent.createFromTemplate(req.user.org_id, template, { name, description });
   await note(req, "agent", `Created the agent ${agent.name}`, "agents", agent.id);
   res.json(agent);
 }
