@@ -57,7 +57,7 @@ export default function AgentDetail() {
       </div>
       {tab === "prompt" && <PromptTab agent={agent} prompts={prompts} onChanged={load} />}
       {(tab === "tools" || tab === "questions") && (can(me, "agents.edit") || can(me, "tools.custom")) && (
-        <div className="assist-bar"><span className="hint">Not sure how to set this up? Just say what you want.</span><AssistantButton onClick={() => setChatting(true)} /></div>)}
+        <div className="assist-bar"><span className="hint">Tell Kaho Builder what you need and it sets it up.</span><AssistantButton onClick={() => setChatting(true)} /></div>)}
       {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} />}
       {tab === "settings" && <SettingsTab agent={agent} limits={limits} languages={languages} onChanged={load} />}
       {tab === "calls" && <AgentCalls agent={agent} />}
