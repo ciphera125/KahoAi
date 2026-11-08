@@ -16,7 +16,7 @@ const KINDS = { write_down: "Question added", look_up: "Tool created" };
 // The browser's own speech recognition: free, and nothing but the words leaves the page.
 const Recognition = typeof window !== "undefined" ? window.SpeechRecognition || window.webkitSpeechRecognition : null;
 
-export default function Assistant({ agentId = null, onClose, onApplied }) {
+export default function Assistant({ agentId = null, onClose, onApplied, onShow }) {
   const toast = useToast();
   const [turns, setTurns] = useState([{ role: "assistant", content: GREETING, local: true }]);
   const [text, setText] = useState("");
@@ -112,6 +112,7 @@ export default function Assistant({ agentId = null, onClose, onApplied }) {
                   <b>{t.card.undone ? "Undone" : KINDS[t.card.kind]}</b>
                   <span>{t.card.names.join(", ")}</span>
                   {!t.card.undone && <small>Saved as a draft. Publish the agent to make it live.</small>}
+                  {!t.card.undone && onShow && <button type="button" className="kb-see" onClick={onShow}>See it in Tools</button>}
                 </div>
                 {!t.card.undone && <button type="button" className="kb-undo" disabled={busy} onClick={() => undo(i)}>Undo</button>}
               </div>

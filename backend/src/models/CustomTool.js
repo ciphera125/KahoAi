@@ -73,7 +73,7 @@ const maskHeaders = (headers) => Object.fromEntries(
   Object.entries(headers ?? {}).map(([k, v]) => [k, SECRET_HEADERS.test(k) || v ? "••••••••" : v]));
 
 const shape = (t, { headers = {} } = {}) => ({
-  id: t.id, name: t.name, label: t.label, description: t.description, method: t.method, url: t.url,
+  id: t.id, name: t.name, made_by: t.made_by ?? "form", label: t.label, description: t.description, method: t.method, url: t.url,
   body_template: t.body_template, inputs: t.inputs, extract: t.extract,
   say_while_waiting: t.say_while_waiting, timeout_ms: t.timeout_ms,
   headers: maskHeaders(headers), header_names: Object.keys(headers ?? {}),
@@ -95,7 +95,7 @@ function checkShape({ label, url, method, timeout_ms: timeoutMs }) {
   return { label: cleanLabel, name, deadline };
 }
 
-export async function create(orgId, body = {}) {
+export async function create(orgId, body = {}, { madeBy = "form" } = {}) {
   const { label, name, deadline } = checkShape(body);
   const inputs = checkInputs(body.inputs);
   const extract = checkExtract(body.extract);
@@ -106,12 +106,13 @@ export async function create(orgId, body = {}) {
     const id = `ct_${hexId()}`;
     await db.query(
       `INSERT INTO custom_tools (id, org_id, name, label, description, method, url, headers_sealed,
-         body_template, inputs, say_while_waiting, timeout_ms, extract)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+         body_template, inputs, say_while_waiting, timeout_ms, extract, made_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
       [id, orgId, name, label, cleanText(body.description, 400, "when to use it", false),
         body.method || "POST", String(body.url), encryptJson(headers),
         String(body.body_template ?? "").slice(0, 4000), JSON.stringify(inputs),
-        cleanText(body.say_while_waiting, 120, "waiting line", false), deadline, JSON.stringify(extract)]);
+        cleanText(body.say_while_waiting, 120, "waiting line", false), deadline, JSON.stringify(extract),
+        madeBy === "builder" ? "builder" : "form"]);
     return show(db, orgId, id);
   });
 }

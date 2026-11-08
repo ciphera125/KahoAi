@@ -324,3 +324,20 @@ describe("undoing it", () => {
     }
   });
 });
+
+describe("showing what the Builder made", () => {
+  it("marks a tool it made, in Your own tools and in the agent's tools list, and not one made by hand", async () => {
+    const b = await owner();
+    const a = await newAgent(b);
+    await b.post("/api/custom-tools").send({ label: "By hand", description: "d", url: "https://api.example.com/h", inputs: [], made_by: "builder" });
+    scripted(propose(LOOK_UP));
+    await talk(b, { agent_id: a.id, messages: said("check orders") });
+    const own = (await b.get("/api/custom-tools")).body;
+    expect(own.find((t) => t.name === "check_order_status").made_by).toBe("builder");
+    expect(own.find((t) => t.name === "by_hand").made_by).toBe("form"); // a request cannot claim it
+    const listed = (await b.get("/api/tools")).body;
+    expect(listed.find((t) => t.name === "check_order_status")).toMatchObject({ custom: true, made_by: "builder" });
+    expect(listed.find((t) => t.name === "by_hand").made_by).toBe("form");
+    expect((await b.get(`/api/agents/${a.id}`)).body.tools).toContain("check_order_status");
+  });
+});

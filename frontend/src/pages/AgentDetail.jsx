@@ -64,7 +64,7 @@ export default function AgentDetail() {
       {tab === "questions" && <QuestionsTab agent={agent} onChanged={load} />}
       {tab === "knowledge" && <KnowledgeTab agent={agent} onChanged={load} />}
       {tab === "versions" && <VersionsTab agent={agent} confirm={confirm} onChanged={load} />}
-      {chatting && <Assistant agentId={agent.id} onClose={() => setChatting(false)} onApplied={() => load()} />}
+      {chatting && <Assistant agentId={agent.id} onClose={() => setChatting(false)} onApplied={() => load()} onShow={() => { setTab("tools"); setChatting(false); }} />}
       {confirmNode}
     </section>
   );
@@ -381,17 +381,38 @@ function PromptTab({ agent, prompts, onChanged }) {
 function ToolsTab({ agent, tools, onChanged }) {
   const toast = useToast();
   const [picked, setPicked] = useState(agent.tools);
+  // When the agent changes underneath (Kaho Builder adds a tool, a version is restored) the switches follow,
+  // so a later "Save tools" can never undo what was just set up.
+  const live = agent.tools.join("|");
+  useEffect(() => { setPicked(agent.tools); }, [live]); // eslint-disable-line react-hooks/exhaustive-deps
   const toggle = (name) => setPicked((p) => (p.includes(name) ? p.filter((x) => x !== name) : [...p, name]));
   const save = async () => { try { await patch(`/api/agents/${agent.id}`, { tools: picked }); toast("Saved as a draft. Publish it when you are ready."); onChanged(); } catch (e) { toast(e.message, true); } };
+  const questions = agent.settings.capture_fields ?? [];
+  const row = (t) => (
+    <div key={t.name} className="toggle-line">
+      <div>
+        <b>{t.label || TOOL_LABELS[t.name]}</b>
+        {t.made_by === "builder" && <span className="made-by" title="Set up for you by Kaho Builder"><Icon name="spark" />Kaho Builder</span>}
+        <div className="hint">{t.description}</div>
+        {t.name === "save_answer" && picked.includes("save_answer") && (
+          <div className="hint">{questions.length ? `Asks and saves: ${questions.map((f) => f.label).join(", ")}.` : "No questions yet. Add them on the Questions to save tab, or tell Kaho Builder."}</div>
+        )}
+        {!t.ready && <div className="hint" style={{ color: "var(--warn)" }}>Needs {t.needs} to be set on the server first.</div>}
+      </div>
+      <label className="switch"><input type="checkbox" checked={picked.includes(t.name)} onChange={() => toggle(t.name)} /><span /></label>
+    </div>
+  );
+  const own = tools.filter((t) => t.custom);
   return (
     <div className="card" style={{ maxWidth: 760 }}>
       <div className="card-head"><span className="card-title">What this agent can do on a call</span></div>
-      {tools.map((t) => (
-        <div key={t.name} className="toggle-line">
-          <div><b>{t.label || TOOL_LABELS[t.name]}</b><div className="hint">{t.description}</div>{!t.ready && <div className="hint" style={{ color: "var(--warn)" }}>Needs {t.needs} set up on the server first.</div>}</div>
-          <label className="switch"><input type="checkbox" checked={picked.includes(t.name)} onChange={() => toggle(t.name)} /><span /></label>
-        </div>
-      ))}
+      {tools.filter((t) => !t.custom).map(row)}
+      {own.length > 0 && (
+        <>
+          <div className="tools-divider">Your own tools</div>
+          {own.map(row)}
+        </>
+      )}
       <div className="actions"><button className="primary" onClick={save}>Save tools</button></div>
     </div>
   );

@@ -6,6 +6,7 @@ import { motion } from "motion/react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { get, patch, post } from "../api.js";
 import { useAuth } from "../auth.jsx";
+import { addPage, withDays } from "../feed.js";
 import { LogoMark, Wordmark } from "../logo.jsx";
 import { ago, Avatar, ErrorBoundary, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
 
@@ -213,13 +214,44 @@ const roleLabel = (id) => ROLE_LABEL[id] ?? id;
 const KIND_ICON = { call: "call", agent: "agent", prompt: "prompt", account: "team", error: "warn", lead: "contacts" };
 
 function Bell() {
-  const [feed, setFeed] = useState({ items: [], unread: 0 });
+  const [items, setItems] = useState([]);
+  const [next, setNext] = useState(null);
+  const [unread, setUnread] = useState(0);
   const [open, setOpen] = useState(false);
-  const [older, setOlder] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(false);
   const wrap = useRef();
+  const panel = useRef();
+  const end = useRef();
   const navigate = useNavigate();
-  const load = useCallback(() => get(`/api/notifications${older ? "?limit=100" : ""}`).then(setFeed).catch(() => {}), [older]);
-  useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
+
+  // The newest page, now and every half minute: new things appear on top without losing what was scrolled to.
+  const refresh = useCallback(() => get("/api/notifications?limit=20").then((r) => {
+    setItems((have) => addPage(have, r.items));
+    setNext((have) => (have === null && !ready ? r.next : have));
+    setUnread(r.unread);
+    setReady(true);
+  }).catch(() => {}), [ready]);
+  useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => clearInterval(t); }, [refresh]);
+
+  const loadMore = useCallback(async () => {
+    if (!next || loading) return;
+    setLoading(true);
+    try {
+      const r = await get(`/api/notifications?limit=20&before=${encodeURIComponent(next)}`);
+      setItems((have) => addPage(have, r.items));
+      setNext(r.next);
+    } catch { /* the next scroll tries again */ } finally { setLoading(false); }
+  }, [next, loading]);
+
+  // Reaching the bottom of the list brings the next page.
+  useEffect(() => {
+    if (!open || !next || typeof IntersectionObserver === "undefined" || !end.current) return undefined;
+    const watch = new IntersectionObserver((seen) => { if (seen[0]?.isIntersecting) loadMore(); }, { root: panel.current, rootMargin: "120px" });
+    watch.observe(end.current);
+    return () => watch.disconnect();
+  }, [open, next, loadMore, items.length]);
+
   // Anywhere outside the panel, or Escape, closes it.
   useEffect(() => {
     if (!open) return undefined;
@@ -229,35 +261,45 @@ function Bell() {
     document.addEventListener("keydown", esc);
     return () => { document.removeEventListener("mousedown", away); document.removeEventListener("keydown", esc); };
   }, [open]);
-  const markRead = async () => { await post("/api/notifications/seen").catch(() => {}); load(); };
+
+  const markRead = async () => {
+    await post("/api/notifications/seen").catch(() => {});
+    setItems((have) => have.map((n) => ({ ...n, unread: false })));
+    setUnread(0);
+  };
   const openItem = (n) => { setOpen(false); if (n.view) navigate(`/${n.view}`); };
+  const rows = withDays(items);
   return (
     <div className="menu-wrap" ref={wrap}>
       <button type="button" className="icon-btn" title="Notifications" aria-haspopup="true" aria-expanded={open}
         onClick={() => setOpen((v) => !v)} style={{ position: "relative" }}>
         <Icon name="bell" />
-        {feed.unread > 0 && <span className="bell-count">{feed.unread > 9 ? "9+" : feed.unread}</span>}
+        {unread > 0 && <span className="bell-count">{unread > 9 ? "9+" : unread}</span>}
       </button>
       {open && (
-        <div className="menu notif-panel" onClick={(e) => e.stopPropagation()}>
+        <div className="menu notif-panel" ref={panel} onClick={(e) => e.stopPropagation()}>
           <div className="notif-head">
-            <div><b>Notifications</b><div className="muted">{feed.unread > 0 ? `${feed.unread} new` : "You are all caught up"}</div></div>
-            {feed.unread > 0 && <button type="button" className="link small-btn" onClick={markRead}>Mark all as read</button>}
+            <div><b>Notifications</b><div className="muted">{unread > 0 ? `${unread} new` : "You are all caught up"}</div></div>
+            {unread > 0 && <button type="button" className="link small-btn" onClick={markRead}>Mark all as read</button>}
           </div>
-          {feed.items.length === 0 && <div className="empty" style={{ padding: "var(--s6)" }}>Nothing yet. Things that happen in your organization show up here.</div>}
-          {feed.items.map((n) => (
-            <button key={n.id} type="button" className={`notif-item${n.unread ? " new" : ""}`} onClick={() => openItem(n)}>
-              <span className="notif-icon"><Icon name={KIND_ICON[n.kind] ?? "bell"} /></span>
-              <span className="notif-body">
-                <span className="notif-text">{n.text}</span>
-                <span className="muted">{[n.actor, ago(n.at)].filter(Boolean).join(" · ")}</span>
-              </span>
-              {n.unread && <i className="notif-dot" aria-label="New" />}
-            </button>
+          {ready && rows.length === 0 && <div className="empty" style={{ padding: "var(--s6)" }}>Nothing yet. Things that happen in your organization show up here.</div>}
+          {rows.map((n) => (
+            <div key={n.id}>
+              {n.day && <div className="notif-day">{n.day}</div>}
+              <button type="button" className={`notif-item${n.unread ? " new" : ""}`} onClick={() => openItem(n)}>
+                <span className="notif-icon"><Icon name={KIND_ICON[n.kind] ?? "bell"} /></span>
+                <span className="notif-body">
+                  <span className="notif-text">{n.text}</span>
+                  <span className="notif-meta">{[n.actor, ago(n.at)].filter(Boolean).join(" · ")}</span>
+                </span>
+                {n.unread && <i className="notif-dot" aria-label="New" />}
+              </button>
+            </div>
           ))}
-          {!older && feed.items.length >= 30 && (
-            <button type="button" className="link notif-more" onClick={() => setOlder(true)}>Show older</button>
-          )}
+          <div ref={end} className="notif-end" aria-hidden={!next && !loading}>
+            {loading && <span className="muted">Loading…</span>}
+            {!next && !loading && rows.length > 0 && <span className="muted">That is everything.</span>}
+          </div>
         </div>
       )}
     </div>

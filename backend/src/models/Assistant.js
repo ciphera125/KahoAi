@@ -207,7 +207,8 @@ async function buildLookUp(orgId, agent, proposal) {
   const keys = proposal.inputs.map((x) => CustomTool.machineName(x.label));
   const body = JSON.stringify(Object.fromEntries(keys.map((k) => [k, `{{input.${k}}}`])));
   const tool = await CustomTool.create(orgId, { label: proposal.label, description: proposal.description, url: proposal.url,
-    method: "POST", inputs: proposal.inputs, say_while_waiting: proposal.say_while_waiting, body_template: body });
+    method: "POST", inputs: proposal.inputs, say_while_waiting: proposal.say_while_waiting, body_template: body },
+  { madeBy: "builder" });
   const tools = agent.tools.includes(tool.name) ? agent.tools : [...agent.tools, tool.name];
   await updateAgent(orgId, agent.id, { tools });
   const when = proposal.description ? plain(proposal.description).replace(/^use (it )?(when )?/i, "") : plain(proposal.label).toLowerCase();

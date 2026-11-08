@@ -65,7 +65,7 @@ export default function CustomTools() {
           </div>
           {shown.map((t) => (
             <div key={t.id} className="row" style={{ gridTemplateColumns: "minmax(0,1.2fr) minmax(0,1.6fr) 150px 150px" }}>
-              <div style={{ minWidth: 0 }}><b className="ellip">{t.label}</b>
+              <div style={{ minWidth: 0 }}><b className="ellip">{t.label}</b>{t.made_by === "builder" && <span className="made-by" title="Set up for you by Kaho Builder"><Icon name="spark" />Kaho Builder</span>}
                 <div className="muted ellip">{t.inputs.length ? `Collects: ${t.inputs.map((i) => i.label).join(", ")}` : "Collects nothing"}</div></div>
               <span className="ellip muted" title={t.description}>{t.description || "No note yet"}</span>
               <span>{t.last_test_at
@@ -80,7 +80,7 @@ export default function CustomTools() {
       )}
       {tools?.length > 0 && pager}
 
-      {chatting && <Assistant onClose={() => setChatting(false)} onApplied={() => load()} />}
+      {chatting && <Assistant onClose={() => setChatting(false)} onApplied={() => load()} onShow={() => setChatting(false)} />}
       {editing && <ToolForm tool={editing} onClose={() => setEditing(null)}
         onSaved={() => { setEditing(null); load(); }} />}
       {confirmNode}

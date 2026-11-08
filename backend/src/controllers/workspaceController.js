@@ -53,7 +53,7 @@ export async function tools(req, res) {
   res.json([
     ...TOOL_CATALOG.map((t) => ({ ...t, ready: !t.needs || Boolean(config[t.needs]) })),
     ...own.map((t) => ({ name: t.name, label: t.label, description: t.description || "Calls your own system.",
-      needs: null, ready: true, custom: true })),
+      needs: null, ready: true, custom: true, made_by: t.made_by })),
   ]);
 }
 
@@ -63,9 +63,10 @@ export function providers(_req, res) {
 }
 
 export async function notifications(req, res) {
-  const [items, unread] = await Promise.all([
-    Activity.recent(req.user.org_id, req.query.limit ?? 30, req.user.seen_at), Activity.unread(req.user.org_id, req.user.seen_at)]);
-  res.json({ items, unread });
+  const [feed, unread] = await Promise.all([
+    Activity.page(req.user.org_id, { limit: req.query.limit ?? 20, before: req.query.before ?? null, since: req.user.seen_at }),
+    Activity.unread(req.user.org_id, req.user.seen_at)]);
+  res.json({ items: feed.items, next: feed.next, unread });
 }
 
 export async function notificationsSeen(req, res) {

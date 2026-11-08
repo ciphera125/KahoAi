@@ -2008,3 +2008,12 @@ Also closed: DNS rebinding. Outgoing requests (tools, webhook) now connect throu
 address at the moment of connecting, using node's own http/https instead of fetch.
 All 7 findings from the pen-test are now fixed. Still true: the consent flag on API calls is only asserted, and
 the loopback block needs `NODE_ENV=production` on the deployment.
+
+### 2026-11-08 (night): call button, roomier notifications, Builder tools shown
+
+Contacts list has a Call button per row (window asks agent, number, consent; disabled for Do not call and
+refused). Notifications: roomier rows, day headings, infinite scroll by cursor (`next`/`before`, pages of 20,
+history kept up to 2000). Tools made by Kaho Builder carry a "Kaho Builder" badge (`custom_tools.made_by`, migration
+024, applied live) in Your own tools and in the agent's Tools tab, which now has a "Your own tools" section and no
+longer keeps a stale copy of the switches (it used to be able to undo what the Builder had just added).
+Not tried: placing a real call from the new button, and a Builder build in live data (looked at, not run).
