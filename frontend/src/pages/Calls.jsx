@@ -152,7 +152,7 @@ function History({ reload, onWatch }) {
             <b className="ellip">{c.contact_name || c.peer || "Unknown number"}</b>
             <div className="muted ellip">{[whenShort(c.started_at), c.agent_name, c.status === "answered" ? fmtDur(c.duration_secs) : null].filter(Boolean).join(" · ")}</div>
           </div>
-          <span className="call-meta">{c.has_recording && <span className="rec-badge" title="This call was recorded"><Icon name="mic" />Recording</span>}<OutcomePill status={c.status} /></span>
+          <span className="call-meta">{c.has_recording && <span className="rec-badge" title="This call was recorded"><Icon name="mic" />Recording</span>}<OutcomePill status={c.status} />{c.sentiment && <span className={`mood ${c.sentiment}`} title={`The caller left ${c.sentiment === "positive" ? "happy" : c.sentiment === "negative" ? "unhappy" : "neutral"}`}>{c.sentiment === "positive" ? "Happy" : c.sentiment === "negative" ? "Unhappy" : "Neutral"}</span>}</span>
         </button>
       ))}
       {data && <Pager view={serverView({ page, total: data.total, size })} size={size} onPage={setPage} onSize={(n) => { setSize(n); setPage(1); }} />}

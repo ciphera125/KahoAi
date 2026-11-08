@@ -183,7 +183,7 @@ export async function ingest(callId, events) {
 
 export const PAGE_SIZES = [10, 25, 50]; // the same three choices on every page of the Studio
 
-const FIELDS = `call_id, peer, direction, started_at, duration_secs, turns, summary, caller_turns, lead, has_transcript,
+const FIELDS = `call_id, peer, direction, started_at, duration_secs, turns, summary, sentiment, caller_turns, lead, has_transcript,
   ${STATUS_SQL} AS status, cause, cost, agent_id, ${SUCCESS_SQL} AS successful,
   (recording_path IS NOT NULL) AS has_recording`;
 
@@ -447,9 +447,9 @@ export async function usage(orgId, days) {
 /** How a call ended, in a few fields, for the public API. */
 export async function summaryOf(orgId, callId) {
   const { rows } = await inOrg(orgId, (db) => db.query(
-    "SELECT direction, summary, lead FROM calls WHERE call_id = $1 AND org_id = $2", [String(callId), orgId]));
+    "SELECT direction, summary, lead, sentiment FROM calls WHERE call_id = $1 AND org_id = $2", [String(callId), orgId]));
   if (!rows[0]) throw new NotFoundError("call");
-  return { direction: rows[0].direction, summary: rows[0].summary, lead: Boolean(rows[0].lead) };
+  return { direction: rows[0].direction, summary: rows[0].summary, lead: Boolean(rows[0].lead), sentiment: rows[0].sentiment };
 }
 
 /** What a call's text transcript and its file names are built from. */

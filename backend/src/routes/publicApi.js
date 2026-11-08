@@ -70,7 +70,7 @@ router.get("/calls/:callId", async (req, res) => {
     Call.forFiles(org, req.params.callId), Call.turns(org, req.params.callId),
     CallAnswer.forCall(org, req.params.callId), Call.summaryOf(org, req.params.callId)]);
   res.json({ call_id: req.params.callId, agent_id: meta.agentId ?? null, peer: meta.peer, started_at: meta.startedAt,
-    duration_secs: meta.durationSecs, direction: page.direction, summary: page.summary, lead: page.lead,
+    duration_secs: meta.durationSecs, direction: page.direction, summary: page.summary, lead: page.lead, sentiment: page.sentiment,
     answers: answers.map((a) => ({ key: a.field_key, label: a.label, kind: a.kind, value: a.value })),
     transcript: turns });
 });
