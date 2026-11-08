@@ -1966,3 +1966,20 @@ live test `GROQ_LIVE`). New: templates, knowledge base (`search_knowledge`, Stud
 (done). Looked at in a real browser: Builder panel, Usage, Settings webhook tab, New agent templates,
 agent Knowledge tab; two layout bugs found and fixed that tests could not see.
 **Not verified on a real call:** voicemail hang-up, the knowledge tool, the webhook against a real receiver.
+
+### 2026-11-08 (late): audit log, keypad input, pen-test
+
+Audit log (migration 023, applied live): append-only, the app role can only insert and read; Settings, Audit log
+tab, searchable, 10/25/50, spreadsheet export. Role changes now name the real role. Keypad input
+(`DTMF_INPUT`, off): Pipecat's aggregator turns pressed digits into "DTMF: 12#"; not tried on a real call.
+**Pen-test findings (reported, NOT fixed, owner decides):**
+1. An https address of 127.0.0.1 or localhost passes the address check even in production (also as 2130706433,
+   0x7f.1), so a tool or the call webhook can be pointed at the Studio's own machine.
+2. The Builder writes the model's description and input names into the agent prompt without stripping
+   newlines, so a hostile or confused model can add whole prompt lines.
+3. No rate limit on the Builder: 80 messages in a row made 80 model calls.
+4. No limit on an API key placing calls: 60 requests in a burst placed 60 calls (consent is only asserted).
+5. Any team member, a viewer included, can read the webhook address, which may carry a token in its query.
+6. Undo accepts any tool id of the organization, not only ones the Builder made (needs the tools permission).
+7. A knowledge document's text is returned to the model verbatim, so a document can carry instructions
+   (only people who can edit agents can add one).
