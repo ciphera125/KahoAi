@@ -3,6 +3,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
 import AgentCalls from "../components/AgentCalls.jsx";
+import Assistant, { AssistantButton } from "../components/Assistant.jsx";
 import { Icon, Menu, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 const TOOL_LABELS = {
@@ -22,6 +23,7 @@ export default function AgentDetail() {
   const [check, setCheck] = useState({ problems: [], can_publish: true });
   const [languages, setLanguages] = useState([]);
   const [tab, setTab] = useState("prompt");
+  const [chatting, setChatting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -54,11 +56,14 @@ export default function AgentDetail() {
         {["prompt", "tools", "questions", "settings", "calls", "versions"].map((t) => <button key={t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{t === "prompt" ? "Prompt" : t === "tools" ? "Tools" : t === "questions" ? "Questions to save" : t === "settings" ? "Call settings" : t === "calls" ? "Call history" : "Versions"}</button>)}
       </div>
       {tab === "prompt" && <PromptTab agent={agent} prompts={prompts} onChanged={load} />}
+      {(tab === "tools" || tab === "questions") && (can(me, "agents.edit") || can(me, "tools.custom")) && (
+        <div className="assist-bar"><span className="hint">Not sure how to set this up? Just say what you want.</span><AssistantButton onClick={() => setChatting(true)} /></div>)}
       {tab === "tools" && <ToolsTab agent={agent} tools={tools} onChanged={load} />}
       {tab === "settings" && <SettingsTab agent={agent} limits={limits} languages={languages} onChanged={load} />}
       {tab === "calls" && <AgentCalls agent={agent} />}
       {tab === "questions" && <QuestionsTab agent={agent} onChanged={load} />}
       {tab === "versions" && <VersionsTab agent={agent} confirm={confirm} onChanged={load} />}
+      {chatting && <Assistant agentId={agent.id} onClose={() => setChatting(false)} onApplied={() => load()} />}
       {confirmNode}
     </section>
   );

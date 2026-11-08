@@ -44,7 +44,7 @@ export function fieldKey(label) {
 
 /** The questions this agent asks and saves. Kept in settings so they are drafted and
  * published with everything else. */
-function checkCaptureFields(raw) {
+export function checkCaptureFields(raw) {
   if (!Array.isArray(raw)) throw new ValidationError("the questions to save must be a list");
   if (raw.length > MAX_CAPTURE_FIELDS) throw new ValidationError(`at most ${MAX_CAPTURE_FIELDS} questions to save`);
   const out = [];

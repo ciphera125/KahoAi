@@ -1,3 +1,4 @@
+import * as assistant from "../controllers/assistantController.js";
 import { Router } from "express";
 import * as ws from "../controllers/workspaceController.js";
 import * as auth from "../controllers/authController.js";
@@ -19,6 +20,8 @@ router.post("/orgs/join", authLimiter, orgs.join);
 router.post("/orgs/:orgId/switch", orgs.switchTo);
 router.get("/team", auth.team);
 router.get("/roles", ws.roles);
+router.post("/assistant/message", assistant.message);
+router.post("/assistant/apply", assistant.apply);
 router.get("/avatars", ws.avatars);
 router.patch("/me/profile", ws.updateProfile);
 router.get("/org/settings", ws.orgSettings);

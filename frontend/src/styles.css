@@ -573,3 +573,27 @@ table.matrix .no { color: var(--text-3); }
 .role-select { width: 100%; height: 32px; padding: 0 8px; }
 .profile-head { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s4); }
 .avatar.big { width: 56px; height: 56px; font-size: 30px; flex: none; }
+
+/* the setup assistant */
+.assistant { position: fixed; right: 0; top: 0; bottom: 0; width: 420px; max-width: 100vw; z-index: 60; display: flex; flex-direction: column;
+  background: var(--surface); border-left: 1px solid var(--border); box-shadow: -12px 0 40px rgba(0,0,0,.18); }
+.assistant-head { display: flex; justify-content: space-between; align-items: flex-start; gap: var(--s3); padding: var(--s4); border-bottom: 1px solid var(--border); }
+.assistant-agent { padding: var(--s3) var(--s4); border-bottom: 1px solid var(--border); }
+.assistant-chat { flex: 1; overflow-y: auto; padding: var(--s4); display: flex; flex-direction: column; gap: var(--s2); }
+.bubble { max-width: 88%; padding: 9px 13px; border-radius: 16px; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; }
+.bubble.assistant { align-self: flex-start; background: var(--surface-2); border-bottom-left-radius: 4px; }
+.bubble.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); border-bottom-right-radius: 4px; }
+.bubble.typing { color: var(--text-3); font-style: italic; }
+.ideas { display: flex; flex-direction: column; gap: 6px; margin-top: var(--s2); }
+.ideas .chip { text-align: left; white-space: normal; }
+.proposal { border: 1px solid var(--accent); background: var(--accent-soft); border-radius: var(--r-lg); padding: var(--s3) var(--s4); margin-top: var(--s2); }
+.assistant-input { border-top: 1px solid var(--border); padding: var(--s3) var(--s4); display: grid; gap: var(--s2); }
+.assistant-input textarea { resize: none; }
+.assistant-buttons { display: flex; align-items: center; gap: var(--s2); }
+.assistant-buttons select { width: auto; }
+.mic.on { background: var(--bad); color: #fff; border-color: var(--bad); }
+.assistant-open { align-self: center; }
+.assist-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s3); padding: var(--s2) var(--s3);
+  border: 1px dashed var(--accent); border-radius: var(--r-md); background: var(--accent-soft); }
+.assist-bar { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); margin-bottom: var(--s3); padding: var(--s2) var(--s3);
+  border: 1px dashed var(--accent); border-radius: var(--r-md); background: var(--accent-soft); }

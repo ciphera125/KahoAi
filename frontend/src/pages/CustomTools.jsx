@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
 import { dayWord } from "../time.js";
+import Assistant, { AssistantButton } from "../components/Assistant.jsx";
 import { Icon, Modal, Spinner, usePaged, useConfirm, useToast } from "../ui.jsx";
 
 const TYPES = [["text", "Words"], ["number", "A number"], ["yes_no", "Yes or no"]];
@@ -19,6 +20,7 @@ export default function CustomTools() {
   const [confirm, confirmNode] = useConfirm();
   const [tools, setTools] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [chatting, setChatting] = useState(false);
 
   const load = useCallback(() => get("/api/custom-tools").then(setTools).catch((e) => toast(e.message, true)), [toast]);
   useEffect(() => { load(); }, [load]);
@@ -36,6 +38,7 @@ export default function CustomTools() {
         <div><h1>Your own tools</h1>
           <div className="sub">Let an agent ask your own system something during a call, like “where is my order?”.</div></div>
         {can(me, "tools.custom") && <div className="head-actions">
+          <AssistantButton onClick={() => setChatting(true)} />
           <button className="primary" onClick={() => setEditing(BLANK)}><Icon name="plus" />New tool</button></div>}
       </header>
 
@@ -77,6 +80,7 @@ export default function CustomTools() {
       )}
       {tools?.length > 0 && pager}
 
+      {chatting && <Assistant onClose={() => setChatting(false)} onApplied={() => load()} />}
       {editing && <ToolForm tool={editing} onClose={() => setEditing(null)}
         onSaved={() => { setEditing(null); load(); }} />}
       {confirmNode}
