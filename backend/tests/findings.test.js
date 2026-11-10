@@ -96,7 +96,7 @@ describe("finding 6: undo only takes back what the Builder itself built", () => 
     const b = await owner();
     const a = await mk(b);
     useModel(propose(LOOK));
-    const made = (await b.post("/api/assistant/message").send({ agent_id: a.id, messages: said("orders") })).body;
+    const made = (await b.post("/api/assistant/message").send({ agent_id: a.id, messages: said("orders at https://api.example.com/o") })).body;
     expect(typeof made.undo).toBe("string");
     expect((await b.post("/api/assistant/undo").send({ agent_id: a.id, undo: made.undo })).status).toBe(200);
     expect((await b.get("/api/custom-tools")).body).toEqual([]);

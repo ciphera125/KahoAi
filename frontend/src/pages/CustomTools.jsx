@@ -5,7 +5,8 @@ import { del, get, patch, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
 import { dayWord } from "../time.js";
 import Assistant, { AssistantButton } from "../components/Assistant.jsx";
-import { Icon, Modal, Spinner, usePaged, useConfirm, useToast } from "../ui.jsx";
+import { serverView } from "../paginate.js";
+import { Icon, Modal, Pager, Spinner, usePaged, useConfirm, useToast } from "../ui.jsx";
 
 const TYPES = [["text", "Words"], ["number", "A number"], ["yes_no", "Yes or no"]];
 const METHODS = [["POST", "Send information (POST)"], ["GET", "Just ask (GET)"], ["PUT", "Replace (PUT)"], ["PATCH", "Update (PATCH)"]];
@@ -19,7 +20,7 @@ const BLANK = {
 export default function CustomTools() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const [view, setView] = useState(params.get("tab") === "history" ? "history" : "tools");
+  const [view, setView] = useState(["history", "changes"].includes(params.get("tab")) ? params.get("tab") : "tools");
   const me = useMe();
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
@@ -41,7 +42,15 @@ export default function CustomTools() {
     <div className="seg" style={{ marginBottom: "var(--s4)" }}>
       <button className={view === "tools" ? "on" : ""} onClick={() => setView("tools")}>Your tools</button>
       <button className={view === "history" ? "on" : ""} onClick={() => setView("history")}>History</button>
+      <button className={view === "changes" ? "on" : ""} onClick={() => setView("changes")}>Tool log</button>
     </div>
+  );
+  if (view === "changes") return (
+    <section>
+      <header className="page"><div><h1>Your own tools</h1></div></header>
+      {switcher}
+      <ToolLog />
+    </section>
   );
   if (view === "history") return (
     <section>
@@ -258,5 +267,42 @@ function ToolForm({ tool, onClose, onSaved }) {
         <button className="primary" onClick={save} disabled={busy || !form.label.trim() || !form.url.trim()}>{busy ? "Working…" : "Save tool"}</button>
       </div>
     </Modal>
+  );
+}
+
+const ACTION = { built: "Built by Kaho Builder", undone: "Undone", created: "Created", updated: "Changed", removed: "Removed" };
+
+/** Every tool made, changed, removed or undone, by Kaho Builder or by hand. Kept for good, and filed in Storage. */
+function ToolLog() {
+  const toast = useToast();
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(10);
+  const [q, setQ] = useState("");
+  const [find, setFind] = useState("");
+  const [d, setD] = useState(null);
+  useEffect(() => { const t = setTimeout(() => setFind(q), 250); return () => clearTimeout(t); }, [q]);
+  useEffect(() => { setPage(1); }, [find, perPage]);
+  useEffect(() => {
+    get(`/api/tool-log?page=${page}&per_page=${perPage}&q=${encodeURIComponent(find)}`).then(setD).catch((e) => toast(e.message, true));
+  }, [page, perPage, find, toast]);
+  return (
+    <div className="stack">
+      <div className="card explain">
+        <b>Tool log</b>
+        <p className="hint">Who made, changed, removed or undid a tool, and whether Kaho Builder or a person did it. It cannot be edited or deleted from the Studio, and a copy is filed daily in your Storage under tool-logs.</p>
+        <div className="actions"><input value={q} placeholder="Search by tool or person" onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 320 }} /></div>
+      </div>
+      {!d ? <Spinner /> : d.entries.length === 0 ? <div className="card"><p className="hint">No tool has been made or changed yet.</p></div> : (
+        <div className="card">
+          <table className="rows"><thead><tr><th>When</th><th>Who</th><th>Tool</th><th>What happened</th></tr></thead>
+            <tbody>{d.entries.map((e) => (
+              <tr key={e.id}><td className="nowrap">{new Date(e.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</td>
+                <td>{e.actor}<div className="hint">{e.role}</div></td>
+                <td>{e.tool_label}{e.source === "builder" && <span className="made-by"><Icon name="spark" />Kaho Builder</span>}</td>
+                <td className="tl-detail">{ACTION[e.action]}<div className="hint">{e.detail}</div></td></tr>))}</tbody></table>
+        </div>
+      )}
+      {d && <Pager view={serverView({ page: d.page, total: d.total, size: d.per_page })} size={d.per_page} onPage={setPage} onSize={(n) => { setPerPage(n); setPage(1); }} />}
+    </div>
   );
 }

@@ -4,6 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { get, post } from "../api.js";
 import { Icon, useToast } from "../ui.jsx";
+import { ago } from "../ui.jsx";
 
 const GREETING = "Tell me what you would like your agent to do, in your own words, and I will set it up.";
 const IDEAS = [
@@ -25,6 +26,9 @@ export default function Assistant({ agentId = null, onClose, onApplied, onShow }
   const [agent, setAgent] = useState(agentId ?? "");
   const [listening, setListening] = useState(false);
   const [lang, setLang] = useState("en-IN");
+  const [view, setView] = useState("chat"); // chat | history
+  const [past, setPast] = useState(null);
+  const [editedFrom, setEditedFrom] = useState(null);
   const rec = useRef(null);
   const end = useRef(null);
 
@@ -39,6 +43,18 @@ export default function Assistant({ agentId = null, onClose, onApplied, onShow }
 
   const add = (turn) => setTurns((t) => [...t, turn]);
 
+  // What was asked before, newest first, for this agent (or every agent when none is chosen).
+  useEffect(() => {
+    if (view !== "history") return;
+    setPast(null);
+    get(`/api/assistant/history?per_page=50${agent ? `&agent_id=${encodeURIComponent(agent)}` : ""}`)
+      .then((d) => setPast(d.entries)).catch((e) => { setPast([]); toast(e.message, true); });
+  }, [view, agent, toast]);
+
+  // Editing an earlier prompt: its words go back in the box, to be changed and sent again. The old
+  // one stays in the history as it was.
+  const edit = (entry) => { setText(entry.prompt.slice(0, 600)); setEditedFrom(entry.id); setView("chat"); };
+
   const send = async (words) => {
     const said = (words ?? text).trim();
     if (!said || busy) return;
@@ -48,7 +64,9 @@ export default function Assistant({ agentId = null, onClose, onApplied, onShow }
     setTurns(next);
     setBusy(true);
     try {
-      const r = await post("/api/assistant/message", { agent_id: agent || undefined,
+      const from = editedFrom;
+      setEditedFrom(null);
+      const r = await post("/api/assistant/message", { agent_id: agent || undefined, edited_from: from || undefined,
         messages: next.filter((t) => !t.local && !t.card).map(({ role, content }) => ({ role, content })) });
       add({ role: "assistant", content: r.reply, card: r.created ? { ...r.created, undo: r.undo } : null });
       if (r.created) onApplied?.();
@@ -88,6 +106,8 @@ export default function Assistant({ agentId = null, onClose, onApplied, onShow }
       <header className="kb-head">
         <span className="kb-mark" aria-hidden="true"><Icon name="spark" /></span>
         <div className="kb-title"><b>Kaho Builder</b><span>Describe it. It gets built.</span></div>
+        <button type="button" className={`kb-hist${view === "history" ? " on" : ""}`} onClick={() => setView(view === "history" ? "chat" : "history")}
+          aria-pressed={view === "history"} title="What you asked before">History</button>
         <button type="button" className="kb-close" onClick={onClose} aria-label="Close" title="Close"><Icon name="x" /></button>
       </header>
 
@@ -101,7 +121,26 @@ export default function Assistant({ agentId = null, onClose, onApplied, onShow }
         </div>
       )}
 
-      <div className="kb-chat">
+      {view === "history" && (
+        <div className="kb-chat kb-past" aria-label="What you asked before">
+          {past === null && <div className="kb-row assistant"><div className="kb-bubble kb-dots"><i /><i /><i /></div></div>}
+          {past?.length === 0 && <div className="kb-bubble">Nothing yet. What you ask Kaho Builder will be kept here, so you can look back and change it.</div>}
+          {past?.map((h) => (
+            <div key={h.id} className="kb-past-item">
+              <div className="kb-past-prompt">{h.prompt}</div>
+              <div className="kb-past-meta">
+                <span className={`pill kb-out ${h.outcome}`}>{{ built: "Built", asked: "Asked back", failed: "Did not work", refused: "Refused" }[h.outcome]}</span>
+                {h.names.length > 0 && <span className="muted">{h.names.join(", ")}</span>}
+                <span className="muted">{ago(h.at)} · {h.actor}</span>
+                {h.edited_from && <span className="muted">edited</span>}
+              </div>
+              <button type="button" className="kb-see" onClick={() => edit(h)}>Edit and send again</button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="kb-chat" hidden={view === "history"}>
         {turns.map((t, i) => (
           <div key={i} className={`kb-row ${t.role}`}>
             <div className="kb-bubble">{t.content}</div>
@@ -126,7 +165,10 @@ export default function Assistant({ agentId = null, onClose, onApplied, onShow }
         <div ref={end} />
       </div>
 
-      <form className="kb-input" onSubmit={(e) => { e.preventDefault(); send(); }}>
+      {editedFrom && view === "chat" && (
+        <div className="kb-editing">Editing an earlier request. <button type="button" onClick={() => { setEditedFrom(null); setText(""); }}>Cancel</button></div>
+      )}
+      <form className="kb-input" hidden={view === "history"} onSubmit={(e) => { e.preventDefault(); send(); }}>
         <div className="kb-field">
           <textarea rows={1} value={text} maxLength={600} aria-label="Message"
             placeholder={listening ? "Listening…" : "Message Kaho Builder"}
