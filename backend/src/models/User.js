@@ -171,6 +171,7 @@ export async function startSession(userId, orgId = null) {
       ORDER BY expires_at DESC OFFSET $2)`, [userId, MAX_SESSIONS_PER_USER - 1]);
     await db.query(`INSERT INTO sessions (token_hash, user_id, expires_at, org_id)
       VALUES ($1, $2, now() + make_interval(secs => $3), $4)`, [sha256(raw), userId, SESSION_SECS, orgId]);
+    await db.query("UPDATE users SET last_login_at = now() WHERE id = $1", [userId]);
   });
   return raw;
 }

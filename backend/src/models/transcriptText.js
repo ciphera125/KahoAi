@@ -16,9 +16,9 @@ function length(secs) {
 }
 
 export function transcriptText({ name = null, peer = null, agent = null, startedAt = null,
-  durationSecs = null, turns = [], answers = [] } = {}) {
+  durationSecs = null, turns = [], answers = [], anonymous = false } = {}) {
   const who = name ? (peer ? `${name} (${peer})` : name) : (peer ?? "an unknown caller");
-  const lines = [`Call with ${who}`];
+  const lines = [anonymous ? "Call" : `Call with ${who}`];
   if (agent) lines.push(`Agent: ${agent}`);
   if (startedAt) {
     lines.push(`Date: ${fmt(startedAt, { day: "numeric", month: "short", year: "numeric" })}, `
@@ -37,7 +37,7 @@ export function transcriptText({ name = null, peer = null, agent = null, started
 /** `Ravi-Kumar_2026-11-08_1555_ab12cd34`: who, the day and time in India, a short id. The
  * name can come from a person, so only letters, digits, - and _ survive: it ends up in a
  * path in storage and in a download's file name. */
-export function fileStem({ name = null, peer = null, startedAt = null, callId = "" } = {}) {
+export function fileStem({ name = null, peer = null, startedAt = null, callId = "", anonymous = false } = {}) {
   const clean = (text) => String(text ?? "").normalize("NFKD").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   const who = clean(name).slice(0, 40) || clean(peer).slice(0, 20) || "unknown";
   let when = "undated";
@@ -48,5 +48,5 @@ export function fileStem({ name = null, peer = null, startedAt = null, callId = 
     when = `${p.year}-${p.month}-${p.day}_${p.hour === "24" ? "00" : p.hour}${p.minute}`;
   }
   const id = String(callId).replace(/[^A-Za-z0-9]/g, "").slice(0, 8) || "call";
-  return `${who}_${when}_${id}`;
+  return anonymous ? `${when}_${id}` : `${who}_${when}_${id}`;
 }

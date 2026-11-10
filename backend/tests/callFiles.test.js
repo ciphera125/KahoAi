@@ -29,7 +29,8 @@ beforeEach(async () => { await freshDb(); log = []; refuse = false; });
 
 const CALL = "99999999-9999-9999-9999-999999999999";
 const BUCKET = "/storage/v1/object/call-recordings";
-const NAMED = "2026/11/Ravi-Kumar_2026-11-08_1555_99999999";
+const REC = "1-recordings/2026-11-08_1555_99999999";
+const TXT = "2-transcripts/2026-11-08_1555_99999999";
 
 async function aFinishedCall(b, { name = "Ravi Kumar", recorded = true } = {}) {
   await line(b);
@@ -52,26 +53,26 @@ async function aFinishedCall(b, { name = "Ravi Kumar", recorded = true } = {}) {
 const row = async () => (await db.query("SELECT recording_path, transcript_path FROM calls WHERE call_id = $1", [CALL])).rows[0];
 
 describe("a call's files in Supabase Storage", () => {
-  it("renames the recording after the person, the day and the time", async () => {
+  it("files the recording in 1-recordings, named for the day and time and nothing about the person", async () => {
     const b = await owner();
     await aFinishedCall(b);
     await publishCallFiles(CALL);
     const move = log.find((r) => r.url === "/storage/v1/object/move");
     expect(JSON.parse(move.body)).toEqual({ bucketId: "call-recordings", sourceKey: `2026/11/${CALL}.opus`,
-      destinationKey: `${NAMED}.opus` });
-    expect((await row()).recording_path).toBe(`${NAMED}.opus`);
+      destinationKey: `${REC}.opus` });
+    expect((await row()).recording_path).toBe(`${REC}.opus`);
   });
 
-  it("saves the transcript next to it, as readable text with the same name", async () => {
+  it("saves the transcript in 2-transcripts with the same name, with no name, number or e-mail in it", async () => {
     const b = await owner();
     await aFinishedCall(b);
     await publishCallFiles(CALL);
-    const put = log.find((r) => r.method === "POST" && r.url === `${BUCKET}/${NAMED}.txt`);
+    const put = log.find((r) => r.method === "POST" && r.url === `${BUCKET}/${TXT}.txt`);
     expect(put.type).toMatch(/^text\/plain/);
-    expect(put.body).toContain("Call with Ravi Kumar");
+    expect(put.body).not.toMatch(/Ravi|Kumar|9876543210|\+91/);
     expect(put.body).toContain("Caller: Hi");
     expect(put.auth).toMatch(/^Bearer /);
-    expect((await row()).transcript_path).toBe(`${NAMED}.txt`);
+    expect((await row()).transcript_path).toBe(`${TXT}.txt`);
   });
 
   it("does the transcript alone for a call that was not recorded", async () => {
@@ -79,7 +80,7 @@ describe("a call's files in Supabase Storage", () => {
     await aFinishedCall(b, { recorded: false });
     await publishCallFiles(CALL);
     expect(log.some((r) => r.url === "/storage/v1/object/move")).toBe(false);
-    expect((await row()).transcript_path).toBe(`${NAMED}.txt`);
+    expect((await row()).transcript_path).toBe(`${TXT}.txt`);
   });
 
   it("does nothing twice: a recording already under its name is left where it is", async () => {
@@ -96,7 +97,7 @@ describe("a call's files in Supabase Storage", () => {
     await aFinishedCall(b, { name: '../../etc/passwd "x"' });
     await publishCallFiles(CALL);
     const { recording_path: path } = await row();
-    expect(path).toMatch(/^2026\/11\/[A-Za-z0-9_-]+\.opus$/);
+    expect(path).toMatch(/^1-recordings\/[A-Za-z0-9_-]+\.opus$/);
     expect(path).not.toContain("..");
   });
 
@@ -129,7 +130,7 @@ describe("a call's files in Supabase Storage", () => {
     await aFinishedCall(b, { recorded: false });
     await internal("post", `/internal/v1/calls/${CALL}/recording`).send({ path: `2026/11/${CALL}.opus`, bytes: 6000, mime: "audio/opus" });
     await new Promise((r) => setTimeout(r, 400));
-    expect((await row()).recording_path).toBe(`${NAMED}.opus`);
+    expect((await row()).recording_path).toBe(`${REC}.opus`);
   });
 
   it("is served under that name, and downloads as the same file name", async () => {
@@ -138,7 +139,7 @@ describe("a call's files in Supabase Storage", () => {
     await publishCallFiles(CALL);
     const r = await b.get(`/api/calls/${CALL}/recording`);
     expect(r.status).toBe(200);
-    expect(r.body.url).toContain(`${NAMED}.opus`);
+    expect(r.body.url).toContain(`${REC}.opus`);
     expect(r.body.download_url).toContain(`download=${encodeURIComponent("Ravi-Kumar_2026-11-08_1555_99999999.opus")}`);
   });
 });
@@ -152,7 +153,7 @@ describe("they are deleted together", () => {
     log = [];
     await runOnce({ days: 60 });
     const deleted = log.filter((r) => r.method === "DELETE").map((r) => r.url);
-    expect(deleted).toEqual(expect.arrayContaining([`${BUCKET}/${NAMED}.opus`, `${BUCKET}/${NAMED}.txt`]));
+    expect(deleted).toEqual(expect.arrayContaining([`${BUCKET}/${REC}.opus`, `${BUCKET}/${TXT}.txt`]));
     expect(await row()).toEqual({ recording_path: null, transcript_path: null });
   });
 });

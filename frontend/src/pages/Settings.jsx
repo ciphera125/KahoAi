@@ -7,7 +7,7 @@ import { can, isAdmin, useMe } from "../auth.jsx";
 import { Icon, Pager, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 const TABS = [["organization", "Organization"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
-  ["webhook", "Call webhook"], ["usage", "Usage"], ["audit", "Audit log"]];
+  ["webhook", "Call webhook"], ["usage", "Usage"], ["system", "System check"], ["audit", "Audit log"]];
 
 export default function Settings() {
   const me = useMe();
@@ -20,7 +20,7 @@ export default function Settings() {
           <div className="sub">The rules for your whole organization: who can do what, when calls may be made, and how other systems connect.</div></div>
       </header>
       <div className="seg" style={{ marginBottom: "var(--s4)" }}>
-        {TABS.filter(([id]) => (id !== "keys" || can(me, "keys.manage")) && (id !== "audit" || can(me, "org.settings"))).map(([id, label]) =>
+        {TABS.filter(([id]) => (id !== "keys" || can(me, "keys.manage")) && ((id !== "audit" && id !== "system") || can(me, "org.settings"))).map(([id, label]) =>
           <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>)}
       </div>
       {tab === "organization" && <Organization />}
@@ -29,6 +29,7 @@ export default function Settings() {
       {tab === "webhook" && <Webhook />}
       {tab === "usage" && <Usage />}
       {tab === "audit" && <Audit />}
+      {tab === "system" && <SystemCheck />}
       {tab === "keys" && <ApiKeys />}
     </section>
   );
@@ -273,6 +274,69 @@ function Webhook() {
 }
 
 /** Who changed what, kept for good. Searchable, in pages of 10, 25 or 50, and downloadable. */
+/** Each outside service tried for real, so nothing fails quietly. */
+function SystemCheck() {
+  const toast = useToast();
+  const [d, setD] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const run = useCallback(async () => {
+    setBusy(true);
+    try { setD(await get("/api/system/health")); } catch (e) { toast(e.message, true); } finally { setBusy(false); }
+  }, [toast]);
+  useEffect(() => { run(); }, [run]);
+  return (
+    <div className="stack">
+      <div className="card explain">
+        <b>System check</b>
+        <p className="hint">Tries the database, the language model, Storage, your phone provider and the phone server for real, and says plainly what is not working.</p>
+        <div className="actions"><button className="ghost" disabled={busy} onClick={run}>{busy ? "Checking…" : "Check again"}</button></div>
+      </div>
+      {!d ? <Spinner /> : (
+        <div className="card">
+          <table className="rows"><thead><tr><th>Part</th><th>Working?</th><th>What it said</th></tr></thead>
+            <tbody>{d.checks.map((c) => (
+              <tr key={c.id}><td>{c.label}</td>
+                <td><span className={`pill ${c.ok ? "live" : "failed"}`}>{c.ok ? "Working" : "Not working"}</span></td>
+                <td className="tl-detail">{c.detail}</td></tr>))}</tbody></table>
+        </div>
+      )}
+      {d?.warnings.length > 0 && (
+        <div className="card explain"><b>Before real customers</b>
+          <ul className="plain">{d.warnings.map((w) => <li key={w}>{w}</li>)}</ul></div>
+      )}
+    </div>
+  );
+}
+
+function Records() {
+  const toast = useToast();
+  const [s, setS] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => get("/api/archive/status").then(setS).catch((e) => toast(e.message, true)), [toast]);
+  useEffect(() => { load(); }, [load]);
+  const run = async () => {
+    setBusy(true);
+    try {
+      const r = await post("/api/archive/run", { days: 3650 });
+      toast(r.failed ? `Filed ${r.filed}; ${r.failed} could not be filed and will be tried again.` : `Filed ${r.filed} records.`, r.failed > 0);
+      load();
+    } catch (e) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  if (!s) return null;
+  return (
+    <div className="card explain">
+      <b>Saved in Supabase Storage</b>
+      <p className="hint">{s.configured
+        ? "Audit logs, tool logs, what you asked Kaho Builder and every finished call are filed every few minutes, each in its own folder next to the call recordings:"
+        : "Storage is not set up, so these are only in the database. Add the Supabase settings to backend/.env."}</p>
+      {s.configured && <div className="archive-folders">{s.folders.map((f) => <code key={f}>{f}/</code>)}</div>}
+      {s.configured && <p className="hint">{s.last_run ? `Last filed ${new Date(s.last_run).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} (${s.last_filed} files).` : "Not filed yet since the server started."}
+        {s.last_error && <b style={{ color: "var(--bad, #a31919)" }}> {s.last_error}.</b>}</p>}
+      {s.configured && <div className="actions"><button className="ghost" disabled={busy} onClick={run}>{busy ? "Filing…" : "File everything now"}</button></div>}
+    </div>
+  );
+}
+
 function Audit() {
   const toast = useToast();
   const [page, setPage] = useState(1);
@@ -290,6 +354,7 @@ function Audit() {
   }, [page, perPage, find, toast]);
   return (
     <div className="stack">
+      <Records />
       <div className="card explain">
         <b>Audit log</b>
         <p className="hint">A permanent record of who changed what: agents, numbers, people, roles, keys and settings. It is never trimmed and cannot be edited or deleted from the Studio.</p>

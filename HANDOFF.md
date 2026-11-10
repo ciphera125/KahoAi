@@ -2029,3 +2029,62 @@ Usage moved into Settings as a tab; Tool history moved into Your own tools behin
 (`?tab=history`). The sidebar entries are gone; `/usage` and `/tool-calls` redirect. Frontend lint 0 errors, 42 tests
 pass, build ok. No frontend component tests exist, so none were written first; not looked at in a browser; no pen-test
 run (routing and display only, no new endpoints). Committed and pushed on the owner's request.
+
+### 2026-11-11: Builder accuracy, history, tool log, Storage folders, system check, silent failures
+
+Done (test-first, red shown, then green; 586 backend tests pass, ruff and eslint clean; 45 frontend tests): **Kaho Builder**
+history (`builder_history`, append-only, edit makes a new row; panel has a History view with "Edit and send again") and a **tool
+log** (`tool_log`: Builder builds and undos, and tools made, changed or removed by hand; Your own tools has a Tool log view). Builder
+builds were NOT in the audit log before; they are now, and custom-tool edits too. **Supabase Storage folders** in the recordings
+bucket: `audit-logs/`, `tool-logs/`, `builder-history/` (per organization, one `.jsonl` per India day, rewritten whole each pass),
+and `calls/` (one JSON record per finished call), filed every `ARCHIVE_INTERVAL_MS` (5 min) by `services/archive.js`; Settings,
+Audit log tab shows status and "File everything now". Migration 025 is **applied to live Supabase**. Verified live: the pass
+filed 3 files with 0 failures; the bucket lists `audit-logs/`, `tool-logs/`, `calls/` (3 call records) next to `2026/`; no
+secret-looking text in them. `builder-history/` is empty only because nothing has been asked of the Builder since. **System check**
+(`GET /api/system/health`, Settings, System check tab): database and tenant role, the model key, a real Storage write, Plivo
+credentials, the phone server, plus warnings for dev-only settings. **Builder accuracy** on the real model:
+`GROQ_LIVE=1 npx vitest run tests/live_builder_industries.test.js` (25 salon, clinic, hospital, NBFC, bank, Hinglish and attack
+prompts) went from 67/75 to 100/100 at 4 repeats, after fixing an invented web address, a provider refusal over `time` kinds, and
+a build from "make it better". **Silent failures found and fixed:** Contacts bulk delete, Do not call and consent swallowed every
+error; the Calls list showed nothing on a failed load.
+Running now (local): backend 8020/8021, Studio 5173, phone server 8765, logs in the session scratchpad.
+
+**Pen-test of this work (reported, NOT fixed; owner decides).** Run for real unless noted:
+1. `POST /api/archive/run` by one organization's admin files records for EVERY organization and returns the total (run: org A's
+   call wrote org B's files too). Not a leak of content, but cross-tenant work and a count that includes others.
+2. No rate limit on `/api/archive/run` (25 full refiles in a row, all accepted) or `/api/system/health` (each makes up to five
+   outside calls and a Storage write; 20 in a row accepted). Reasoned: an admin could burn provider quota.
+3. `?page=1e99` on `/api/assistant/history` returns 500 (offset overflow); `/api/audit` and `/api/tool-log` share the code.
+4. What a person types into Kaho Builder is stored and filed unmasked: an Aadhaar and PAN typed into a prompt appear in the
+   history API and in the `builder-history/` Storage file (run). Call content goes through `masking.py`; Builder prompts do not.
+5. Not a finding, checked: SQL injection and wildcard search, IDOR on `edited_from` (404), a newline or quote in a name forging an
+   audit line (safe, each line parses), another organization's agent id in a filter (empty).
+Scope for improvement: file only the caller's organization on demand; rate-limit both endpoints; clamp `page`; mask long digit
+runs and PAN in Builder prompts before storing; the `calls/` records keep the masked transcript past `RECORDING_RETENTION_DAYS`
+(decide whether they should expire); the Studio's pages for this work have not been clicked through in a browser (no login in this
+session), only built and linted. **Owner actions:** the Groq and Supabase secret keys were printed once into this session's output
+by a mistaken `echo`; rotate them. `NODE_ENV=production` and a `TRANSFER_NUMBER` are still unset (the System check warns).
+
+### 2026-11-11 (later): numbered Storage folders, user lists, no PII in stored text, live check
+
+Supersedes the folder names in the entry above. Bucket `call-recordings` now has `1-recordings/`, `2-transcripts/`,
+`3-users/users.csv`, `4-user-emails/emails.csv`, `5-unique-users/unique-users.csv`, `6-audit-logs/`, `7-tool-logs/`,
+`8-builder-history/`, `9-call-records/` (design and reasons in CLEANROOM). File names carry no person. Text files carry no
+name, phone number or e-mail (`models/redact.js`); Aadhaar/PAN were already masked. User lists exclude passwords on purpose:
+only scrypt hashes exist, and a hash is a credential. `users.last_login_at` added (migration 026, applied live). The server
+timer files everything every 5 minutes (`archiveRunner.js`, users via `archiveUsers.js`, never from an admin's button).
+**Read-only live check: `cd backend && node scripts/verify_storage.mjs`** compares the database to Storage: every recording
+exists with the same byte size, every transcript exists with the same number of lines as the database has turns, no e-mail,
+long number or contact name in the text, user files match row counts, no hash in them, audit day-files match their rows, and
+nothing sits outside the numbered folders. Run live on 2026-11-11: 3 calls (1 recording, 3 transcripts, 3 call records), 1 user,
+1 audit day, 13 files: all matched, no problems. Only one call has a recording and only one person has signed up, so the checks
+are real but small. The earlier unnumbered folders (`audit-logs`, `tool-logs`, `calls`) and the person-named files were removed
+by a first backfill run of mine; a later bulk delete was refused by the permission guard and was not needed.
+**Pen-test of the redaction (run for real, reported, NOT fixed):** it misses digits spoken as words ("nine eight seven..."),
+Devanagari digits, a number split across two turns (each half under 9 digits), a spoken e-mail ("ravi at gmail dot com"),
+a full-width @, a UPI id (`name@bank`, no dot), a date of birth, other people's names, and a misspelt contact name. The in-app
+transcript, the database `call_events` and the download still hold names and numbers as before. Scope for improvement:
+normalise digits and `@` before matching, treat `x@y` as an id, hold digit runs across turns as masking.py does, and decide
+whether the database copy should be redacted too. Still true from the earlier entry: the archive button files every
+organization, and neither it nor the system check is rate limited.
+
