@@ -126,13 +126,15 @@ function History({ reload, onWatch }) {
   const [page, setPage] = useState(1);
   const [size, setSize] = useState(10);
   const [view, setView] = useState(null);
+  const [failed, setFailed] = useState(false);
   const [text, setText] = useState("");
   const [q, setQ] = useState("");
   const applyQuery = useMemo(() => debounce((v) => { setQ(v); setPage(1); }, 300), []);
   useEffect(() => () => applyQuery.cancel(), [applyQuery]);
   useEffect(() => {
     let live = true;
-    get(callsUrl({ page, perPage: size, q })).then((d) => { if (live) setData(d); }).catch(() => {});
+    setFailed(false);
+    get(callsUrl({ page, perPage: size, q })).then((d) => { if (live) setData(d); }).catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
   }, [page, size, reload, q]);
   return (
@@ -144,6 +146,7 @@ function History({ reload, onWatch }) {
           onChange={(e) => { setText(e.target.value); applyQuery(e.target.value); }} />
         {text && <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => { setText(""); applyQuery.cancel(); setQ(""); setPage(1); }}><Icon name="x" /></button>}
       </div>
+      {failed && <div className="hint" role="alert" style={{ color: "var(--bad, #a31919)" }}>Could not load the call history. Check the connection; it will try again when you search or change page.</div>}
       {data?.calls.length === 0 && <div className="hint">{q.trim() ? "No calls match" : "No calls yet."}</div>}
       {data?.calls.map((c) => (
         <button key={c.call_id} type="button" className="call-row"

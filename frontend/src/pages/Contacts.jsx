@@ -1,3 +1,4 @@
+import { bulkMessage, runEach } from "../bulk.js";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
@@ -65,14 +66,14 @@ export default function Contacts() {
     const ids = [...selected];
     if (action === "delete") {
       if (!(await confirm({ title: `Delete ${ids.length} contacts?`, text: "Their numbers and tags go with them.", ok: "Delete" }))) return;
-      for (const id of ids) await del(`/api/contacts/${id}`).catch(() => {});
-      toast(`${ids.length} contacts deleted.`);
+      const r = bulkMessage("deleted", await runEach(ids, (id) => del(`/api/contacts/${id}`)));
+      toast(r.text, r.bad);
     } else if (action === "dnc") {
-      for (const id of ids) await patch(`/api/contacts/${id}`, { dnc: true }).catch(() => {});
-      toast(`${ids.length} contacts marked Do not call.`);
+      const r = bulkMessage("marked Do not call", await runEach(ids, (id) => patch(`/api/contacts/${id}`, { dnc: true })));
+      toast(r.text, r.bad);
     } else if (action === "consent-given") {
-      for (const id of ids) await patch(`/api/contacts/${id}`, { consent: "given" }).catch(() => {});
-      toast(`${ids.length} contacts marked as consented.`);
+      const r = bulkMessage("marked as consented", await runEach(ids, (id) => patch(`/api/contacts/${id}`, { consent: "given" })));
+      toast(r.text, r.bad);
     }
     load();
   };
