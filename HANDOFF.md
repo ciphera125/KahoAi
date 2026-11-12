@@ -12,7 +12,11 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-11-08 (night). **Newer than the paragraph below:** the session log at the bottom is current
+Last updated: 2026-11-12. **Current state, read this first:** `main` is 3 commits ahead of the 2026-11-08 work and pushed
+through `6d38dc7`; the redaction-gap fix (`redact.js`, `archive.js`, `verify_storage.mjs`, `redact.test.js`, docs) is
+**uncommitted** until the owner says "commit and push". Backend 626 tests pass, lint clean. The newest entries of the session
+log (bottom) cover 2026-11-09 to 2026-11-11: Kaho Builder accuracy and history, tool log, Supabase Storage in numbered folders,
+no PII in stored text. Older header follows. Previous header: 2026-11-08 (night). **Newer than the paragraph below:** the session log at the bottom is current
 (Builder, audit log, DTMF, all 7 pen-test findings fixed, Contacts call button, Builder-made tools). The commit table in
 section 2 stops at 2026-11-03; use `git log` for later work. Sidebar trimmed: Usage is now a Settings tab and Tool
 history a History toggle on Your own tools (old URLs redirect). Older state follows.
@@ -239,6 +243,9 @@ Commits this project, newest first (not exhaustive before `1573a09`, see git log
 
 | Commit | What |
 |---|---|
+| `6d38dc7` | Supabase Storage in numbered folders (1-recordings ... 9-call-records); user lists; no PII in stored text; system check |
+| `308e373` | Contacts bulk actions and the Calls list no longer fail silently |
+| `df0776e` | Kaho Builder: no invented addresses, unknown kinds mended, history with edit, tool log |
 | `fa89539` | Call recordings also upload to Supabase Storage, unmasked, as-is (owner's decision) |
 | `877930b` | Leads captured on calls also mirror to the Studio's database (`leads` table, migration 007) |
 | `aa1a372` | Frontend: shared tag cache, a logo component, a `/settings` route alias |
@@ -2088,3 +2095,31 @@ normalise digits and `@` before matching, treat `x@y` as an id, hold digit runs 
 whether the database copy should be redacted too. Still true from the earlier entry: the archive button files every
 organization, and neither it nor the system check is rate limited.
 
+### 2026-11-11 (later still): redaction gaps fixed
+
+Fixed test-first (28 tests in `redact.test.js`, 626 backend tests pass, lint clean): digits in Indian scripts and full-width;
+numbers spoken as words (English, Hindi, double/triple), mixed digits and words, or said across turns; spoken and full-width
+e-mail and UPI ids; dates of birth; a misspelt contact name; a name a caller gives for themselves ("my name is...", "मेरा नाम...").
+The agent's own "this is Ria" is deliberately left. Found and fixed in the same pass: a 100k-digit text took 9.6 s (quadratic
+e-mail pattern), now 6 ms. Live transcripts and call records were re-filed with the new rules; `verify_storage.mjs` now also fails
+if running the redaction again would still change a stored transcript, and it passed on the live data.
+**Still not caught (reasoned, small):** a name nobody introduced and that is not the contact's; a number with the agent speaking
+between its halves; a spoken e-mail at a domain that is not a common provider and without "at the rate"; a spoken name inside
+a sentence like "ask for Priya". The database copy and the in-app transcript are unchanged. Not committed or pushed (asked only
+to fix).
+
+
+### 2026-11-12: end-of-session state
+
+**Done and pushed:** `df0776e`, `308e373`, `6d38dc7` (see the three entries above). **Done, not committed:** the redaction-gap fix.
+**Running locally:** backend :8020/:8021, Vite :5173, phone server :8765.
+**Open, in suggested order:**
+1. Commit and push the redaction fix when the owner asks.
+2. Pen-test findings reported and NOT fixed: `/api/archive/run` files every organization; no rate limit on archive-run or
+   system-health; `?page=1e99` returns 500 on history (likely audit and tool-log too); Builder prompts were stored unmasked
+   before redaction at insert.
+3. Redaction cases still not caught (see the entry above), and the database copy and in-app transcript still hold names and numbers.
+   The owner's "no PII in stored transcripts until I say so" stays in force.
+4. `NODE_ENV=production` and `TRANSFER_NUMBER` are unset (the Settings > System check warns). Rotate the Groq and Supabase secret
+   keys: my env check once printed their values into this chat.
+5. Passwords are deliberately not exported (only scrypt hashes exist); the unique-users file says so in its Password column.

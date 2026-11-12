@@ -81,7 +81,7 @@ async function callRecord(org, callId) {
        FROM calls WHERE call_id = $1 AND org_id = $2`, [callId, org]);
   const names = [meta.name];
   const clean = (t) => redactPII(t, { names });
-  const turns = (await Call.turns(org, callId).catch(() => [])).map((t) => ({ ...t, text: clean(t.text) }));
+  const turns = (await Call.turns(org, callId).catch(() => [])).map((t) => ({ ...t, text: redactPII(t.text, { names, selfIntro: t.role !== "agent" }) }));
   const answers = (await CallAnswer.forCall(org, callId)).map((a) => ({ ...a, value: clean(a.value), raw_text: clean(a.raw_text) }));
   const tools = (await systemQuery(
     `SELECT at, name, event, ok, secs, turn, text FROM call_events WHERE call_id = $1 AND org_id = $2

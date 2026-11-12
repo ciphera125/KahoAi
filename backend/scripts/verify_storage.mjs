@@ -57,6 +57,7 @@ for (const c of calls) {
         if (NUMBER.test(text.replace(/\b\d{4}-\d{2}-\d{2}\b/g, ""))) bad(`${id}: a long number (phone?) is in the transcript`);
         for (const part of String(c.contact ?? "").split(/\s+/).filter((p) => p.length >= 3)) if (redactPII(text, { names: [part] }) !== text) bad(`${id}: the contact's name appears in the transcript`);
         if (/^Call with /m.test(text)) bad(`${id}: transcript header still names a caller`);
+        if (redactPII(text, { names: [c.contact] }) !== text) bad(`${id}: the redaction would still change this transcript, so something private is in it`);
       }
     }
   } else if (c.ended_at && c.turns > 0) console.log(`  note ${id}: ended with ${c.turns} turns but no transcript flag`);
