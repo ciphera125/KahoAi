@@ -47,7 +47,7 @@ export default function Dashboard() {
   return (
     <section>
       <header className="page">
-        <div><h1>Overview</h1><div className="sub">A quick look at how your calls are going: how many, who picked up, and who really talked.</div></div>
+        <div><h1>Overview</h1><div className="sub">Your calls at a glance: how many were made, how many people picked up, and how many had a real conversation. Pick a period on the right.</div></div>
         <div className="head-actions">
           {active > 0 && (
             <Link to="/live" className="btn ghost" style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -60,6 +60,17 @@ export default function Dashboard() {
           </select>
         </div>
       </header>
+      {t.calls === 0 && (
+        <div className="card start-card">
+          <div className="card-head"><span className="card-title">Getting started: four steps to your first call</span></div>
+          <ol className="start-steps">
+            <li><Link to="/numbers"><b>1. Add a phone number</b><span>The number your calls come from.</span></Link></li>
+            <li><Link to="/agents"><b>2. Make an agent</b><span>Choose what the AI says and in which language.</span></Link></li>
+            <li><Link to="/contacts"><b>3. Add someone to call</b><span>A name, a number, and their permission.</span></Link></li>
+            <li><Link to="/calls"><b>4. Place a call</b><span>Press Call now and watch it live.</span></Link></li>
+          </ol>
+        </div>
+      )}
       <div className="kpis">
         {tiles.map(([k, v, s, pct, icon]) => (
           <div className="kpi" key={k}>
@@ -72,13 +83,17 @@ export default function Dashboard() {
       <div className="grid-2" style={{ marginBottom: "var(--s6)" }}>
         <div className="card">
           <div className="card-head"><span className="card-title">How calls ended</span><span className="muted">{plural(t.calls, "call")}</span></div>
-          <p className="hint" style={{ marginBottom: "var(--s2)" }}>Every call ends in one of these ways.</p>
-          {[["answered", "Picked up"], ["no_answer", "No answer"], ["declined", "Declined or busy"], ["failed", "Failed"], ["ringing", "Ringing / unknown"]].map(([k, l]) => (
-            <div key={k} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-              <span>{l}</span><span className="num">{t[k]} · {t.calls ? Math.round((100 * t[k]) / t.calls) : 0}%</span>
-            </div>
-          ))}
-          <p className="hint" style={{ marginTop: "var(--s3)" }}>Successful = picked up and the person really talked. {d.rates.conversion}% of answered calls got there.</p>
+          <p className="hint" style={{ marginBottom: "var(--s3)" }}>Every call ends in one of these ways. The bar shows its share of all calls.</p>
+          {[["answered", "Picked up", "ok"], ["no_answer", "No answer", "warn"], ["declined", "Declined or busy", "warn"], ["failed", "Failed", "bad"], ["ringing", "Ringing or not known yet", "muted"]].map(([k, l, tone]) => {
+            const pct = t.calls ? Math.round((100 * t[k]) / t.calls) : 0;
+            return (
+              <div key={k} className="outcome-row">
+                <div className="outcome-top"><span>{l}</span><span className="num">{t[k]} <span className="muted">({pct}%)</span></span></div>
+                <div className="meter"><i className={`tone-${tone}`} style={{ width: `${pct}%` }} /></div>
+              </div>
+            );
+          })}
+          <p className="hint" style={{ marginTop: "var(--s3)" }}>A real conversation means the person picked up and actually talked. {d.rates.conversion}% of answered calls got there.</p>
         </div>
         <div className="card">
           <div className="card-head"><span className="card-title">Calls per day</span><span className="muted">{plural(chart.calls, "call")}</span></div>

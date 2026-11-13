@@ -103,6 +103,15 @@ describe("placing a call", () => {
     expect(auth.body.error).toBe("Plivo rejected the Auth ID / Auth token. Nothing was dialled.");
   });
 
+  it("says in plain words when Plivo has no balance, and that no call was placed", async () => {
+    const { b, n } = await setup();
+    fakes.plivo.reply = { status: 402, body: { api_id: "x", error: "Insufficient balance" } };
+    const r = await b.post("/api/calls").send({ from_id: n.id, to: "9876543210", consent: true });
+    expect(r.status).toBe(502);
+    expect(r.body.error).toBe("Plivo has insufficient balance. Add credit in the Plivo console, then try again. No call was placed.");
+    expect(r.body.error).not.toMatch(/api_id|HTTP 402|MAY OR MAY NOT/);
+  });
+
   it("gives up on a Plivo that never answers, within its deadline", async () => {
     const { b, n } = await setup();
     fakes.plivo.reply = { hang: true };

@@ -77,6 +77,27 @@ def safe_reason(text: object, limit: int = 160) -> str:
     return (text[:limit] + "...") if len(text) > limit else text
 
 
+_ROLE_NAMES = {"stt": "speech-to-text (STT)", "llm": "language model (LLM)", "tts": "voice (TTS)"}
+
+
+def plain_reason(text: object, role: str) -> str:
+    """A provider failure in words a person can act on (no balance, bad key, rate limit).
+
+    Provider errors are JSON, headers and codes; `safe_reason` cuts them to something safe but
+    often cryptic. Money, key and limit problems are the ones fixed in a minute, so they are
+    named. Anything else falls back to `safe_reason`."""
+    raw = str(text or "")
+    low = raw.lower()
+    who = f"The {_ROLE_NAMES.get(role, role)} provider"
+    if re.search(r"\b402\b|insufficient|out of credit|quota|billing|payment required", low):
+        return f"{who} has insufficient balance. Add credit with that provider."
+    if re.search(r"\b40[13]\b|unauthori[sz]ed|invalid api key|forbidden", low):
+        return f"{who} rejected its API key. Check the key in the settings."
+    if re.search(r"\b429\b|rate limit|too many requests", low):
+        return f"{who} is limiting this account for a moment."
+    return safe_reason(raw)
+
+
 class CallHealth:
     """Watches one call. Each callback is supplied by whoever built the pipeline.
 
@@ -201,7 +222,7 @@ class CallHealth:
             return
 
         processor = frame.processor
-        why = safe_reason(frame.error)
+        why = plain_reason(frame.error, role)
         if not self._usable(role):
             await self.fail(role, f"no usable {role} service left ({why})")
             return

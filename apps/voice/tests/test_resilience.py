@@ -420,7 +420,7 @@ async def test_a_provider_failure_is_reported_to_the_studio_as_well_as_the_trans
     assert h.reported, "a voice refusing a request should be reported"
     level, source, message = h.reported[0]
     assert source == "tts" and level in ("error", "warn")
-    assert "quota" in message or "402" in message
+    assert "insufficient balance" in message and "402" not in message
 
 
 async def test_ending_a_call_reports_the_failure_too():
@@ -673,3 +673,21 @@ async def test_the_filler_line_can_follow_the_caller():
     await asyncio.sleep(0.15)
     assert spoken == ["एक सेकंड।"]
     h.health.finished()
+
+
+def test_plain_reason_says_what_a_person_can_act_on():
+    from resilience import plain_reason
+
+    raw = "status: 402, body: {'error': 'Insufficient balance'} xi-api-key: sk_abc123456"
+    out = plain_reason(raw, "tts")
+    assert out == (
+        "The voice (TTS) provider has insufficient balance. Add credit with that provider."
+    )
+    assert "sk_abc" not in out and "402" not in out
+    assert "insufficient balance" in plain_reason("You exceeded your current quota", "llm")
+    assert plain_reason("401 Unauthorized", "stt") == (
+        "The speech-to-text (STT) provider rejected its API key. Check the key in the settings.")
+    assert plain_reason("429 Too Many Requests", "llm") == (
+        "The language model (LLM) provider is limiting this account for a moment.")
+    # Anything else keeps the old cleaned-up text.
+    assert plain_reason("boom {'secret': 1}", "llm") == "boom"

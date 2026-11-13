@@ -2123,3 +2123,30 @@ to fix).
 4. `NODE_ENV=production` and `TRANSFER_NUMBER` are unset (the Settings > System check warns). Rotate the Groq and Supabase secret
    keys: my env check once printed their values into this chat.
 5. Passwords are deliberately not exported (only scrypt hashes exist); the unique-users file says so in its Password column.
+
+### 2026-11-14: plain provider errors, three language choices
+
+Owner's screenshot: placing a call with no Plivo balance showed Plivo's raw JSON and a scary "may or may not have been placed".
+Fixed test-first. `backend/src/services/providerError.js` turns a provider's status into plain words; a 402 now reads "Plivo has
+insufficient balance. Add credit in the Plivo console, then try again. No call was placed." (dialer, Plivo sync, system check,
+`scripts/call.py`). In the agent, `resilience.plain_reason` names no-balance, bad-key and rate-limit failures for the Studio's Error
+Logs. Error toasts are now a popup with a heading and a close button, shown 12 s. Language choices (revised the same day): "Follow the caller", "English", "Hindi". Hinglish is no longer offered; a saved "mix"
+reads as follow the caller, which is also the default. The Calls page has no blank option and starts from the chosen agent's
+language. The voice service still understands "mix" but is never sent it.
+Backend 628, voice 913, frontend 45 tests pass; lint clean. Backend restarted; the phone server was NOT restarted, so
+`plain_reason` is live only after it is. Not committed.
+
+### 2026-11-14 (later): cleaner Studio, invite code question, Error Logs acknowledge, audit CSV, tour
+
+Owner asked for a cleaner, more structured Studio. Done: "Mark all as read" is a real button on the right of the notification panel;
+Contacts has its own "Call" column with a labelled button; sign-in and create-account both ask "Do you have an invite code?"
+(signing up with a code joins that team; signing in with a code signs in, then calls `/api/orgs/join`; the invite already worked
+at sign-up before, tested in `auth.test.js`); Error Logs has Open and Acknowledged tabs (opens on Open), a tick box on every row and
+a bulk bar, an Acknowledge button per row and Undo on the other tab (migration 027, `POST /api/errors/acknowledge`, needs
+`agents.edit`, audited); Settings tab names and the System check and webhook pages are in plain words (the check shows one
+"Everything is working" banner and a dot per part); the Audit log is a real table (Date, Time, Who, What happened) with From and To
+dates and "Download CSV" (CSV now has date and time columns, India time, honours the dates; `from`/`to` on `/api/audit` and
+`/api/audit.csv`); Dashboard has a "Getting started" card for new organizations and coloured outcome bars; a "?" button beside the
+theme switch starts a 16-step guided tour of every sidebar page with Back, Next and Skip (`tour.js`, `nav.js`, `Tour.jsx`).
+Checked in the real browser: Error Logs, the tour card, the Audit log page. NOT clicked through: Acknowledge, sign-in with a code,
+Contacts' new column, the Dashboard card. Backend 633, frontend 48 tests pass; lint clean; migration 027 applied live. Not committed.

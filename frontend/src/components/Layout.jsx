@@ -8,13 +8,10 @@ import { get, patch, post } from "../api.js";
 import { useAuth } from "../auth.jsx";
 import { addPage, withDays } from "../feed.js";
 import { LogoMark, Wordmark } from "../logo.jsx";
+import { NAV } from "../nav.js";
+import Tour from "./Tour.jsx";
 import { ago, Avatar, ErrorBoundary, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
 
-const NAV = [
-  ["Operate", [["dashboard", "dash", "Dashboard"], ["calls", "call", "Calls"], ["live", "live", "Live"], ["bulk", "bulk", "Bulk calls"], ["contacts", "contacts", "Contacts"]]],
-  ["Configure", [["agents", "agent", "Agents"], ["prompts", "prompt", "Prompts"], ["numbers", "numbers", "Numbers"], ["team", "team", "Team"]]],
-  ["Inspect", [["tasks", "check", "Tasks"], ["your-tools", "plug", "Your own tools"], ["tags", "tag", "Tags"], ["errors", "warn", "Error Logs"], ["settings", "settings", "Settings"]]],
-];
 const RAIL_KEY = "kaho.rail.open";
 const readRail = () => { try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } };
 
@@ -81,6 +78,7 @@ export default function Layout() {
             <span className="topbar-brand"><LogoMark size={30} waves={false} /><Wordmark /></span>
             <span className="grow" />
             <ThemeToggle />
+            <TourButton />
             <Bell />
           </div>
           <motion.div key={location.pathname} className="page-enter" initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}>
@@ -280,7 +278,7 @@ function Bell() {
         <div className="menu notif-panel" ref={panel} onClick={(e) => e.stopPropagation()}>
           <div className="notif-head">
             <div><b>Notifications</b><div className="muted">{unread > 0 ? `${unread} new` : "You are all caught up"}</div></div>
-            {unread > 0 && <button type="button" className="link small-btn" onClick={markRead}>Mark all as read</button>}
+            {unread > 0 && <button type="button" className="ghost small-btn notif-mark" onClick={markRead}><Icon name="check" />Mark all as read</button>}
           </div>
           {ready && rows.length === 0 && <div className="empty" style={{ padding: "var(--s6)" }}>Nothing yet. Things that happen in your organization show up here.</div>}
           {rows.map((n) => (
@@ -366,5 +364,18 @@ function Profile({ onClose }) {
         </div>
       )}
     </Modal>
+  );
+}
+
+/** The question mark beside the theme switch: opens the guided tour of every page. */
+function TourButton() {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button type="button" className="icon-btn" title="Take the tour" aria-label="Take the tour of the Studio" onClick={() => setOpen(true)}>
+        <Icon name="help" />
+      </button>
+      {open && <Tour onClose={() => setOpen(false)} />}
+    </>
   );
 }

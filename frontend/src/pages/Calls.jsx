@@ -66,7 +66,7 @@ function NewCall({ agents, numbers, languages, onPlace }) {
   const toast = useToast();
   const [agentId, setAgentId] = useState("");
   const [fromId, setFromId] = useState("");
-  const [language, setLanguage] = useState("");
+  const [language, setLanguage] = useState("auto");
   const [to, setTo] = useState("");
   const [consent, setConsent] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -92,18 +92,22 @@ function NewCall({ agents, numbers, languages, onPlace }) {
     <div className="card">
       <div className="card-head"><span className="card-title">New call</span></div>
       <div className="field"><label className="f">Agent</label>
-        <select value={agentId} onChange={(e) => setAgentId(e.target.value)}>
+        <select value={agentId} onChange={(e) => {
+          setAgentId(e.target.value);
+          // Start from what the agent is set to; it can still be changed for this one call.
+          const own = agents.find((a) => a.id === e.target.value)?.settings?.language;
+          setLanguage(languages.some((l) => l.value === own) ? own : "auto");
+        }}>
           <option value="">Default persona (no agent)</option>
           {agents.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
         </select>
       </div>
       <div className="field"><label className="f">Language on this call</label>
         <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-          <option value="">Whatever the agent is set to</option>
           {languages.map((l) => <option key={l.value} value={l.value}>{l.label}</option>)}
         </select>
         <span className="hint">{languages.find((l) => l.value === language)?.hint
-          ?? "Leave it to use the language set on the agent."}</span>
+          ?? ""}</span>
       </div>
       <div className="field"><label className="f">Call from</label>
         <select value={fromId} onChange={(e) => setFromId(e.target.value)}>

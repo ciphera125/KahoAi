@@ -23,6 +23,7 @@ export default function SignIn() {
   const [hasAccounts, setHasAccounts] = useState(true);
   const [busy, setBusy] = useState(false);
   const [fieldErr, setFieldErr] = useState({});
+  const [haveCode, setHaveCode] = useState(false);
   const [f, setF] = useState({ name: "", organization: "", email: "", password: "", invite: "" });
   const set = (k) => (e) => { setF((v) => ({ ...v, [k]: e.target.value })); setFieldErr((v) => ({ ...v, [k]: null })); };
 
@@ -33,8 +34,15 @@ export default function SignIn() {
     setFieldErr({});
     setBusy(true);
     try {
-      if (mode === "in") await post("/api/auth/login", { email: f.email, password: f.password });
-      else await post("/api/auth/signup", { name: f.name, organization: f.organization || undefined, email: f.email, password: f.password, invite: f.invite || undefined });
+      const code = haveCode ? f.invite.trim() : "";
+      if (mode === "in") {
+        await post("/api/auth/login", { email: f.email, password: f.password });
+        // Someone with an account who was handed a code joins that team as soon as they are in.
+        if (code) {
+          try { await post("/api/orgs/join", { invite: code }); }
+          catch (err) { toast(`You are signed in, but the code did not work: ${err.message}`, true); }
+        }
+      } else await post("/api/auth/signup", { name: f.name, organization: code ? undefined : f.organization || undefined, email: f.email, password: f.password, invite: code || undefined });
       setMe(await get("/api/me"));
     } catch (err) {
       const field = fieldFor(err.message);
@@ -44,7 +52,7 @@ export default function SignIn() {
   };
 
   const err = (k) => fieldErr[k] ? "err" : "";
-  const joining = mode === "up" && !!f.invite;
+  const joining = mode === "up" && haveCode && !!f.invite.trim();
   return (
     <div className="auth">
       <div className="card auth-card">
@@ -56,17 +64,23 @@ export default function SignIn() {
           <button type="button" className={mode === "up" ? "on" : ""} onClick={() => { setMode("up"); setFieldErr({}); }}>Create account</button>
         </div>
         <form onSubmit={submit} autoComplete="on">
+          <label className="check code-ask">
+            <input type="checkbox" checked={haveCode} onChange={(e) => { setHaveCode(e.target.checked); setFieldErr({}); }} />
+            <span><b>Do you have an invite code?</b><span className="hint" style={{ display: "block" }}>A teammate sends it to you. Enter it to join their team instead of starting a new one.</span></span>
+          </label>
+          {haveCode && (
+            <div className="field">
+              <label className="f">Invite code</label>
+              <input className={err("invite")} value={f.invite} onChange={set("invite")} placeholder="Paste the code here" autoComplete="off" autoFocus />
+              {fieldErr.invite && <span className="field-err">{fieldErr.invite}</span>}
+            </div>
+          )}
           {mode === "up" && (
             <>
               <div className="field">
                 <label className="f">Your name</label>
                 <input className={err("name")} value={f.name} onChange={set("name")} autoComplete="name" placeholder="Asha Rao" required />
                 {fieldErr.name && <span className="field-err">{fieldErr.name}</span>}
-              </div>
-              <div className="field">
-                <label className="f">Invite code <span className="muted">(optional)</span></label>
-                <input className={err("invite")} value={f.invite} onChange={set("invite")} placeholder="If your team gave you one" autoComplete="off" />
-                {fieldErr.invite && <span className="field-err">{fieldErr.invite}</span>}
               </div>
               {!joining && <div className="field">
                 <label className="f">Organization name</label>
@@ -88,7 +102,7 @@ export default function SignIn() {
           <div className="actions">
             <button type="submit" className="primary xl" style={{ width: "100%" }} disabled={busy}>
               {busy && <span className="spinner btn-spinner" />}
-              {mode === "in" ? "Sign in" : joining ? "Join" : "Create organization"}
+              {mode === "in" ? (haveCode ? "Sign in and join" : "Sign in") : joining ? "Join the team" : "Create organization"}
             </button>
           </div>
         </form>

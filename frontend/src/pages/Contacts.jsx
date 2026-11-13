@@ -15,6 +15,9 @@ const TABS = [
   { key: "refused", label: "DNC" },
 ];
 
+// One place for the column widths, so the header and every row always line up.
+const COLS = "32px minmax(0,1.3fr) minmax(0,1fr) minmax(0,0.8fr) 80px minmax(0,1fr) 92px 44px";
+
 export default function Contacts() {
   const me = useMe();
   const toast = useToast();
@@ -113,9 +116,9 @@ export default function Contacts() {
           <input type="search" placeholder="Search name, number or tag" onChange={onSearch} />
         </div>
 
-        <div className="row head" style={{ gridTemplateColumns: "32px minmax(0,1.3fr) minmax(0,1fr) minmax(0,0.8fr) 80px minmax(0,1fr) 104px" }}>
+        <div className="row head" style={{ gridTemplateColumns: COLS }}>
           <span><input type="checkbox" checked={data?.contacts.length > 0 && selected.size === data?.contacts.length} onChange={toggleAll} aria-label="Select all" /></span>
-          <span>Name</span><span>Number</span><span>Tags</span><span>Consent</span><span>Last call</span><span />
+          <span>Name</span><span>Number</span><span>Tags</span><span>Consent</span><span>Last call</span><span>Call</span><span />
         </div>
         {!data && <Spinner />}
         {data?.contacts.length === 0 && <div className="empty">{q ? "No contacts match that search." : 'No contacts yet. Add one with “New contact”.'}</div>}
@@ -124,7 +127,7 @@ export default function Contacts() {
           const lc = c.last_call;
           const consentBadge = c.consent === "given" ? "ok" : c.consent === "refused" ? "bad" : "";
           return (
-            <div key={c.id} className="row" style={{ gridTemplateColumns: "32px minmax(0,1.3fr) minmax(0,1fr) minmax(0,0.8fr) 80px minmax(0,1fr) 104px" }}>
+            <div key={c.id} className="row" style={{ gridTemplateColumns: COLS }}>
               <span><input type="checkbox" checked={selected.has(c.id)} onChange={() => toggleOne(c.id)} aria-label={`Select ${c.name}`} /></span>
               <div className="who"><div className="avatar">{initials(c.name)}</div>
                 <div style={{ minWidth: 0 }}><button type="button" className="link ellip" onClick={() => setEditing(c)}>{c.name}</button>{c.dnc ? <span className="pill dnc" style={{ height: 20, fontSize: 11, marginTop: 4 }}>Do not call</span> : <div className="muted">{c.call_count ? plural(c.call_count, "call") : "Not called yet"}</div>}</div>
@@ -133,12 +136,14 @@ export default function Contacts() {
               <div className="tags">{(c.tags || []).map((id) => { const t = tagById(id); return t ? <span key={id} className="tag" style={{ "--tc": `var(--t-${t.color})` }}>{t.name}</span> : null; })}</div>
               <span><span className={`badge ${consentBadge}`}>{c.consent || "pending"}</span></span>
               <div style={{ minWidth: 0 }}>{lc ? <div className="last-call"><OutcomePill status={lc.status} /><span className="muted">{dayWord(lc.started_at)}</span></div> : <span className="muted">Not called yet</span>}</div>
-              <div className="row-actions">
+              <div>
                 {can(me, "calls.place") && (
-                  <button type="button" className="call-btn" disabled={!first || c.dnc || c.consent === "refused"}
+                  <button type="button" className="ghost call-label" disabled={!first || c.dnc || c.consent === "refused"}
                     title={!first ? "No number to call" : c.dnc ? "Marked Do not call" : c.consent === "refused" ? "Refused to be called" : `Call ${c.name}`}
-                    aria-label={`Call ${c.name}`} onClick={() => setCalling(c)}><Icon name="call" /></button>
+                    aria-label={`Call ${c.name}`} onClick={() => setCalling(c)}><Icon name="call" />Call</button>
                 )}
+              </div>
+              <div className="row-actions">
                 <Menu items={[
                   ["Edit", () => setEditing(c)],
                   [c.dnc ? "Allow calls again" : "Mark Do not call", () => toggleDnc(c)],

@@ -468,7 +468,7 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
   const [opening, setOpening] = useState(s.opening_line || "");
   const [maxMin, setMaxMin] = useState(s.max_minutes);
   const [ring, setRing] = useState(s.ring_secs);
-  const [lang, setLang] = useState(s.language || "auto");
+  const [lang, setLang] = useState(languages.some((l) => l.value === s.language) ? s.language : "auto");
   const [voicemail, setVoicemail] = useState(s.voicemail || "talk");
   const w = s.call_window || { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
   const [cw, setCw] = useState(w);

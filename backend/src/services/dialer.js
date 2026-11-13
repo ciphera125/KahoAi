@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { config } from "../config/env.js";
 import { HttpError, ValidationError } from "../utils/errors.js";
 import { sign } from "./plivoSignature.js";
+import { plainProviderError } from "./providerError.js";
 
 export const DEFAULT_MAX_SECS = 600;
 export const FLOOR_SECS = 10;
@@ -111,6 +112,8 @@ export async function dial({ authId, authToken, from, to, answer, hangup, maxSec
     try { return JSON.parse(text); } catch { return {}; }
   }
   const detail = text.trim().slice(0, 200);
+  // Money first: it can come with any status, and the person can fix it in a minute.
+  if (res.status === 402) throw failed(plainProviderError("Plivo", 402));
   if (res.status === 401 || res.status === 403) throw failed("Plivo rejected the Auth ID / Auth token. Nothing was dialled.");
   if (res.status === 400) throw failed(`Plivo refused the request: ${detail}. Nothing was dialled.`);
   if (res.status === 429) throw failed("Plivo is rate limiting this account. Nothing was dialled; wait and retry.");

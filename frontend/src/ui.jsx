@@ -14,6 +14,7 @@ const PATHS = {
   prompt: "M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9zM14 3v6h6M8 13h8M8 17h5",
   numbers: "M5 9h14M5 15h14M10 3 8 21M16 3l-2 18",
   team: "M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8",
+  help: "M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01",
   plus: "M12 5v14M5 12h14", dots: "M5 12h.01M12 12h.01M19 12h.01", x: "M18 6 6 18M6 6l12 12",
   trash: "M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6", download: "M12 3v12M7 10l5 5 5-5M5 21h14",
   pencil: "M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z", refresh: "M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6",
@@ -69,12 +70,18 @@ export function ToastProvider({ children }) {
   const show = useCallback((text, isError) => {
     setToast({ text, isError });
     clearTimeout(timer.current);
-    timer.current = setTimeout(() => setToast(null), 3200);
+    // A problem stays until it is read: long enough for a sentence, and it can be closed.
+    timer.current = setTimeout(() => setToast(null), isError ? 12000 : 3200);
   }, []);
   return (
     <ToastCtx.Provider value={show}>
       {children}
-      {toast && <div className={`toast${toast.isError ? " err" : ""}`} role="status">{toast.text}</div>}
+      {toast && (toast.isError
+        ? <div className="toast err popup" role="alert">
+            <div className="popup-body"><strong>Something needs your attention</strong><span>{toast.text}</span></div>
+            <button className="popup-close" aria-label="Close" onClick={() => setToast(null)}>×</button>
+          </div>
+        : <div className="toast" role="status">{toast.text}</div>)}
     </ToastCtx.Provider>
   );
 }

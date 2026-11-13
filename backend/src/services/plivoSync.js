@@ -1,5 +1,6 @@
 // How recent calls ended, read from Plivo's call records (read-only at Plivo).
 import { config } from "../config/env.js";
+import { plainProviderError } from "./providerError.js";
 import { HttpError } from "../utils/errors.js";
 import { normalizeNumber, CALL_ID } from "../utils/phone.js";
 
@@ -45,7 +46,7 @@ export async function syncFromPlivo({ authId, authToken, ours, onRecord }) {
     } catch (err) {
       throw new HttpError(502, `Could not reach Plivo (${err.name})`);
     }
-    if (res.status !== 200) throw new HttpError(502, `Plivo answered HTTP ${res.status}`);
+    if (res.status !== 200) throw new HttpError(502, plainProviderError("Plivo", res.status)?.replace(/ No call was placed\.$/, "") || `Plivo answered HTTP ${res.status}`);
     const body = await res.json().catch(() => ({}));
     for (const cdr of body.objects ?? []) {
       const callId = String(cdr.call_uuid ?? "");

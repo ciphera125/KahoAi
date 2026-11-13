@@ -7,7 +7,7 @@ import { can, isAdmin, useMe } from "../auth.jsx";
 import { Icon, Pager, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 const TABS = [["organization", "Organization"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
-  ["webhook", "Call webhook"], ["usage", "Usage"], ["system", "System check"], ["audit", "Audit log"]];
+  ["webhook", "Send calls to your system"], ["usage", "Usage"], ["system", "Is everything working?"], ["audit", "Audit log"]];
 
 export default function Settings() {
   const me = useMe();
@@ -252,8 +252,14 @@ function Webhook() {
   return (
     <div className="card">
       <h2>Send finished calls to your own system</h2>
-      <p className="hint">When a call ends, Kaho AI sends the summary and every answer the agent saved (a payment date, an amount, a yes or no) to the web address below,
-        so your system updates without anyone copying anything. Each message is signed with a secret so your system can tell it really came from us.</p>
+      <p className="hint"><b>In plain words:</b> when a call ends, Kaho AI can send its result straight to your own software, such as your CRM or a spreadsheet tool,
+        so nobody has to copy it across by hand. This is called a <i>webhook</i>.</p>
+      <ol className="steps">
+        <li>Ask whoever looks after your software for a <b>web address</b> that can receive calls (it starts with https://).</li>
+        <li>Paste it below and press Save. We will then send it the summary and every answer the agent saved, such as a payment date or a yes or no.</li>
+        <li>Each message is signed with a <b>secret</b>, a private password, so your system can tell it really came from us. Give the secret to the same person.</li>
+      </ol>
+      <p className="hint">Not using one? Leave it empty. Nothing else depends on it.</p>
       <div className="field"><label className="f" htmlFor="wh-url">Web address</label>
         <input id="wh-url" value={url} disabled={!editable} placeholder="https://yourcompany.com/kaho/calls" onChange={(e) => setUrl(e.target.value)} /></div>
       {!editable && s.webhook_configured && <p className="hint">A webhook is set up. Only people who manage the organization can see its address.</p>}
@@ -274,7 +280,14 @@ function Webhook() {
 }
 
 /** Who changed what, kept for good. Searchable, in pages of 10, 25 or 50, and downloadable. */
-/** Each outside service tried for real, so nothing fails quietly. */
+/** Each outside service tried for real, so nothing fails quietly. Said in plain words. */
+const PARTS = {
+  database: ["Your saved information", "Where your agents, contacts and call history are kept."],
+  model: ["The AI that talks", "The brain behind every conversation."],
+  storage: ["Recordings and records", "Where call recordings and records are filed."],
+  plivo: ["Your phone line", "Needed to place and receive calls. Also needs credit."],
+  phone_server: ["The calling service", "The part that is on the line with the person during a call."],
+};
 function SystemCheck() {
   const toast = useToast();
   const [d, setD] = useState(null);
@@ -284,24 +297,33 @@ function SystemCheck() {
     try { setD(await get("/api/system/health")); } catch (e) { toast(e.message, true); } finally { setBusy(false); }
   }, [toast]);
   useEffect(() => { run(); }, [run]);
+  const bad = d ? d.checks.filter((c) => !c.ok).length : 0;
   return (
     <div className="stack">
-      <div className="card explain">
-        <b>System check</b>
-        <p className="hint">Tries the database, the language model, Storage, your phone provider and the phone server for real, and says plainly what is not working.</p>
-        <div className="actions"><button className="ghost" disabled={busy} onClick={run}>{busy ? "Checking…" : "Check again"}</button></div>
+      <div className={`card health-banner ${d ? (bad ? "bad" : "ok") : ""}`}>
+        <div>
+          <b>{!d ? "Checking…" : bad ? `${bad} ${bad === 1 ? "thing needs" : "things need"} attention` : "Everything is working"}</b>
+          <p className="hint">{!d ? "Trying each part for real." : bad ? "Calls may not work until these are fixed. The details are below." : "Every part your calls depend on answered. You are ready to make calls."}</p>
+        </div>
+        <button className="ghost" disabled={busy} onClick={run}><Icon name="refresh" />{busy ? "Checking…" : "Check again"}</button>
       </div>
       {!d ? <Spinner /> : (
-        <div className="card">
-          <table className="rows"><thead><tr><th>Part</th><th>Working?</th><th>What it said</th></tr></thead>
-            <tbody>{d.checks.map((c) => (
-              <tr key={c.id}><td>{c.label}</td>
-                <td><span className={`pill ${c.ok ? "live" : "failed"}`}>{c.ok ? "Working" : "Not working"}</span></td>
-                <td className="tl-detail">{c.detail}</td></tr>))}</tbody></table>
+        <div className="card list">
+          {d.checks.map((c) => {
+            const [name, what] = PARTS[c.id] ?? [c.label, ""];
+            return (
+              <div key={c.id} className="health-row">
+                <span className={`health-dot ${c.ok ? "ok" : "bad"}`} aria-hidden="true" />
+                <div className="health-text"><b>{name}</b><div className="hint">{what}</div>{!c.ok && <div className="health-why">{c.detail}</div>}</div>
+                <span className={`pill ${c.ok ? "live" : "failed"}`}>{c.ok ? "Working" : "Needs attention"}</span>
+              </div>
+            );
+          })}
         </div>
       )}
       {d?.warnings.length > 0 && (
-        <div className="card explain"><b>Before real customers</b>
+        <div className="card explain"><b>Before you call real customers</b>
+          <p className="hint">These are not broken, but are worth doing first:</p>
           <ul className="plain">{d.warnings.map((w) => <li key={w}>{w}</li>)}</ul></div>
       )}
     </div>
@@ -343,35 +365,53 @@ function Audit() {
   const [perPage, setPerPage] = useState(10);
   const [q, setQ] = useState("");
   const [find, setFind] = useState("");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const [d, setD] = useState(null);
   useEffect(() => {
     const t = setTimeout(() => setFind(q), 250);
     return () => clearTimeout(t);
   }, [q]);
-  useEffect(() => { setPage(1); }, [find, perPage]);
+  useEffect(() => { setPage(1); }, [find, perPage, from, to]);
   useEffect(() => {
-    get(`/api/audit?page=${page}&per_page=${perPage}&q=${encodeURIComponent(find)}`).then(setD).catch((e) => toast(e.message, true));
-  }, [page, perPage, find, toast]);
+    get(`/api/audit?page=${page}&per_page=${perPage}&q=${encodeURIComponent(find)}&from=${from}&to=${to}`).then(setD).catch((e) => toast(e.message, true));
+  }, [page, perPage, find, from, to, toast]);
+  const csv = `/api/audit.csv?from=${from}&to=${to}`;
+  const day = (iso) => new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+  const time = (iso) => new Date(iso).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata" });
   return (
     <div className="stack">
       <Records />
-      <div className="card explain">
-        <b>Audit log</b>
-        <p className="hint">A permanent record of who changed what: agents, numbers, people, roles, keys and settings. It is never trimmed and cannot be edited or deleted from the Studio.</p>
-        <div className="actions">
-          <input value={q} placeholder="Search by person or change" onChange={(e) => setQ(e.target.value)} style={{ maxWidth: 320 }} />
-          <a className="ghost file-pick" href="/api/audit.csv" download>Download as spreadsheet</a>
+      <div className="card">
+        <div className="card-head"><span className="card-title">Audit log</span>
+          <a className="btn ghost" href={csv} download><Icon name="download" />Download CSV</a></div>
+        <p className="hint">A permanent record of who changed what: agents, numbers, people, roles, keys and settings. It is never trimmed and cannot be edited or deleted from the Studio.
+          The download holds everything shown for the dates you pick, or the whole log if you pick none.</p>
+        <div className="filters">
+          <div className="field"><label className="f" htmlFor="au-q">Search</label>
+            <input id="au-q" value={q} placeholder="A person or a change" onChange={(e) => setQ(e.target.value)} /></div>
+          <div className="field"><label className="f" htmlFor="au-from">From</label>
+            <input id="au-from" type="date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></div>
+          <div className="field"><label className="f" htmlFor="au-to">To</label>
+            <input id="au-to" type="date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></div>
+          {(from || to || q) && <button className="ghost" onClick={() => { setQ(""); setFrom(""); setTo(""); }}>Clear</button>}
         </div>
       </div>
-      {!d ? <Spinner /> : d.entries.length === 0 ? <div className="card"><p className="hint">Nothing recorded yet.</p></div> : (
-        <div className="card">
-          <table className="rows"><thead><tr><th>When</th><th>Who</th><th>What happened</th></tr></thead>
-            <tbody>{d.entries.map((e) => (
-              <tr key={e.id}><td className="nowrap">{new Date(e.at).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })}</td>
-                <td>{e.actor}<div className="hint">{e.role}</div></td><td>{e.detail}</td></tr>))}</tbody></table>
+      {!d ? <Spinner /> : d.entries.length === 0 ? <div className="card"><div className="empty">{find || from || to ? "Nothing matches that." : "Nothing recorded yet."}</div></div> : (
+        <div className="card list">
+          <div className="row head" style={{ gridTemplateColumns: AUDIT_COLS }}><span>Date</span><span>Time</span><span>Who</span><span>What happened</span></div>
+          {d.entries.map((e) => (
+            <div key={e.id} className="row" style={{ gridTemplateColumns: AUDIT_COLS }}>
+              <span className="nowrap">{day(e.at)}</span>
+              <span className="muted nowrap">{time(e.at)}</span>
+              <div style={{ minWidth: 0 }}><b className="ellip">{e.actor}</b><div className="muted">{e.role}</div></div>
+              <span title={e.detail} style={{ padding: "8px 0" }}>{e.detail}</span>
+            </div>
+          ))}
         </div>
       )}
       {d && <Pager view={serverView({ page: d.page, total: d.total, size: d.per_page })} size={d.per_page} onPage={setPage} onSize={(n) => { setPerPage(n); setPage(1); }} />}
     </div>
   );
 }
+const AUDIT_COLS = "110px 80px minmax(0,0.9fr) minmax(0,3fr)";

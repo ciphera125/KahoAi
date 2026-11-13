@@ -49,7 +49,7 @@ const CHECKS = [
     const auth = Buffer.from(`${id}:${token}`).toString("base64");
     const r = await http(`${config.PLIVO_API_BASE}/v1/Account/${encodeURIComponent(id)}/`, { headers: { Authorization: `Basic ${auth}` } });
     if (r.error) return no(`Plivo ${r.error}.`);
-    return r.res.ok ? yes("Credentials accepted.") : no(`Plivo refused the credentials (${r.res.status}).`);
+    return r.res.ok ? yes("Credentials accepted.") : no(r.res.status === 402 ? "Plivo has insufficient balance. Add credit in the Plivo console." : `Plivo refused the credentials (${r.res.status}).`);
   }],
   ["phone_server", "Phone server (the voice service)", async () => {
     if (!config.PUBLIC_HOST) return no("Not set up: PUBLIC_HOST is missing, so Plivo has nowhere to send calls.");

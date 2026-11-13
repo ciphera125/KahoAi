@@ -92,4 +92,21 @@ describe("what the audit log catches", () => {
     await b.post("/api/auth/invite").send({});
     expect(await log(b)).toMatch(/invite code/i);
   });
+
+  it("can be limited to a range of days, in the list and the spreadsheet, and the spreadsheet has a date column", async () => {
+    const b = await owner();
+    const { db } = await import("./helpers.js");
+    const org = (await db.query("SELECT id FROM organizations LIMIT 1")).rows[0].id;
+    const { record } = await import("../src/models/Audit.js");
+    await record(org, { actor: "Asha", role: "owner", action: "agent", detail: "old change" });
+    await record(org, { actor: "Asha", role: "owner", action: "agent", detail: "new change" });
+    await db.query("UPDATE audit_log SET at = '2026-01-10T06:00:00Z' WHERE detail = 'old change'");
+    const only = (await b.get("/api/audit?per_page=50&from=2026-01-10&to=2026-01-10")).body;
+    expect(only.entries.map((e) => e.detail)).toEqual(["old change"]);
+    const csv = (await b.get("/api/audit.csv?from=2026-01-10&to=2026-01-10")).text;
+    expect(csv.split("\r\n")[0]).toBe("date,time,who,role,what,detail");
+    expect(csv).toContain("2026-01-10,11:30,Asha,owner,agent,old change");
+    expect(csv).not.toContain("new change");
+    expect((await b.get("/api/audit?from=not-a-date")).status).toBe(400);
+  });
 });

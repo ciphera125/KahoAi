@@ -213,6 +213,11 @@ def dial(
         except ValueError:
             return {}
     detail = resp.text.strip()[:200]
+    if resp.status_code == 402:
+        raise CallError(
+            "Plivo has insufficient balance. Add credit in the Plivo console, then try again. "
+            "No call was placed.", 4
+        )
     if resp.status_code in (401, 403):
         raise CallError("Plivo rejected PLIVO_AUTH_ID / PLIVO_AUTH_TOKEN. Nothing was dialled.", 4)
     if resp.status_code == 400:
