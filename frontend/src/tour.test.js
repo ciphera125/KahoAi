@@ -13,7 +13,7 @@ test("every step says what the page is for in plain words", () => {
   for (const s of STEPS) {
     assert.ok(s.title && s.title.length <= 40, s.title);
     assert.ok(s.text && s.text.length >= 40 && s.text.length <= 320, `${s.title}: ${s.text?.length}`);
-    assert.ok(!/[—]/.test(s.title + s.text), "no em dashes");
+    assert.ok(!(s.title + s.text).includes(String.fromCharCode(0x2014)), "no em dashes");
   }
 });
 
