@@ -26,6 +26,9 @@ if (common.ssl && !common.ssl.rejectUnauthorized) {
 }
 
 export const pool = new pg.Pool({ ...common, max: config.PGPOOL_MAX, application_name: "kaho-studio" });
+/** The bulk runner's advisory lock lives on one connection for a whole pass; it has its own, so it never takes one the requests need. */
+export const lockPool = new pg.Pool({ ...common, max: 1, application_name: "kaho-studio-lock" });
+lockPool.on("error", (err) => logger.error({ err: err.message }, "idle lock connection failed"));
 pool.on("error", (err) => logger.error({ err: err.message }, "idle database client failed"));
 
 // Every scoped transaction drops to the restricted role for its own duration

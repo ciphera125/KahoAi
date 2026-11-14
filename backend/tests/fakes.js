@@ -21,8 +21,8 @@ export async function startFakes() {
     }
     if (plivo.reply.hang) return; // never answers
     const reply = typeof plivo.reply === "function" ? plivo.reply(JSON.parse(body || "null")) : plivo.reply;
-    res.writeHead(reply.status, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(reply.body));
+    const send = () => { res.writeHead(reply.status, { "Content-Type": "application/json" }); res.end(JSON.stringify(reply.body)); };
+    if (plivo.delayMs) setTimeout(send, plivo.delayMs); else send(); // delayMs: a slow Plivo
   });
   const v = await server(18766, (req, res) => {
     voice.requests.push({ method: req.method, url: req.url, headers: req.headers });

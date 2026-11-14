@@ -1,12 +1,13 @@
 // "Is it really working?" for the people who run the platform: each outside service is tried for
 // real, under its own deadline, and answered in plain words. Nothing here changes anything for a
 // customer, and no key, token or secret is ever put in an answer.
-import { config } from "../config/env.js";
+import { config as liveConfig } from "../config/env.js";
 import { pool } from "../db/pool.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
 import { checkDatabaseRole } from "./startup.js";
 import { deleteRecording, putText, recordingsConfigured } from "./storage.js";
 
+const config = liveConfig; // `warnings` takes its own settings so a test can try others
 const deadline = () => AbortSignal.timeout(config.HEALTH_TIMEOUT_MS);
 const no = (detail) => ({ ok: false, detail });
 const yes = (detail) => ({ ok: true, detail });
@@ -60,12 +61,14 @@ const CHECKS = [
 ];
 
 /** Settings that are right for trying things out and wrong for real customers. */
-function warnings() {
+export function warnings(settings = liveConfig) {
+  const config = settings;
   const out = [];
   if (config.NODE_ENV !== "production") out.push("NODE_ENV is not production: tools may reach addresses on this machine, and cookies are not marked secure. Set NODE_ENV=production on the live server.");
   if (!config.REQUIRE_AGENT_TEST) out.push("Agents can be published without a passing test (REQUIRE_AGENT_TEST is off).");
   if (config.DATABASE_SSL && config.DATABASE_SSL !== "verify") out.push("The database connection is not certificate-checked (DATABASE_SSL is not verify).");
   if (!config.TRANSFER_NUMBER) out.push("No TRANSFER_NUMBER is set, so an agent cannot hand a call to a person.");
+  if (config.WEB_CONCURRENCY > 1 && !config.REDIS_URL) out.push(`${config.WEB_CONCURRENCY} workers are running without REDIS_URL, so each keeps its own rate-limit count and the limits are really ${config.WEB_CONCURRENCY} times higher. Set REDIS_URL.`);
   return out;
 }
 

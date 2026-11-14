@@ -56,8 +56,11 @@ export function prepareRows(rows) {
 
 export async function create(orgId, { name, agentId, fromId, parallel, rows, createdBy, retries = 0, retryAfterHours = 4 }) {
   const runName = cleanText(name || `Bulk call ${new Date().toISOString().slice(0, 10)}`, MAX_NAME, "name");
-  const n = Number(parallel ?? 3);
-  if (!Number.isInteger(n) || n < 1 || n > MAX_PARALLEL) throw new ValidationError(`calls at once must be between 1 and ${MAX_PARALLEL}`);
+  // Chosen by the person every time: there is no default, so a campaign never starts at a speed nobody picked.
+  const n = typeof parallel === "number" || (typeof parallel === "string" && parallel.trim() !== "") ? Number(parallel) : NaN;
+  if (!Number.isInteger(n) || n < 1 || n > MAX_PARALLEL) {
+    throw new ValidationError(`choose how many calls at once, a whole number between 1 and ${MAX_PARALLEL}`);
+  }
   if (!Number.isInteger(retries) || retries < 0 || retries > 3) throw new ValidationError("tries again must be a whole number from 0 to 3");
   if (!Number.isInteger(retryAfterHours) || retryAfterHours < 1 || retryAfterHours > 24) throw new ValidationError("the wait before trying again must be from 1 to 24 hours");
   const items = prepareRows(rows);
@@ -111,9 +114,10 @@ export async function list(orgId) {
   return rows.map(shape);
 }
 
-export async function get(orgId, id) {
+export async function get(orgId, id, { items = true } = {}) {
   return inOrg(orgId, async (db) => {
     const run = await show(db, orgId, id);
+    if (!items) return run; // the live view polls for numbers and fetches the rows only when they change
     const { rows } = await db.query("SELECT * FROM bulk_items WHERE run_id = $1 AND org_id = $2 ORDER BY position", [run.id, orgId]);
     return { ...run, items: rows.map(shapeItem) };
   });
@@ -150,26 +154,58 @@ export async function active() {
 /** Items whose call has ended move to done, with how it ended. Plivo's hangup
  * report (through the voice service) is the end; a transcript is proof it was answered. */
 export async function settle(runId, deadlineSecs) {
+  await settleMany([{ id: runId, deadlineSecs }]);
+}
+
+/** The same for many runs at once: four statements however many runs there are.
+ * `runs` is [{ id, deadlineSecs }], the deadline being how long that run's agent may hold a line. */
+export async function settleMany(runs) {
+  if (!runs.length) return;
+  const ids = runs.map((r) => r.id);
+  const secs = runs.map((r) => Math.max(1, Math.round(Number(r.deadlineSecs) || 0)));
   await asSystem(async (db) => {
     await db.query(`UPDATE bulk_items i SET status = 'done', finished_at = now(),
         outcome = CASE WHEN c.has_transcript THEN 'answered' ELSE coalesce(c.status, 'unknown') END
-      FROM calls c WHERE i.run_id = $1 AND i.status = 'calling' AND c.call_id = i.call_id
-        AND (c.status IS DISTINCT FROM 'ringing' OR c.ended_at IS NOT NULL)`, [runId]);
+      FROM calls c WHERE i.run_id = ANY($1) AND i.status = 'calling' AND c.call_id = i.call_id
+        AND (c.status IS DISTINCT FROM 'ringing' OR c.ended_at IS NOT NULL)`, [ids]);
     // Nobody answered: wait, then try again, up to the tries the run was given. A "no" or a
     // conversation is never retried. A run that is cancelled has nothing queued to retry.
     await db.query(`UPDATE bulk_items i SET status = 'queued', attempts = i.attempts + 1, call_id = NULL, outcome = NULL,
         finished_at = NULL, placed_at = NULL, not_before = now() + make_interval(hours => r.retry_after_hours),
         reason = 'No answer; trying again (try ' || (i.attempts + 2) || ' of ' || (r.retries + 1) || ')'
-      FROM bulk_runs r WHERE r.id = i.run_id AND i.run_id = $1 AND r.status IN ('running', 'paused')
-        AND i.status = 'done' AND i.outcome = 'no_answer' AND i.attempts < r.retries`, [runId]);
+      FROM bulk_runs r WHERE r.id = i.run_id AND i.run_id = ANY($1) AND r.status IN ('running', 'paused')
+        AND i.status = 'done' AND i.outcome = 'no_answer' AND i.attempts < r.retries`, [ids]);
     // Taken for dialling by a process that then stopped: it may or may not have rung, so never again.
     await db.query(`UPDATE bulk_items SET status = 'failed', finished_at = now(),
         reason = 'The Studio stopped while dialling; this call may or may not have been placed. Check Plivo before calling again.'
-      WHERE run_id = $1 AND status = 'dialling' AND placed_at < now() - interval '5 minutes'`, [runId]);
+      WHERE run_id = ANY($1) AND status = 'dialling' AND placed_at < now() - interval '5 minutes'`, [ids]);
     // A call that never reports an end must not hold its slot forever.
-    await db.query(`UPDATE bulk_items SET status = 'done', outcome = 'unknown', finished_at = now()
-      WHERE run_id = $1 AND status = 'calling' AND placed_at < now() - make_interval(secs => $2)`, [runId, deadlineSecs]);
+    await db.query(`UPDATE bulk_items i SET status = 'done', outcome = 'unknown', finished_at = now()
+      FROM unnest($1::text[], $2::int[]) AS d(run_id, secs)
+      WHERE i.run_id = d.run_id AND i.status = 'calling' AND i.placed_at < now() - make_interval(secs => d.secs)`, [ids, secs]);
   });
+}
+
+/** Calls on the voice server that no bulk call placed: by hand, or inbound. They share its capacity
+ * (WS_MAX_CONCURRENT_CALLS), so the runner leaves room for them. Only a call that holds, or is about to
+ * hold, a slot counts: one whose stream began (a transcript exists) and has no end yet, for at most
+ * LIVE_CALL_MINUTES (a lost hang-up report must not hold a slot for ever), or one dialled in the last
+ * RINGING_SECS that may be picked up any moment. A call left ringing longer never connected and holds
+ * nothing; counting it would let one organization dialling numbers nobody answers starve everyone's bulk calls.
+ * One organization's calls count for at most `capPerOrg` (BULK_OUTSIDE_CAP): it cannot use outside calls to take every slot from the rest.
+ * Bulk calls are left out here: the runner already counts them. */
+export const LIVE_CALL_MINUTES = 20;
+export const RINGING_SECS = 60;
+export async function liveOutsideCalls(capPerOrg = 6) {
+  const { rows } = await asSystem((db) => db.query(`SELECT coalesce(sum(least(g.n, $3)), 0)::int AS n FROM (
+    SELECT count(*) AS n FROM calls c
+    WHERE c.ended_at IS NULL AND (c.status IS NULL OR c.status = 'ringing')
+      AND ((c.has_transcript AND c.started_at > now() - make_interval(mins => $1))
+        OR (NOT c.has_transcript AND c.status = 'ringing' AND c.started_at > now() - make_interval(secs => $2)))
+      AND NOT EXISTS (SELECT 1 FROM bulk_items i WHERE i.call_id = c.call_id AND i.status IN ('dialling', 'calling'))
+    GROUP BY c.org_id) g`,
+  [LIVE_CALL_MINUTES, RINGING_SECS, capPerOrg]));
+  return rows[0].n;
 }
 
 /** Open calls (dialling or on the line) per organization, across its runs. */
@@ -229,4 +265,11 @@ export async function finishIfDone(runId) {
   await asSystem((db) => db.query(`UPDATE bulk_runs r SET status = 'done', waiting = NULL, updated_at = now()
     WHERE r.id = $1 AND r.status = 'running'
       AND NOT EXISTS (SELECT 1 FROM bulk_items i WHERE i.run_id = r.id AND i.status = ANY($2))`, [runId, OPEN]));
+}
+
+/** Every running run with nothing left to dial or wait on is done: one statement for all of them. */
+export async function finishDone() {
+  await asSystem((db) => db.query(`UPDATE bulk_runs r SET status = 'done', waiting = NULL, updated_at = now()
+    WHERE r.status = 'running'
+      AND NOT EXISTS (SELECT 1 FROM bulk_items i WHERE i.run_id = r.id AND i.status = ANY($1))`, [OPEN]));
 }

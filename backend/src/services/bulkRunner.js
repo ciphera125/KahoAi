@@ -12,11 +12,16 @@
 //   call or by hand) is called again; two lists with the same person ring once.
 // - Organizations share BULK_MAX_CONCURRENT fairly: with N of them dialling,
 //   none takes more than its 1/N share.
+// - Calls go out in groups of the size the person chose ("calls at once"): the next group is
+//   dialled only when every call of the last one is over, so 50 people at 7 go 7, 7, 7... and a last 1.
 // - If the voice server cannot be reached, nothing was dialled: the run pauses
-//   with the reason rather than failing every row.
+//   with the reason rather than failing every row. The same when Plivo itself cannot place calls
+//   (no balance, wrong keys, a rate limit) and when BULK_FAIL_STREAK dials in a row are refused:
+//   the rest of the list stays queued, the team is told, and Resume carries on where it stopped.
 // - Only one runner works at a time (an advisory lock), however many processes run.
 import { config } from "../config/env.js";
-import { pool } from "../db/pool.js";
+import { lockPool } from "../db/pool.js";
+import * as Activity from "../models/Activity.js";
 import * as Agent from "../models/Agent.js";
 import * as BulkCall from "../models/BulkCall.js";
 import { logger } from "../utils/logger.js";
@@ -32,6 +37,13 @@ function windowText(w, whose = "agent") {
 
 /** The hours a bulk call keeps to: the agent's window, or TRAI's when the agent has none switched on. */
 const bulkWindow = (agent) => (agent.call_window?.enabled ? agent.call_window : { ...Agent.DEFAULT_WINDOW, enabled: true });
+
+/** Stop the run with the reason, and tell the team: a pause nobody sees is a campaign nobody finishes. */
+async function pauseRun(run, reason) {
+  await BulkCall.setRun(run.id, { status: "paused", waiting: reason });
+  await Activity.add(run.org_id, "call", `The bulk call ${run.name} paused: ${reason}`,
+    { view: "bulk", ref: run.id, actor: "Kaho AI" }).catch((err) => logger.warn({ err: err.message }, "could not record a notification"));
+}
 
 async function dialOne(run, item, now) {
   if (item.attempts === 0 && await BulkCall.calledRecently(run.org_id, item.number, config.BULK_REPEAT_HOURS)) {
@@ -52,79 +64,123 @@ async function dialOne(run, item, now) {
       await BulkCall.mark(item.id, { status: "queued", placed_at: null });
       return windowText(err.window, err.whose);
     }
-    if (err.stage === "preflight") {
-      // Nothing was dialled: the voice server is down, not this person's number.
+    if (err.stage === "preflight" || err.stage === "provider") {
+      // Nothing was dialled: the voice server is down, or Plivo cannot place calls for this account.
+      // It is not this person's number, so they stay queued for when it is fixed.
       await BulkCall.mark(item.id, { status: "queued", placed_at: null });
-      await BulkCall.setRun(run.id, { status: "paused", waiting: err.message });
+      await pauseRun(run, err.message);
       return "paused";
     }
     const dnc = /Do not call/.test(err.message);
     await BulkCall.mark(item.id, { status: dnc ? "skipped" : "failed", reason: String(err.message).slice(0, 300),
       finished_at: new Date() });
-    return null;
+    if (err.stage === "provider_unsure") {
+      // Plivo failed on its side: this one may have rung (so it is never dialled again), and the rest wait.
+      await pauseRun(run, err.message);
+      return "paused";
+    }
+    return dnc ? null : { refused: String(err.message).slice(0, 120) };
   }
 }
 
-/** One pass over every bulk call. Safe to call at any time; tests call it directly. */
+/** How long a run's calls may stay on the line before they are given up on. */
+const deadlineFor = (agent) => (agent?.max_secs ?? DEFAULT_MAX_SECS) + (agent?.ring_secs ?? 60) + DEADLINE_GRACE_SECS;
+
+const sum = (counts) => Object.values(counts).reduce((a, b) => a + b, 0);
+
+/** One pass over every bulk call. Safe to call at any time; tests call it directly.
+ * Its cost does not grow with the number of runs: the open calls are read once (twice if some were settled),
+ * settling is one batch, and a run is written only when something about it changed. */
 export async function runOnce({ now = new Date() } = {}) {
   const runs = await BulkCall.active();
-  let open;
+  if (!runs.length) return;
+  const agents = new Map();
+  const agentOf = async (id) => {
+    if (!id) return null;
+    if (!agents.has(id)) agents.set(id, await Agent.callConfig(id));
+    return agents.get(id);
+  };
+
+  let counts = await BulkCall.openCounts();
+  const onTheLine = runs.filter((r) => counts[r.id] > 0);
+  if (onTheLine.length) {
+    await BulkCall.settleMany(await Promise.all(onTheLine.map(async (r) => ({ id: r.id, deadlineSecs: deadlineFor(await agentOf(r.agent_id)) }))));
+    counts = await BulkCall.openCounts();
+  }
+  const orgOpen = {};
+  for (const r of runs) orgOpen[r.org_id] = (orgOpen[r.org_id] ?? 0) + (counts[r.id] ?? 0);
+  // The voice server's capacity is shared with calls placed by hand and inbound ones.
+  let open = sum(counts) + await BulkCall.liveOutsideCalls(config.BULK_OUTSIDE_CAP);
   const dialling = new Set(runs.filter((r) => r.status === "running").map((r) => r.org_id));
   const share = Math.max(1, Math.ceil(config.BULK_MAX_CONCURRENT / Math.max(1, dialling.size)));
+  const say = (run, waiting) => (waiting === (run.waiting ?? null) ? null : BulkCall.setRun(run.id, { waiting }));
+
   for (const run of runs) {
-    const agent = run.agent_id ? await Agent.callConfig(run.agent_id) : null;
-    const deadline = (agent?.max_secs ?? DEFAULT_MAX_SECS) + (agent?.ring_secs ?? 60) + DEADLINE_GRACE_SECS;
-    await BulkCall.settle(run.id, deadline);
-    open = Object.values(await BulkCall.openCounts()).reduce((a, b) => a + b, 0);
     if (run.status !== "running") continue;
+    const agent = await agentOf(run.agent_id);
     if (!agent) {
       await BulkCall.setRun(run.id, { status: "paused", waiting: "Its agent was deleted. Cancel this bulk call." });
       continue;
     }
     const hours = bulkWindow(agent);
     if (!Agent.inCallWindow(hours, now)) {
-      await BulkCall.setRun(run.id, { waiting: agent.call_window?.enabled ? windowText(hours)
-        : `Bulk calls keep to ${hours.start}–${hours.end} (${hours.timezone}); waiting for those hours.` });
+      await say(run, agent.call_window?.enabled ? windowText(hours)
+        : `Bulk calls keep to ${hours.start}–${hours.end} (${hours.timezone}); waiting for those hours.`);
       continue;
     }
-    const mine = (await BulkCall.openCounts())[run.id] ?? 0;
-    const orgOpen = (await BulkCall.openByOrg())[run.org_id] ?? 0;
-    const slots = Math.min(run.parallel - mine, config.BULK_MAX_CONCURRENT - open, share - orgOpen);
+    const mine = counts[run.id] ?? 0;
+    // A group goes out only when the one before it is entirely over.
+    const slots = mine > 0 ? 0 : Math.max(0, Math.min(run.parallel, config.BULK_MAX_CONCURRENT - open, share - (orgOpen[run.org_id] ?? 0)));
     let waiting = slots <= 0 && mine === 0 ? "Waiting for other calls to finish." : null;
     const claimed = await BulkCall.claim(run.id, slots);
+    let streak = 0;
+    // The first call shows whether the line works (balance, keys, voice server). Only if it was placed are the
+    // rest of the group dialled together, so a group takes about one dial's time and a broken line costs one request.
+    const dialled = new Map();
+    if (claimed.length > 1) {
+      dialled.set(0, await dialOne(run, claimed[0], now));
+      if (dialled.get(0) === null) {
+        const rest = await Promise.all(claimed.slice(1).map((it) => dialOne(run, it, now)));
+        rest.forEach((o, k) => dialled.set(k + 1, o));
+      }
+    }
     for (const [i, item] of claimed.entries()) {
-      const outcome = await dialOne(run, item, now);
-      if (outcome === "paused") {
+      const outcome = dialled.has(i) ? dialled.get(i) : await dialOne(run, item, now);
+      const refused = typeof outcome === "object" && outcome !== null;
+      streak = refused ? streak + 1 : 0;
+      if (outcome === "paused" || streak >= config.BULK_FAIL_STREAK) {
         // The rest of this pass was taken but never dialled: back to waiting.
-        for (const rest of claimed.slice(i + 1)) await BulkCall.mark(rest.id, { status: "queued", placed_at: null });
+        for (const [k, rest] of claimed.entries()) if (k > i && !dialled.has(k)) await BulkCall.mark(rest.id, { status: "queued", placed_at: null });
+        if (outcome !== "paused") {
+          await pauseRun(run, `${streak} calls in a row were refused (${outcome.refused}). Check the list and Plivo, then resume.`);
+        }
         waiting = undefined;
         break;
       }
-      if (outcome) waiting = outcome;
+      if (typeof outcome === "string") waiting = outcome;
       open += 1;
+      orgOpen[run.org_id] = (orgOpen[run.org_id] ?? 0) + 1;
     }
-    if (waiting !== undefined) await BulkCall.setRun(run.id, { waiting });
-    await BulkCall.finishIfDone(run.id);
+    if (waiting !== undefined) await say(run, waiting);
   }
+  await BulkCall.finishDone();
 }
 
 let timer = null;
-let busy = false;
+let inflight = null;
 
-/** Run the runner every BULK_TICK_MS in this process. Several processes may call
- * this; the advisory lock lets one of them work at a time. */
-export function startBulkRunner() {
-  if (timer) return;
-  timer = setInterval(async () => {
-    if (busy) return;
-    busy = true;
-    const client = await pool.connect().catch(() => null);
+/** One pass under the lock. Only one runs at a time in this process; asked again meanwhile, it
+ * returns the pass already running. Several processes may call this; the advisory lock lets one work. */
+export function runLockedPass(options) {
+  if (inflight) return inflight;
+  inflight = (async () => {
+    const client = await lockPool.connect().catch(() => null);
     try {
       if (!client) return;
       const { rows } = await client.query("SELECT pg_try_advisory_lock($1) AS ok", [LOCK]);
       if (!rows[0].ok) return;
       try {
-        await runOnce();
+        await runOnce(options);
       } finally {
         await client.query("SELECT pg_advisory_unlock($1)", [LOCK]).catch(() => {});
       }
@@ -132,13 +188,26 @@ export function startBulkRunner() {
       logger.error({ err: err.message }, "bulk call runner failed; trying again on the next tick");
     } finally {
       client?.release();
-      busy = false;
     }
-  }, config.BULK_TICK_MS);
+  })().finally(() => { inflight = null; });
+  return inflight;
+}
+
+/** Run the runner every BULK_TICK_MS in this process. */
+export function startBulkRunner() {
+  if (timer) return;
+  timer = setInterval(() => { runLockedPass(); }, config.BULK_TICK_MS);
   timer.unref();
 }
 
-export function stopBulkRunner() {
+/** Stop ticking and let the pass in flight finish (for at most `waitMs`): a call already dialled
+ * must be recorded as on the line, not left as one that "may or may not have been placed". */
+export async function stopBulkRunner(waitMs = 10_000) {
   clearInterval(timer);
   timer = null;
+  if (!inflight) return;
+  let giveUp;
+  const gaveUp = new Promise((resolve) => { giveUp = setTimeout(resolve, waitMs); });
+  await Promise.race([inflight.catch(() => {}), gaveUp]);
+  clearTimeout(giveUp);
 }

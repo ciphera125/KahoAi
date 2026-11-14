@@ -18,7 +18,7 @@ export async function create(req, res) {
 }
 
 export async function get(req, res) {
-  res.json(await BulkCall.get(req.user.org_id, req.params.runId));
+  res.json(await BulkCall.get(req.user.org_id, req.params.runId, { items: req.query.items !== "0" }));
 }
 
 export const act = (action) => async (req, res) => {

@@ -21,6 +21,11 @@ const E164 = /^\+[1-9]\d{7,14}$/;
 const failed = (message) => new HttpError(502, message);
 // The voice server's check failed: nothing was dialled, and nothing will be until it is back.
 const notReady = (message) => Object.assign(failed(message), { stage: "preflight" });
+// Plivo itself cannot place calls for this account right now (no balance, wrong keys, a rate limit,
+// not reachable): nothing was dialled, and every other number would meet the same wall.
+const blocked = (message) => Object.assign(failed(message), { stage: "provider" });
+// Plivo answered with a server error or not at all: the call may or may not have been placed.
+const unsure = (message) => Object.assign(failed(message), { stage: "provider_unsure" });
 
 export function checkNumber(raw, label) {
   const number = String(raw ?? "").replace(/[ \-()]/g, "");
@@ -103,9 +108,9 @@ export async function dial({ authId, authToken, from, to, answer, hangup, maxSec
   } catch (err) {
     const code = err.cause?.code;
     if (["ECONNREFUSED", "ENOTFOUND", "EAI_AGAIN", "ECONNRESET"].includes(code) && err.name !== "TimeoutError") {
-      throw failed(`Could not connect to Plivo (${code}). Nothing was dialled.`);
+      throw blocked(`Could not connect to Plivo (${code}). Nothing was dialled.`);
     }
-    throw failed(`${err.name} talking to Plivo. ${unknown}`);
+    throw unsure(`${err.name} talking to Plivo. ${unknown}`);
   }
   const text = await res.text().catch(() => "");
   if ([200, 201, 202].includes(res.status)) {
@@ -113,9 +118,10 @@ export async function dial({ authId, authToken, from, to, answer, hangup, maxSec
   }
   const detail = text.trim().slice(0, 200);
   // Money first: it can come with any status, and the person can fix it in a minute.
-  if (res.status === 402) throw failed(plainProviderError("Plivo", 402));
-  if (res.status === 401 || res.status === 403) throw failed("Plivo rejected the Auth ID / Auth token. Nothing was dialled.");
+  if (res.status === 402) throw blocked(plainProviderError("Plivo", 402));
+  if (res.status === 401 || res.status === 403) throw blocked("Plivo rejected the Auth ID / Auth token. Nothing was dialled.");
+  if (res.status === 400 && /insufficient|no balance|out of credit|billing/i.test(detail)) throw blocked(plainProviderError("Plivo", 402));
   if (res.status === 400) throw failed(`Plivo refused the request: ${detail}. Nothing was dialled.`);
-  if (res.status === 429) throw failed("Plivo is rate limiting this account. Nothing was dialled; wait and retry.");
-  throw failed(`Plivo answered HTTP ${res.status}: ${detail}. ${unknown}`);
+  if (res.status === 429) throw blocked("Plivo is rate limiting this account. Nothing was dialled; wait and retry.");
+  throw (res.status >= 500 ? unsure : failed)(`Plivo answered HTTP ${res.status}: ${detail}. ${unknown}`);
 }

@@ -77,8 +77,169 @@ describe("starting a bulk call", () => {
   });
 });
 
+describe("calls at once is chosen by the person, not assumed", () => {
+  it("is required: nothing, 0, a word, a fraction or a negative number are all refused with a plain message", async () => {
+    const { b, n, a } = await setup();
+    for (const bad of [undefined, null, 0, "0", "", "abc", 2.5, -3, 11, [], {}]) {
+      const r = await b.post("/api/bulk-calls").send({ consent: true, agent_id: a.id, from_id: n.id, rows: rows(1),
+        ...(bad === undefined ? {} : { parallel: bad }) });
+      expect(r.status, JSON.stringify(bad)).toBe(400);
+      expect(r.body.error, JSON.stringify(bad)).toMatch(/how many calls at once.*1 and 10/i);
+    }
+    expect((await db.query("SELECT count(*)::int AS n FROM bulk_runs")).rows[0].n).toBe(0);
+  });
+
+  it("takes every whole number from 1 to 10, as a number or as text", async () => {
+    const { b, n, a } = await setup();
+    for (const ok of [1, 7, "7", 10]) {
+      const r = await start(b, { agent_id: a.id, from_id: n.id, rows: rows(1, Number(ok) * 10), parallel: ok });
+      expect(r.status, String(ok)).toBe(200);
+      expect(r.body.parallel).toBe(Number(ok));
+    }
+  });
+});
+
+describe("batches: the next group is dialled only when the last group is finished", () => {
+  const ended = (n, status = "answered") => internal("put", `/internal/v1/calls/req-${String(n).padStart(4, "0")}-bulk`).send({ status, duration_secs: 20 });
+
+  it("50 people with 7 at once go out as 7, 7, 7, 7, 7, 7, 7 and a last 1", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(50), parallel: 7 })).body;
+    const sizes = [];
+    for (let g = 0; g < 8; g++) {
+      const before = dials().length;
+      await tick(); // settles the last group, then dials the next one
+      sizes.push(dials().length - before);
+      await tick();
+      expect(dials().length - before).toBe(sizes[g]); // nobody new while the group is on the line
+      for (let k = before + 1; k <= dials().length; k++) await ended(k);
+    }
+    await tick();
+    expect(sizes).toEqual([7, 7, 7, 7, 7, 7, 7, 1]);
+    expect((await b.get(`/api/bulk-calls/${run.id}`)).body.status).toBe("done");
+  });
+
+  it("the next group waits for the slowest call of the last one, however many have finished", async () => {
+    const { b, n, a } = await setup();
+    await start(b, { agent_id: a.id, from_id: n.id, rows: rows(9), parallel: 3 });
+    await tick();
+    expect(dials()).toHaveLength(3);
+    await ended(1); await ended(2); // two of three done, one still talking
+    await tick(); await tick();
+    expect(dials()).toHaveLength(3);
+    await ended(3);
+    await tick();
+    expect(dials()).toHaveLength(6); // now, and only now, the next three
+    expect(dials().map((d) => d.body.to)).toEqual(Array.from({ length: 6 }, (_, i) => `+9198765${String(i).padStart(5, "0")}`));
+  });
+
+  it("calls are never more than the number chosen, and the last group is just what is left", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(7), parallel: 3 })).body;
+    const groups = [];
+    for (let g = 0; g < 3; g++) {
+      const before = dials().length;
+      await tick();
+      groups.push(dials().length - before);
+      for (let k = before + 1; k <= dials().length; k++) await ended(k);
+    }
+    await tick();
+    expect(groups).toEqual([3, 3, 1]);
+    expect((await b.get(`/api/bulk-calls/${run.id}`)).body.status).toBe("done");
+  });
+
+  it("a person who was not answered and is tried again joins a later group, not the one in progress", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(2), parallel: 2, retries: 1, retry_after_hours: 1 })).body;
+    await tick();
+    await ended(1, "no_answer"); await ended(2);
+    await tick();
+    expect(dials()).toHaveLength(2);
+    await db.query("UPDATE bulk_items SET not_before = now() - interval '1 minute' WHERE run_id = $1", [run.id]);
+    await tick();
+    expect(dials()).toHaveLength(3);
+  });
+});
+
+describe("a run that cannot succeed stops instead of burning the list", () => {
+  const paused = async (b, run) => (await b.get(`/api/bulk-calls/${run.id}`)).body;
+  const notices = async (b) => (await b.get("/api/notifications")).body.items.map((i) => i.text);
+
+  it("no Plivo balance (402): the run pauses on the first call, the rest stay queued, and the team is told", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(20), parallel: 10 })).body;
+    fakes.plivo.reply = { status: 402, body: { error: "insufficient credit" } };
+    await tick();
+    expect(dials()).toHaveLength(1); // one try, not ten
+    await tick();
+    expect(dials()).toHaveLength(1); // and it stays stopped
+    const d = await paused(b, run);
+    expect(d.status).toBe("paused");
+    expect(d.waiting).toMatch(/insufficient balance/i);
+    expect(d.counts).toMatchObject({ queued: 20, failed: 0 });
+    expect((await notices(b)).some((t) => /paused/i.test(t) && /balance/i.test(t))).toBe(true);
+  });
+
+  it("after credit is added, resuming dials the whole list from the start: nobody was lost", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(4), parallel: 4 })).body;
+    fakes.plivo.reply = { status: 402, body: {} };
+    await tick();
+    fakes.plivo.reply = () => ({ status: 201, body: { request_uuid: `req-${String(++seq).padStart(4, "0")}-bulk`, message: "call fired" } });
+    await b.post(`/api/bulk-calls/${run.id}/resume`);
+    await tick();
+    expect(dials().filter((d) => d.body.to).length).toBe(5); // the 402 try, then all four
+    expect((await paused(b, run)).counts).toMatchObject({ calling: 4, failed: 0, queued: 0 });
+  });
+
+  it("wrong Plivo account details (401) and a Plivo rate limit (429) pause it too", async () => {
+    for (const status of [401, 403, 429]) {
+      await freshDb();
+      fakes.plivo.requests.length = 0;
+      const { b, n, a } = await setup();
+      const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(6), parallel: 6 })).body;
+      fakes.plivo.reply = { status, body: {} };
+      await tick();
+      const d = await paused(b, run);
+      expect(d.status, String(status)).toBe("paused");
+      expect(d.counts, String(status)).toMatchObject({ queued: 6, failed: 0 });
+      expect(dials(), String(status)).toHaveLength(1);
+    }
+  });
+
+  it("Plivo being unreachable pauses the run, with nothing marked failed", async () => {
+    const { b, n, a } = await setup();
+    const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(4), parallel: 4 })).body;
+    fakes.plivo.reply = { status: 503, body: "down" };
+    await tick(); // 503 can mean the call was placed: that row is failed for a human to check, the rest wait
+    const d = await paused(b, run);
+    expect(d.status).toBe("paused");
+    expect(d.waiting).toMatch(/Plivo/);
+    expect(d.counts.failed).toBeLessThanOrEqual(1);
+    expect(dials()).toHaveLength(1);
+  });
+
+  it("three refused dials in a row pause the run; one or two refused numbers do not", async () => {
+    const { b, n, a } = await setup();
+    const two = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(2), parallel: 2 })).body;
+    fakes.plivo.reply = { status: 400, body: { error: "invalid destination" } };
+    await tick();
+    expect((await paused(b, two)).status).toBe("done");
+    await freshDb();
+    fakes.plivo.requests.length = 0;
+    const s = await setup();
+    const run = (await start(s.b, { agent_id: s.a.id, from_id: s.n.id, rows: rows(8), parallel: 8 })).body;
+    await tick();
+    const d = await paused(s.b, run);
+    expect(d.status).toBe("paused");
+    expect(d.waiting).toMatch(/3 calls in a row/);
+    expect(dials()).toHaveLength(3);
+    expect(d.counts).toMatchObject({ failed: 3, queued: 5 });
+  });
+});
+
 describe("running a bulk call", () => {
-  it("dials at most `parallel` at once, through the agent, and the next only when one ends", async () => {
+  it("dials at most `parallel` at once, through the agent, and the next group only when all of them end", async () => {
     const { b, n, a } = await setup();
     await b.patch(`/api/agents/${a.id}`).send({ settings: { ring_secs: 40, max_minutes: 10 } });
     const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(5), parallel: 2 })).body;
@@ -91,9 +252,12 @@ describe("running a bulk call", () => {
     // The voice service reports the first one ended.
     await internal("put", "/internal/v1/calls/req-0001-bulk").send({ status: "answered", duration_secs: 42 });
     await tick();
-    expect(dials()).toHaveLength(3);
+    expect(dials()).toHaveLength(2); // one is free, but a group goes out only when the last one is over
+    await internal("put", "/internal/v1/calls/req-0002-bulk").send({ status: "answered", duration_secs: 30 });
+    await tick();
+    expect(dials()).toHaveLength(4);
     const detail = (await b.get(`/api/bulk-calls/${run.id}`)).body;
-    expect(detail.counts).toMatchObject({ done: 1, calling: 2, queued: 2 });
+    expect(detail.counts).toMatchObject({ done: 2, calling: 2, queued: 1 });
     expect(detail.items[0]).toMatchObject({ status: "done", outcome: "answered", call_id: "req-0001-bulk" });
   });
 

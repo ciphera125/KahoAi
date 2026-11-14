@@ -103,3 +103,16 @@ describe("the system check says what is really working", () => {
     expect((await db.query("SELECT 1")).rowCount).toBe(1);
   });
 });
+
+describe("settings that quietly weaken the limits", () => {
+  it("several workers without Redis are warned about: every worker would keep its own count", async () => {
+    const { warnings } = await import("../src/services/health.js");
+    const base = { NODE_ENV: "production", REQUIRE_AGENT_TEST: true, TRANSFER_NUMBER: "+911234567890", DATABASE_SSL: "verify" };
+    expect(warnings({ ...base, WEB_CONCURRENCY: 1 })).toEqual([]);
+    expect(warnings({ ...base, WEB_CONCURRENCY: 4, REDIS_URL: "redis://x" })).toEqual([]);
+    const w = warnings({ ...base, WEB_CONCURRENCY: 4 });
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/REDIS_URL/);
+    expect(w[0]).toMatch(/4 workers/);
+  });
+});

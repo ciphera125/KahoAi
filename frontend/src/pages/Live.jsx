@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { get } from "../api.js";
 import { Spinner, useToast, whenShort } from "../ui.jsx";
+import { startPolling } from "../poll.js";
 
 export default function Live() {
   const toast = useToast();
   const [calls, setCalls] = useState(null);
   const load = useCallback(() => get("/api/calls/active").then(setCalls).catch((e) => toast(e.message, true)), []);
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { load(); return startPolling(load, 5000); }, [load]);
   if (!calls) return <Spinner />;
   return (
     <section>

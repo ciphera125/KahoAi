@@ -4,6 +4,7 @@ import { get } from "../api.js";
 import { chartFacts } from "../chart.js";
 import { dayWord } from "../time.js";
 import { fmtTalk, Icon, OutcomePill, plural, Spinner, useToast, whenShort } from "../ui.jsx";
+import { startPolling } from "../poll.js";
 
 export default function Dashboard() {
   const toast = useToast();
@@ -16,8 +17,7 @@ export default function Dashboard() {
   useEffect(() => {
     const poll = () => get("/api/calls/active").then((c) => setActive(c.length)).catch(() => {});
     poll();
-    const t = setInterval(poll, 10000);
-    return () => clearInterval(t);
+    return startPolling(poll, 10000);
   }, []);
 
   if (err && !d) {

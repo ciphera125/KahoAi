@@ -11,6 +11,7 @@ import { LogoMark, Wordmark } from "../logo.jsx";
 import { NAV } from "../nav.js";
 import Tour from "./Tour.jsx";
 import { ago, Avatar, ErrorBoundary, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
+import { startPolling } from "../poll.js";
 
 const RAIL_KEY = "kaho.rail.open";
 const readRail = () => { try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } };
@@ -230,7 +231,7 @@ function Bell() {
     setUnread(r.unread);
     setReady(true);
   }).catch(() => {}), [ready]);
-  useEffect(() => { refresh(); const t = setInterval(refresh, 30000); return () => clearInterval(t); }, [refresh]);
+  useEffect(() => { refresh(); return startPolling(refresh, 30000); }, [refresh]);
 
   const loadMore = useCallback(async () => {
     if (!next || loading) return;

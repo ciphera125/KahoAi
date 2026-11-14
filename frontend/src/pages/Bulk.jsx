@@ -5,8 +5,10 @@ import { can, useMe } from "../auth.jsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { get, post } from "../api.js";
+import { countsKey, groupsText } from "../bulk.js";
 import { parseCallList } from "../csv.js";
 import { Icon, Modal, OutcomePill, plural, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
+import { startPolling } from "../poll.js";
 
 const STATUS_LABEL = { running: "Running", paused: "Paused", done: "Finished", cancelled: "Cancelled" };
 const ITEM_LABEL = { queued: "Waiting", dialling: "Dialling", calling: "On a call", done: "Done", skipped: "Skipped", failed: "Failed" };
@@ -27,7 +29,7 @@ function RunList() {
   const [runs, setRuns] = useState(null);
   const [creating, setCreating] = useState(false);
   const load = useCallback(() => get("/api/bulk-calls").then(setRuns).catch((e) => toast(e.message, true)), [toast]);
-  useEffect(() => { load(); const t = setInterval(load, 5000); return () => clearInterval(t); }, [load]);
+  useEffect(() => { load(); return startPolling(load, 5000); }, [load]);
   const [shownRuns, runPager] = usePaged(runs ?? []);
   return (
     <section>
@@ -69,7 +71,7 @@ function NewRun({ onClose, onStarted }) {
   const [name, setName] = useState("");
   const [agentId, setAgentId] = useState("");
   const [fromId, setFromId] = useState("");
-  const [parallel, setParallel] = useState(3);
+  const [parallel, setParallel] = useState(0); // 0 = not chosen yet; the person must pick
   const [retries, setRetries] = useState(0);
   const [wait, setWait] = useState(4);
   const [consent, setConsent] = useState(false);
@@ -99,6 +101,7 @@ function NewRun({ onClose, onStarted }) {
   const start = async () => {
     if (!list) return toast("Choose a file first.", true);
     if (!agentId) return toast("Choose an agent.", true);
+    if (!(Number(parallel) >= 1)) return toast("Choose how many calls at once, from 1 to 10.", true);
     if (!consent) return toast("Confirm that everyone on the list agreed to be called.", true);
     setBusy(true);
     try {
@@ -149,9 +152,14 @@ function NewRun({ onClose, onStarted }) {
           </select>
         </div>
         <div className="field"><label className="f">Calls at once</label>
-          <select value={parallel} onChange={(e) => setParallel(e.target.value)}>
+          <select value={parallel} onChange={(e) => setParallel(e.target.value)} aria-describedby="parallel-hint">
+            <option value={0} disabled>Choose (0)</option>
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
+          <div className="hint" id="parallel-hint">{Number(parallel) >= 1 && list
+            ? `${list.rows.length} people go out in groups of ${parallel}: ${groupsText(list.rows.length, Number(parallel))}. The next group is called only when the last one is over.`
+            : "Calls go out in groups of this size. Up to 10, your plan's limit."}
+            {Number(parallel) >= 10 ? " Using all 10 lines leaves none for incoming calls while it runs." : ""}</div>
         </div>
         <div className="field"><label className="f">If nobody answers</label>
           <select value={retries} onChange={(e) => setRetries(e.target.value)}>
@@ -171,7 +179,7 @@ function NewRun({ onClose, onStarted }) {
       <label className="check" style={{ marginTop: "var(--s3)" }}><input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} /><span>Everyone on this list has agreed to be called. India's TRAI/DND rules apply, and calls are recorded.</span></label>
       <div className="actions" style={{ justifyContent: "flex-end" }}>
         <button className="ghost" onClick={onClose}>Cancel</button>
-        <button className="primary" onClick={start} disabled={busy || !list}><Icon name="call" />{busy ? "Starting…" : list ? `Start calling ${people(list.rows.length)}` : "Start calling"}</button>
+        <button className="primary" onClick={start} disabled={busy || !list || !(Number(parallel) >= 1)}><Icon name="call" />{busy ? "Starting…" : list ? `Start calling ${people(list.rows.length)}` : "Start calling"}</button>
       </div>
     </Modal>
   );
@@ -185,7 +193,14 @@ function RunDetail({ id }) {
   const load = useCallback(() => get(`/api/bulk-calls/${id}`).then(setRun).catch((e) => toast(e.message, true)), [id, toast]);
   useEffect(() => { load(); }, [load]);
   const live = run && (run.status === "running" || run.counts.calling > 0);
-  useEffect(() => { if (!live) return undefined; const t = setInterval(load, 3000); return () => clearInterval(t); }, [live, load]);
+  // While live, ask for the numbers alone; fetch the people (up to 5,000 rows) only when the numbers move.
+  const seen = useRef("");
+  useEffect(() => { seen.current = countsKey(run); }, [run]);
+  const refresh = useCallback(() => get(`/api/bulk-calls/${id}?items=0`).then((light) => {
+    if (countsKey(light) !== seen.current) return load();
+    return undefined;
+  }).catch((e) => toast(e.message, true)), [id, load, toast]);
+  useEffect(() => (live ? startPolling(refresh, 3000) : undefined), [live, refresh]);
 
   const act = async (action) => {
     if (action === "cancel" && !(await confirm({ title: "Cancel this bulk call?", text: "No one else on the list is called. Calls already on the line carry on.", ok: "Cancel bulk call" }))) return;

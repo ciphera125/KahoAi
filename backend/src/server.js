@@ -16,6 +16,11 @@ async function primary() {
   if (applied.length) logger.info({ applied }, "migrations applied");
   await checkDatabaseRole();
   await checkSecretsKey();
+  try {
+    const { maskOldBuilderHistory } = await import("./services/maskOldRows.js");
+    const { changed } = await maskOldBuilderHistory();
+    if (changed) logger.info({ changed }, "masked old Builder history rows");
+  } catch (err) { logger.warn({ err: String(err?.message ?? err).slice(0, 200) }, "could not mask old Builder history; will try again on the next start"); }
   await pool.end();
   for (let i = 0; i < config.WEB_CONCURRENCY; i++) cluster.fork();
   let stopping = false;
@@ -32,8 +37,10 @@ async function primary() {
 }
 
 async function worker() {
+  const { installCrashHandlers } = await import("./utils/crash.js");
+  installCrashHandlers(process, logger);
   const { createApp, createInternalApp } = await import("./app.js");
-  const { pool } = await import("./db/pool.js");
+  const { pool, lockPool } = await import("./db/pool.js");
   const { stopListening } = await import("./services/liveEvents.js");
   const { closeRedis } = await import("./middleware/rateLimit.js");
   const { startBulkRunner, stopBulkRunner } = await import("./services/bulkRunner.js");
@@ -51,7 +58,6 @@ async function worker() {
   startRecordingRetentionRunner();
   startArchiveRunner();
   const shutdown = async () => {
-    stopBulkRunner();
     stopPlivoSyncRunner();
     stopRecordingRetentionRunner();
     stopArchiveRunner();
@@ -59,8 +65,10 @@ async function worker() {
     internal.close();
     server.closeIdleConnections();
     setTimeout(() => server.closeAllConnections(), 10_000).unref();
+    await stopBulkRunner(); // the pass in flight finishes recording its calls before the database closes
     await stopListening();
     await closeRedis();
+    await lockPool.end().catch(() => {});
     await pool.end().catch(() => {});
     process.exit(0);
   };
