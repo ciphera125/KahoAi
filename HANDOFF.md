@@ -2150,3 +2150,59 @@ dates and "Download CSV" (CSV now has date and time columns, India time, honours
 theme switch starts a 16-step guided tour of every sidebar page with Back, Next and Skip (`tour.js`, `nav.js`, `Tour.jsx`).
 Checked in the real browser: Error Logs, the tour card, the Audit log page. NOT clicked through: Acknowledge, sign-in with a code,
 Contacts' new column, the Dashboard card. Backend 633, frontend 48 tests pass; lint clean; migration 027 applied live. Not committed.
+
+### 2026-11-14 (night): whole-system audit, bulk concurrency, scale (owner asked for fixes: "apply all the fixes")
+
+Owner's brief: audit as a senior engineer and voice engineer; prove bulk concurrency (50 calls at 5 at once); make it hold for 3,000+
+people. Baselines before: backend 668, voice 915 pass; frontend run with `npm test` (`node --test`, not vitest).
+**Bulk concurrency verified:** 50 people at 5 at once go out as exactly ten groups of five, never more than five on the line (read from
+the database after every tick), each number dialled once, run ends `done` (`tests/bulkScale.test.js`, real Postgres, fake Plivo and voice
+server). It already held; the tests now say so. **Fixed, each test-first with the red run shown, then green:**
+1. The runner counted only its own calls against `BULK_MAX_CONCURRENT`, but calls placed by hand and inbound calls share the voice
+   server's `WS_MAX_CONCURRENT_CALLS` (10). 6 live outside calls and 10 slots: it dialled 10 (callees picked up and were refused). Now
+   `BulkCall.liveOutsideCalls()` is counted. A first version counted any ringing row for 20 minutes; the pen-test of it (below) found a
+   cross-organization starvation, so only calls whose stream began, or that were dialled in the last 60 s, count.
+2. A pass cost about 6 to 9 statements per run every 2 s (121 for 20 waiting runs, 181 for 20 active). Now a fixed handful: counts read
+   once, `settleMany` is four statements, `finishDone` one, a run is written only when its "waiting" text changed.
+3. `WS_RATE_LIMIT_PER_MINUTE` defaulted to 5 in code (`.env.example` said 60): a bulk group of 6 to 10 from one tunnel address had its
+   extra callees refused after pickup. Default now 60.
+4. Pages that poll (Bulk, Live, Dashboard, notifications) kept asking in background tabs for ever. `frontend/src/poll.js`: quiet while
+   hidden, refreshes once on return, never overlaps a slow request.
+5. Stopping the Studio mid-pass closed the database after some calls were dialled and before they were recorded. `stopBulkRunner()`
+   now waits up to 10 s for the pass in flight (mutation-checked: removing the wait fails the test).
+6. Workers had no `unhandledRejection`/`uncaughtException` handler: now one secret-free structured log line (stack scrubbed too) and a
+   non-zero exit, so the primary restarts a clean worker (`utils/crash.js`).
+Tests now: backend 681+ (new `bulkScale.test.js`, `crashHandlers.test.js`), frontend 54, voice 915; ruff and eslint clean. Nothing
+committed. The 27 files already modified before this audit (pen-test fixes of 2026-11-11: noNulls, paging, maskOldRows, resilience's
+broader `_SECRETS`, bulk changes) were not reviewed line by line; their own tests pass.
+**Pen-test of this audit's code (run for real against the test database unless noted):** many stale ringing rows starved bulk calls
+(run; fixed, see 1). Residual, not fixed: an organization can still hold up to about 10 slots for a minute at a time with calls it
+places by API (10 a minute) because a ringing call counts for 60 s; capping each organization's share of the outside count would close
+it (reasoned, not run). Not run: a real second process contending for the advisory lock.
+**Scope for improvement, found and NOT done (owner decides):**
+- The voice server is one process: stream tokens (`issue_stream`), the webhook nonce store and the connection limiter are in memory, so a
+  second instance behind a load balancer would reject real calls. Capacity is `WS_MAX_CONCURRENT_CALLS` on one machine (10 by default;
+  10 simulated calls measured: greeting median 1.74 s). 3,000 accounts is fine; 3,000 simultaneous calls needs shared state first.
+- `PGPOOL_MAX` is 10 per process and the runner's advisory lock holds one for a whole pass; Supabase's session pooler has its own ceiling.
+  Size both together before real traffic; do not move to the transaction pooler (`db/ssl.js` refuses it for a reason).
+- The bulk detail page polls every row (up to 5,000) every 3 s while a run is live; a run list or counts-only poll would cut that.
+- Dials within a group are sequential (about 0.5 to 1 s each); a very slow Plivo (15 s dial plus 10 s preflight, ten in a row) takes about
+  250 s, close to the 5 minutes after which a `dialling` row is treated as lost. Dial the rest of a group in parallel after the first
+  succeeds, or derive that threshold from the timeouts.
+- Rate-limit state is per process unless `REDIS_URL` is set: with `WEB_CONCURRENCY` above 1 the limits multiply.
+- A group waits for its slowest call (owner's rule), so one long call idles the other four slots.
+- Not checked here: the real browser (no login in this session), a real Plivo call, a real second Studio process.
+
+### 2026-11-14 (night, later): the open items of the audit, done
+
+Owner: "fix the not-fixed ones and commit it all". Test-first again (red shown, then green). Done: one organization's outside calls
+count at most `BULK_OUTSIDE_CAP` (6) against bulk capacity (closes the residual starvation); a bulk group is dialled together once its
+first call was placed (about one dial's time; a broken line still costs one request); the bulk detail page polls `?items=0` and
+fetches rows only when counts change; the runner's advisory lock has its own one-connection pool (`lockPool`); System check warns when
+`WEB_CONCURRENCY` > 1 without `REDIS_URL`. Backend 688, frontend 55, voice 915 pass; lint clean.
+**Still NOT done, on purpose:** (1) A group still waits for its slowest call: that is the owner's own rule, not a defect; say so to
+change it. (2) The voice server keeps stream tokens, the webhook nonce store and the connection limiter in memory, so it must run as
+ONE instance (or with sticky routing for `/answer` and `/ws` to the same one). Making them shared (Redis or the Studio's database) is a
+change to the call-admission path that cannot be proven without real calls; do it deliberately with a real concurrent test, not as part of
+an audit. (3) `PGPOOL_MAX` sizing against Supabase's pooler ceiling is a deployment decision. Not checked: a real browser, a real Plivo
+call, a second Studio process.
