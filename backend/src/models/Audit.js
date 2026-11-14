@@ -1,5 +1,6 @@
 // The permanent record of changes. Written next to every notification; read by those who manage the
 // organization. Entries are text written by the Studio, never by a caller.
+import { pageNumber } from "../utils/paging.js";
 import { inOrg } from "../db/pool.js";
 import { ValidationError } from "../utils/errors.js";
 
@@ -14,10 +15,16 @@ export async function record(orgId, { actor, role, action, detail, ref = null })
 const like = (q) => `%${String(q).replace(/[\\%_]/g, "\\$&")}%`;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** On the calendar: 2026-02-31 is not a day, though Date.parse rolls it into March. */
+function isRealDay(raw) {
+  const [y, m, d] = raw.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d && y >= 1900;
+}
 /** A day typed as YYYY-MM-DD (India time), or null. Anything else is refused. */
 function day(raw, label) {
   if (raw === undefined || raw === null || raw === "") return null;
-  if (typeof raw !== "string" || !DAY.test(raw) || Number.isNaN(Date.parse(raw))) {
+  if (typeof raw !== "string" || !DAY.test(raw) || !isRealDay(raw)) {
     throw new ValidationError(`${label} must be a day like 2026-11-14`);
   }
   return raw;
@@ -28,7 +35,7 @@ const range = (a, b) => `($${a}::date IS NULL OR (at AT TIME ZONE 'Asia/Kolkata'
 export async function page(orgId, { page: p, perPage, q = null, from = null, to = null }) {
   const size = Number(perPage ?? 10);
   if (!PAGE_SIZES.includes(size)) throw new ValidationError(`per_page must be one of ${PAGE_SIZES.join(", ")}`);
-  const n = Math.max(1, Math.floor(Number(p)) || 1);
+  const n = pageNumber(p);
   const term = typeof q === "string" && q.trim() ? like(q.trim().slice(0, 100)) : null;
   const f = day(from, "from"); const t = day(to, "to");
   const where = `org_id = $1 AND ($2::text IS NULL OR detail ILIKE $2 OR actor ILIKE $2 OR action ILIKE $2) AND ${range(3, 4)}`;

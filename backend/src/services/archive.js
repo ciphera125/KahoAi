@@ -29,7 +29,10 @@ const CALLS_PER_PASS = 200;
 export const istDay = (when = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(when);
 
 const state = { lastRun: null, lastError: null, lastFiled: 0 };
-export const status = () => ({ ...state });
+const perOrg = new Map(); // each organization's own last run: one team never sees another's counts
+const blank = { lastRun: null, lastError: null, lastFiled: 0 };
+/** The last pass: one organization's own, or (no argument) the whole timer's, for tests and logs. */
+export const status = (org) => ({ ...(org ? (perOrg.get(org) ?? blank) : state) });
 
 const ROLLUPS = {
   "6-audit-logs": async (org, since) => (await systemQuery(
@@ -118,17 +121,19 @@ async function fileCalls(org) {
 const reported = new Set(); // organizations already told about the current outage, so Error Logs is not flooded
 
 /**
- * One pass over every organization. `days` is how many of India's days, counting today, are refiled.
+ * One pass over every organization, or only `orgId` when given (an admin's on-demand run files their
+ * own team and nobody else's). `days` is how many of India's days, counting today, are refiled.
  * Never throws; returns what it filed and what Storage refused.
  */
-export async function archiveOnce({ days = 2, now = new Date() } = {}) {
+export async function archiveOnce({ days = 2, now = new Date(), orgId = null } = {}) {
   if (!recordingsConfigured()) return { filed: 0, failed: 0, skipped: true };
   let filed = 0;
   let failed = 0;
   try {
-    const orgs = (await systemQuery("SELECT id FROM organizations")).rows;
+    const orgs = orgId ? [{ id: orgId }] : (await systemQuery("SELECT id FROM organizations")).rows;
     for (const { id: org } of orgs) {
       let orgFailed = 0;
+      const before = filed;
       try {
         for (const kind of Object.keys(ROLLUPS)) {
           const r = await fileRollup(kind, org, now, days);
@@ -141,6 +146,8 @@ export async function archiveOnce({ days = 2, now = new Date() } = {}) {
         logger.error({ err: String(err?.message ?? err).slice(0, 200), org }, "filing records failed");
       }
       failed += orgFailed;
+      perOrg.set(org, { lastRun: new Date().toISOString(), lastFiled: filed - before,
+        lastError: orgFailed ? `Could not file ${orgFailed} record${orgFailed === 1 ? "" : "s"} in Storage; will try again` : null });
       if (orgFailed && !reported.has(org)) {
         reported.add(org);
         await ErrorLog.add(org, { level: "error", source: "archive",
@@ -153,6 +160,7 @@ export async function archiveOnce({ days = 2, now = new Date() } = {}) {
     failed++;
     logger.error({ err: String(err?.message ?? err).slice(0, 200) }, "filing records failed");
   }
+  if (orgId) return { filed, failed }; // an on-demand run for one team leaves the timer's own record alone
   state.lastRun = new Date().toISOString();
   state.lastFiled = filed;
   state.lastError = failed ? `Could not file ${failed} record${failed === 1 ? "" : "s"} in Storage; will try again` : null;

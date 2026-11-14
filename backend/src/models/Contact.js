@@ -1,4 +1,5 @@
 // Contacts: people, their numbers, and tags on either. Always one organization's.
+import { pageNumber } from "../utils/paging.js";
 import { asSystem, inOrg } from "../db/pool.js";
 import { hexId } from "../utils/crypto.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
@@ -63,7 +64,7 @@ const likeEscape = (s) => s.replace(/[\\%_]/g, (c) => `\\${c}`);
 export async function page(orgId, { page: p = 1, perPage = 25, q = "", consent } = {}) {
   const size = Number(perPage);
   if (!PAGE_SIZES.includes(size)) throw new ValidationError(`per_page must be one of ${PAGE_SIZES.join(", ")}`);
-  const n = Math.max(1, Math.floor(Number(p)) || 1);
+  const n = pageNumber(p);
   const text = String(q ?? "").trim().slice(0, 80);
   const digits = text.replace(/\D/g, "");
   const params = [orgId];

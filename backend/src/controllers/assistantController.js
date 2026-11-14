@@ -36,13 +36,13 @@ export async function toolLog(req, res) {
 export async function archiveRun(req, res) {
   const { archiveOnce } = await import("../services/archive.js");
   const days = Math.min(3650, Math.max(1, Math.floor(Number(req.body?.days)) || 2));
-  res.json(await archiveOnce({ days }));
+  res.json(await archiveOnce({ days, orgId: req.user.org_id }));
 }
 
 export async function archiveStatus(req, res) {
   const { status, FOLDERS } = await import("../services/archive.js");
   const { recordingsConfigured } = await import("../services/storage.js");
-  const s = status();
+  const s = status(req.user.org_id);
   res.json({ configured: recordingsConfigured(), last_run: s.lastRun, last_filed: s.lastFiled, last_error: s.lastError,
     folders: ["1-recordings", "2-transcripts", "3-users", "4-user-emails", "5-unique-users", ...FOLDERS] });
 }

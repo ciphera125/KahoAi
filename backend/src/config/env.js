@@ -40,6 +40,9 @@ const schema = z.object({
   ASSISTANT_PER_DAY: int(300, 1, 10000),
   API_CALLS_PER_MIN: int(10, 1, 1000),
   API_CALLS_PER_DAY: int(500, 1, 2000),
+  // Admin actions that cost real work (filing records in Storage, five outside checks), per organization.
+  ARCHIVE_RUN_PER_MIN: int(3, 1, 100),
+  HEALTH_PER_MIN: int(12, 1, 600),
   PUBLIC_HOST: z.string().optional(),
   PUBLIC_SCHEME: z.enum(["https", "http"]).default("https"),
   WEBHOOK_SECRET: z.string().optional(),
@@ -51,7 +54,9 @@ const schema = z.object({
   STREAM_MAX_SECS: int(3600, 10, 86400),
   MAX_STREAMS_PER_USER: int(5, 1, 100),
   BULK_MAX_CONCURRENT: int(10, 1, 100),   // the voice server's WS_MAX_CONCURRENT_CALLS
+  BULK_OUTSIDE_CAP: int(6, 1, 100),      // most slots one organization's hand-placed and inbound calls can take from bulk calls
   BULK_TICK_MS: int(2000, 200, 60000),
+  BULK_FAIL_STREAK: int(3, 2, 50),        // this many refused dials in a row pause a bulk call
   PLIVO_SYNC_INTERVAL_MS: int(180000, 30000, 3600000), // how often the Dashboard reconciles outcomes with Plivo on its own
   BULK_REPEAT_HOURS: int(24, 0, 720),     // nobody is called again by a bulk call within this; 0 turns it off
   PLIVO_FROM_NUMBER: z.string().optional(),

@@ -84,7 +84,12 @@ function checkSignUp(fields) {
   return { name, email, password, organization };
 }
 
+const BAD_INVITE = "That invite code is not valid. Codes work once, for a week; ask for a new one.";
+/** An invite code is text. A list or object that merely holds one must not work (String() would flatten it). */
+const wrongKind = (invite) => invite !== undefined && invite !== null && invite !== "" && typeof invite !== "string";
+
 export async function signUp(fields) {
+  if (wrongKind(fields?.invite)) throw new AuthError(BAD_INVITE, 403);
   const { name, email, password, organization } = checkSignUp(fields);
   const salt = randomBytes(16);
   const hash = await scryptHashAsync(password, salt); // before the transaction: it is slow
@@ -318,6 +323,7 @@ export async function switchOrganization(userId, rawSession, orgId) {
 
 /** Join another organization with its invite code, as a member, while signed in. */
 export async function joinOrganization(userId, invite) {
+  if (wrongKind(invite)) throw new AuthError(BAD_INVITE, 403);
   return asSystem(async (db) => {
     const { rows } = await db.query("DELETE FROM invites WHERE code = $1 AND expires_at > now() RETURNING org_id",
       [String(invite ?? "").slice(0, 100)]);

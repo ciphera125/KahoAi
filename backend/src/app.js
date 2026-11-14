@@ -1,5 +1,6 @@
 // The Express app: middleware in the order a request meets it, then the routes.
 // No listen() here, so tests drive it directly and server.js decides how to run it.
+import { refuseNulls, stripNulls } from "./middleware/noNulls.js";
 import express from "express";
 import cookieParser from "cookie-parser";
 import { pinoHttp } from "pino-http";
@@ -38,9 +39,9 @@ export function createApp() {
   const json = (req, res, next) => (req.method === "POST" && req.path === "/bulk-calls" ? large : small)(req, res, next);
   // Another system's API, by key. Mounted before /api so it does not go through the
   // browser's checks: a machine client sends no Origin and carries no cookies.
-  app.use("/api/v1", apiHeaders, ipLimiter, express.json({ limit: "256kb" }), requireApiKey, publicApiRouter);
+  app.use("/api/v1", apiHeaders, ipLimiter, express.json({ limit: "256kb" }), refuseNulls, requireApiKey, publicApiRouter);
   app.use("/api", apiHeaders, hostCheck, originCheck, ipLimiter, sessionLimiter, jsonOnly,
-    json, cookieParser(), apiRouter);
+    json, cookieParser(), refuseNulls, apiRouter);
 
   app.use(notFound);
   app.use(errorHandler);
@@ -53,7 +54,7 @@ export function createInternalApp() {
   const app = express();
   app.disable("x-powered-by");
   app.use(pinoHttp({ logger, autoLogging: config.NODE_ENV !== "test" }));
-  app.use("/internal/v1", requireServiceToken, express.json({ limit: "512kb" }), internalRouter);
+  app.use("/internal/v1", requireServiceToken, express.json({ limit: "512kb" }), stripNulls, internalRouter);
   app.use(notFound);
   app.use(errorHandler);
   return app;

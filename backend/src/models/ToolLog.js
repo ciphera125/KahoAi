@@ -1,6 +1,7 @@
 // A record of every tool made, changed, removed or undone: by Kaho Builder or by hand in the Studio.
 // Append-only for the application. What a tool did on a call is in the call's own transcript
 // (call_events); this is the other half, who changed the tool itself.
+import { pageNumber } from "../utils/paging.js";
 import { inOrg } from "../db/pool.js";
 import { ValidationError } from "../utils/errors.js";
 
@@ -22,7 +23,7 @@ export async function record(orgId, { actor, role, action, source, kind = null, 
 export async function page(orgId, { page: p, perPage, q = null, source = null, agentId = null }) {
   const size = Number(perPage ?? 10);
   if (!PAGE_SIZES.includes(size)) throw new ValidationError(`per_page must be one of ${PAGE_SIZES.join(", ")}`);
-  const n = Math.max(1, Math.floor(Number(p)) || 1);
+  const n = pageNumber(p);
   const term = typeof q === "string" && q.trim() ? like(q.trim().slice(0, 100)) : null;
   const src = SOURCES.has(source) ? source : null;
   const agent = typeof agentId === "string" && agentId ? agentId.slice(0, 64) : null;

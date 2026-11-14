@@ -1,6 +1,7 @@
 // What people asked Kaho Builder, kept so they can see it again and edit it. Append-only for the
 // application: editing a prompt makes a new entry that points at the one it came from, so what was
 // originally asked is never rewritten. The text is stored as typed and shown as text, never as markup.
+import { pageNumber } from "../utils/paging.js";
 import { inOrg } from "../db/pool.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { redactPII } from "./redact.js";
@@ -31,7 +32,7 @@ export async function record(orgId, { agentId, actor, prompt, reply, outcome, ki
 export async function page(orgId, { page: p, perPage, q = null, agentId = null }) {
   const size = Number(perPage ?? 10);
   if (!PAGE_SIZES.includes(size)) throw new ValidationError(`per_page must be one of ${PAGE_SIZES.join(", ")}`);
-  const n = Math.max(1, Math.floor(Number(p)) || 1);
+  const n = pageNumber(p);
   const term = typeof q === "string" && q.trim() ? like(q.trim().slice(0, 100)) : null;
   const agent = typeof agentId === "string" && agentId ? agentId.slice(0, 64) : null;
   const where = "org_id = $1 AND ($2::text IS NULL OR prompt ILIKE $2 OR reply ILIKE $2) AND ($3::text IS NULL OR agent_id = $3)";

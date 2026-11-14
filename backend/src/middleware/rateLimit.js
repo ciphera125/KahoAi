@@ -53,6 +53,11 @@ export const sessionLimiter = rateLimit({ ...common, limit: config.API_RATE_LIMI
   keyGenerator: sessionKey, store: store("api") });
 export const authLimiter = rateLimit({ ...common, limit: config.AUTH_RATE_LIMIT_PER_MIN, store: store("auth") });
 
+// Guessing invite codes: counted per signed-in person, not per address, so one person guessing
+// cannot lock sign-up and sign-in for a whole office, and a colleague is not blocked by them.
+export const joinLimiter = rateLimit({ ...common, limit: config.AUTH_RATE_LIMIT_PER_MIN,
+  keyGenerator: (req) => `u:${req.user?.id ?? ipKeyGenerator(req.ip)}`, store: store("join") });
+
 // Placing calls through the API costs real money and rings real people, so it has its own, much
 // lower limits than reading: per organization, a short burst limit and a daily ceiling.
 const callsRefused = (_req, res) => res.status(429).json({
@@ -68,6 +73,14 @@ export const assistantPerMinute = rateLimit({ ...common, limit: config.ASSISTANT
   keyGenerator: (req) => `o:${req.user?.org_id ?? "none"}`, store: store("builder-min") });
 export const assistantPerDay = rateLimit({ ...common, windowMs: 86_400_000, limit: config.ASSISTANT_PER_DAY, handler: builderRefused,
   keyGenerator: (req) => `o:${req.user?.org_id ?? "none"}`, store: store("builder-day") });
+
+const costlyRefused = (what) => (_req, res) => res.status(429).json({
+  error: `${what} was just run a few times. Please wait a minute and try again.` });
+const perOrg = (req) => `o:${req.user?.org_id ?? `ip:${ipKeyGenerator(req.ip)}`}`;
+export const archiveRunPerMinute = rateLimit({ ...common, limit: config.ARCHIVE_RUN_PER_MIN, handler: costlyRefused("Filing records"),
+  keyGenerator: perOrg, store: store("archive-run") });
+export const healthPerMinute = rateLimit({ ...common, limit: config.HEALTH_PER_MIN, handler: costlyRefused("The system check"),
+  keyGenerator: perOrg, store: store("health") });
 
 /** Forget every count (tests). */
 export const resetRateLimits = () => Promise.all(memoryStores.map((m) => m.resetAll()));

@@ -134,6 +134,29 @@ describe("audit logs, tool logs, Builder history and calls are filed in Supabase
     expect(at(`6-audit-logs/${z}/`).body).not.toMatch(/Ria/);
   });
 
+  it("an admin's on-demand run files only their own organization, and the counts are only theirs", async () => {
+    const a = await owner();
+    await a.post("/api/agents").send({ name: "Ria", prompt: "You are Ria." });
+    const other = await owner({ email: "zoya@other.in", organization: "Other" });
+    await other.post("/api/agents").send({ name: "Zed", prompt: "You are Zed." });
+    const orgA = await orgId();
+    const orgZ = await orgId("zoya@other.in");
+    puts = [];
+    const r = await a.post("/api/archive/run").send({});
+    expect(r.status).toBe(200);
+    expect(puts.length).toBeGreaterThan(0);
+    expect(puts.some((x) => x.path.includes(`/${orgZ}/`))).toBe(false);
+    expect(puts.every((x) => x.path.includes(`/${orgA}/`) || x.path.startsWith("9-call-records/"))).toBe(true);
+    expect(r.body.filed).toBe(puts.length); // not the total across every organization
+    // and the status page shows this organization's last run, not someone else's
+    puts = [];
+    await other.post("/api/archive/run").send({});
+    const sA = (await a.get("/api/archive/status")).body;
+    const sZ = (await other.get("/api/archive/status")).body;
+    expect(sA.last_filed).toBe(r.body.filed);
+    expect(sZ.last_filed).toBe(puts.length);
+  });
+
   it("keeps a typed phone number, e-mail and the caller's name out of Builder history and call records", async () => {
     const b = await owner();
     useModel(async () => ({ message: { content: "ok" } }));

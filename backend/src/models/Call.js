@@ -1,4 +1,5 @@
 // Calls: how each one ended and what its transcript says.
+import { pageNumber } from "../utils/paging.js";
 import { deliverCallCompleted } from "../services/webhook.js";
 import { createHash } from "node:crypto";
 import { asSystem, inOrg } from "../db/pool.js";
@@ -192,7 +193,7 @@ const shape = (c) => ({ ...c, started_at: c.started_at ? new Date(c.started_at).
 export function checkPage(page, perPage) {
   const size = Number(perPage ?? 10);
   if (!PAGE_SIZES.includes(size)) throw new ValidationError(`per_page must be one of ${PAGE_SIZES.join(", ")}`);
-  return { page: Math.max(1, Math.floor(Number(page)) || 1), perPage: size };
+  return { page: pageNumber(page), perPage: size };
 }
 
 /** One page of the organization's calls, newest first; only with `peers` if given. */
