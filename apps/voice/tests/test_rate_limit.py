@@ -82,7 +82,10 @@ def test_release_without_a_prior_accept_never_goes_negative():
 
 def test_ws_rate_limit_per_minute_defaults_and_overrides(monkeypatch):
     monkeypatch.delenv("WS_RATE_LIMIT_PER_MINUTE", raising=False)
-    assert ws_rate_limit_per_minute() == 5
+    # Plivo's media connections (and a tunnel or proxy) arrive from one or few addresses, and a
+    # bulk group of 10 is 10 connections at once: a default of 5 refused callers who had picked up.
+    assert ws_rate_limit_per_minute() >= 60
+    assert ws_rate_limit_per_minute() >= 6 * ws_max_concurrent_calls()
     monkeypatch.setenv("WS_RATE_LIMIT_PER_MINUTE", "20")
     assert ws_rate_limit_per_minute() == 20
 

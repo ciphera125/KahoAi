@@ -64,8 +64,14 @@ APOLOGY_BACKSTOP_SECS = 10.0
 # logged and stored keeps only the first sentence-ish part, scrubbed of anything
 # that looks like a secret; the full error stays in the (unstored) process log.
 _SECRETS = re.compile(
-    r"(?i)\b(bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{6,}"
-    r"|(?i:\b(api[_-]?key|authorization|xi-api-key|api-subscription-key)\b)['\"]?\s*[:=]\s*\S+"
+    # a header carrying a credential, with or without its scheme: "Authorization: Bearer abc"
+    r"(?i)\b(?:proxy-)?authorization\b['\"]?\s*[:=]\s*(?:(?:bearer|basic|token)\s+)?[^\s,;'\"}]+"
+    # a scheme and its credential anywhere: "Bearer abc123"
+    r"|\b(?:bearer|token|basic)\s+[A-Za-z0-9._~+/=-]{6,}"
+    # a credential written name=value or name: value (api_key, auth_token, password ...)
+    r"|\b[\w-]*(?:api[_-]?key|token|secret|passw(?:or)?d)\b['\"]?\s*[:=]\s*[^\s,;'\"}]+"
+    # the shapes the providers' own keys take, wherever they turn up
+    r"|\b(?:sk|gsk|pk|rk)[-_][A-Za-z0-9_-]{6,}"
 )
 
 

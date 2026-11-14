@@ -407,6 +407,31 @@ def test_bearer_tokens_and_api_keys_are_redacted_wherever_they_appear():
         assert "abcdef" not in out and "REDACTED" in out, out
 
 
+def test_secrets_written_as_name_equals_value_or_as_known_key_shapes_are_redacted():
+    for raw in (
+        "request failed token=SECRETTOK123",
+        "auth failed auth_token=SECRET123abc for account",
+        "login with password=hunter2hunter2 rejected",
+        "bad secret=zzzSECRETzzz given",
+        "client_secret: abc123SECRETxyz refused",
+        "key sk_live_999999abcdef refused",
+        "key gsk_abcdefghijklmnopqrstuvwx refused",
+        "Authorization: Bearer abcdef123456 refused",
+        "Authorization: Basic dXNlcjpwYXNzd29yZA== refused",
+        "x-api-key: abc123SECRET refused",
+    ):
+        out = resilience.safe_reason(raw)
+        leaked = ("SECRET", "hunter2", "sk_live", "gsk_", "abcdef", "dXNlcjp", "zzz")
+        assert not any(s in out for s in leaked), (raw, out)
+        assert "REDACTED" in out, (raw, out)
+
+
+def test_ordinary_failure_text_is_not_mangled_by_the_secret_filter():
+    for raw in ("Insufficient quota for this key", "status 429: rate limited, retry after 3s",
+                "connection reset by peer", "the token limit was reached", "a secret garden"):
+        assert resilience.safe_reason(raw) == raw
+
+
 def test_long_reasons_are_truncated_and_empty_ones_have_a_placeholder():
     assert len(resilience.safe_reason("x" * 1000)) <= 163
     assert resilience.safe_reason(None) == "unknown error"

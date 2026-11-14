@@ -25,7 +25,8 @@ import os
 import time
 from collections import defaultdict
 
-DEFAULT_PER_IP_PER_MINUTE = 5
+# One tunnel or proxy address carries every call, and a bulk group is up to 10 at once.
+DEFAULT_PER_IP_PER_MINUTE = 60
 DEFAULT_MAX_CONCURRENT = 10
 WINDOW_SECS = 60.0
 
