@@ -55,3 +55,32 @@ export async function checkDatabaseRole() {
     client.release();
   }
 }
+
+/** Whether the connections this Studio may open fit in what the database has left. Pure, so it is easy to test.
+ * Each worker can hold `perWorker` for requests and one more for the bulk runner's lock; the first process and the
+ * migrations use two more. More than 80% of what is left is a warning: other programs (the phone server's
+ * own reads, a console, the pooler) need room too. */
+export function connectionBudget({ perWorker, workers, serverMax, reserved = 3, usedByOthers = 0 }) {
+  const need = workers * (perWorker + 1) + 2;
+  if (!Number.isFinite(serverMax) || serverMax < 1) return { ok: true, skipped: true, need, available: null, message: "The database did not say how many connections it allows." };
+  const available = serverMax - reserved - usedByOthers;
+  const ok = need <= available * 0.8;
+  const message = ok
+    ? `Up to ${need} database connections, of ${available} the server has free.`
+    : `This Studio can open up to ${need} database connections (${workers} worker${workers === 1 ? "" : "s"} x PGPOOL_MAX ${perWorker} + 1 each, + 2) `
+      + `but the database has only ${available} free (${serverMax} allowed, ${reserved} kept back, ${usedByOthers} used by others). `
+      + "Lower PGPOOL_MAX or WEB_CONCURRENCY, or raise the database's connection limit; a pooler such as Supabase's has its own, lower limit.";
+  return { ok, need, available, message };
+}
+
+/** The budget against the real database. Never throws: a database that will not say is not a reason to stop. */
+export async function checkConnectionBudget() {
+  try {
+    const { rows: [r] } = await pool.query(`SELECT current_setting('max_connections')::int AS max,
+      current_setting('superuser_reserved_connections')::int AS reserved,
+      (SELECT count(*)::int FROM pg_stat_activity WHERE application_name NOT LIKE 'kaho-studio%' AND datname = current_database()) AS others`);
+    return connectionBudget({ perWorker: config.PGPOOL_MAX, workers: config.WEB_CONCURRENCY, serverMax: r.max, reserved: r.reserved, usedByOthers: r.others });
+  } catch (err) {
+    return { ok: true, skipped: true, message: `Could not read the database's connection limits (${String(err.message).slice(0, 80)}).` };
+  }
+}

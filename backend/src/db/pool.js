@@ -69,3 +69,6 @@ export const orgQuery = (orgId, text, params) => inOrg(orgId, (db) => db.query(t
 /** fn(db) in one transaction across organizations. Sign-in, the voice service and imports only. */
 export const asSystem = (fn) => scoped("app.bypass", "on", fn);
 export const systemQuery = (text, params) => asSystem((db) => db.query(text, params));
+
+/** How full the pool is right now: the System check shows it, and a pool with people waiting is the early sign of trouble. */
+export const poolUsage = () => ({ max: pool.options.max, open: pool.totalCount, idle: pool.idleCount, waiting: pool.waitingCount });

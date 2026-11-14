@@ -8,7 +8,7 @@ import { logger } from "./utils/logger.js";
 async function primary() {
   const { migrate } = await import("./db/migrate.js");
   const { pool } = await import("./db/pool.js");
-  const { checkDatabaseRole, checkSecretsKey, portTaken } = await import("./services/startup.js");
+  const { checkConnectionBudget, checkDatabaseRole, checkSecretsKey, portTaken } = await import("./services/startup.js");
   for (const port of [config.PORT, config.INTERNAL_PORT]) {
     if (await portTaken(port)) throw new Error(`port ${port} is already answering on this machine; stop that program or set another port`);
   }
@@ -16,6 +16,8 @@ async function primary() {
   if (applied.length) logger.info({ applied }, "migrations applied");
   await checkDatabaseRole();
   await checkSecretsKey();
+  const budget = await checkConnectionBudget();
+  (budget.ok ? logger.info : logger.warn).call(logger, budget.message);
   try {
     const { maskOldBuilderHistory } = await import("./services/maskOldRows.js");
     const { changed } = await maskOldBuilderHistory();

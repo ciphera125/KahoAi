@@ -2206,3 +2206,18 @@ ONE instance (or with sticky routing for `/answer` and `/ws` to the same one). M
 change to the call-admission path that cannot be proven without real calls; do it deliberately with a real concurrent test, not as part of
 an audit. (3) `PGPOOL_MAX` sizing against Supabase's pooler ceiling is a deployment decision. Not checked: a real browser, a real Plivo
 call, a second Studio process.
+
+### 2026-11-14 (night, third): rolling slots, database connection budget
+
+Pushed first: `main` == `origin/main` at `72d3458`. Then, on the owner's request (test-first, red shown):
+1. **A call that ends is replaced at the next pass** (`bulkRunner.js`: slots = chosen - on the line, within the server's and the
+   organization's share). The old group rule is gone; 50 at 5 and 50 at 7 keep exactly that many on the line, never more, never fewer
+   while anyone waits. Page text: "N at a time: a new call starts as soon as one ends" (`slotsText`, replaces `groupsText`).
+2. **Database connections:** `connectionBudget` (pure) and `checkConnectionBudget` compare workers x (`PGPOOL_MAX` + 1) + 2 with the
+   server's `max_connections`; logged at start and shown in System check > "Database connections" with live pool use (queueing only
+   when waiting with the pool full). A busy database (full pool, too many clients, statement timeout, pool closing) now answers
+   **503 + Retry-After 2** with a plain message, not 500. Attacked for real: all 10 connections held, a request got 503 in about 5 s
+   and the next one worked.
+Backend 701, frontend 55, voice 915 pass; lint clean. Committed, NOT pushed (ask first). Still open: the voice server stays one instance
+(in-memory stream tokens, nonce store, limiter); Supabase pooler's own client limit is invisible to `max_connections`, check it in the
+dashboard and set `PGPOOL_MAX` x workers under it; not checked in a real browser or a real Plivo call.

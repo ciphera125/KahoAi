@@ -2,9 +2,9 @@
 // real, under its own deadline, and answered in plain words. Nothing here changes anything for a
 // customer, and no key, token or secret is ever put in an answer.
 import { config as liveConfig } from "../config/env.js";
-import { pool } from "../db/pool.js";
+import { pool, poolUsage } from "../db/pool.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
-import { checkDatabaseRole } from "./startup.js";
+import { checkConnectionBudget, checkDatabaseRole } from "./startup.js";
 import { deleteRecording, putText, recordingsConfigured } from "./storage.js";
 
 const config = liveConfig; // `warnings` takes its own settings so a test can try others
@@ -30,6 +30,15 @@ const CHECKS = [
     } catch (err) {
       return no(`The database is not usable: ${String(err?.message ?? err).replace(/postgres(ql)?:\/\/\S+/gi, "[database]").slice(0, 160)}`);
     }
+  }],
+  ["connections", "Database connections", async () => {
+    const u = poolUsage();
+    const budget = await checkConnectionBudget();
+    // pg counts a request as waiting while it opens a new connection; it is queueing only when the pool is full.
+    const queueing = u.waiting > 0 && u.open >= u.max;
+    const now = `${u.open} of ${u.max} in use right now${queueing ? `, ${u.waiting} request${u.waiting === 1 ? "" : "s"} waiting for one` : ""}.`;
+    if (queueing) return no(`${now} Requests are queueing for the database; raise PGPOOL_MAX if the database allows it. ${budget.message}`);
+    return budget.ok ? yes(`${now} ${budget.message}`) : no(`${now} ${budget.message}`);
   }],
   ["model", "Language model (Groq)", async () => {
     if (!config.GROQ_API_KEY) return no("Not set up: GROQ_API_KEY is missing, so Kaho Builder and Test this agent cannot work.");

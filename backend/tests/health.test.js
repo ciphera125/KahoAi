@@ -35,11 +35,21 @@ describe("the system check says what is really working", () => {
     await withPlivo(b);
     const r = await b.get("/api/system/health");
     expect(r.status).toBe(200);
-    expect(r.body.checks.map((c) => c.id)).toEqual(["database", "model", "storage", "plivo", "phone_server"]);
+    expect(r.body.checks.map((c) => c.id)).toEqual(["database", "connections", "model", "storage", "plivo", "phone_server"]);
     expect(r.body.checks.every((c) => c.ok)).toBe(true);
     expect(r.body.ok).toBe(true);
     expect(fakes.plivo.requests.some((x) => x.method === "GET" && x.url.startsWith("/v1/Account/MAXXXXXXXXXXXXXXXXXX/"))).toBe(true);
     expect(fakes.voice.requests.length).toBeGreaterThan(0);
+  });
+
+  it("says how many database connections are in use and whether they fit what the database allows", async () => {
+    const b = await owner();
+    const r = await b.get("/api/system/health");
+    const c = r.body.checks.find((x) => x.id === "connections");
+    expect(c.ok).toBe(true);
+    expect(c.detail).toMatch(/of \d+ .*in use|connections/i);
+    expect(c.detail).toMatch(/PGPOOL_MAX|database connections/i);
+    expect(c.detail).not.toMatch(/postgres:\/\/|password/i);
   });
 
   it("says the model's key was refused, plainly, without stopping the other checks", async () => {
