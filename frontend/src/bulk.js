@@ -17,12 +17,11 @@ export function bulkMessage(verb, { done, failed, firstError = null }) {
   return { text: done ? `${contacts(done)} ${verb}. ${why}` : `None were ${verb}. ${why}`, bad: true };
 }
 
-/** "7, 7, 7 and a last 1" for 22 people at 7 at once; long lists are shortened. */
-export function groupsText(total, size) {
-  const full = Math.floor(total / size), rest = total % size;
-  if (full === 0) return `one group of ${rest}`;
-  const head = full <= 3 ? Array(full).fill(size).join(", ") : `${size}, ${size}, ${size} … (${full} groups of ${size})`;
-  return rest ? `${head} and a last ${rest}` : head;
+/** How a list is called at the size chosen: that many on the line, a new call as each one ends. */
+export function slotsText(total, size) {
+  if (total <= 1) return "just 1 call.";
+  if (total <= size) return `all ${total} at once.`;
+  return `${size} at a time: a new call starts as soon as one ends.`;
 }
 
 /** What a run looks like to the rows below it: when this changes, the list of people must be fetched again.

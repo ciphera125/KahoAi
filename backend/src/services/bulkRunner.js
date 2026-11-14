@@ -12,8 +12,9 @@
 //   call or by hand) is called again; two lists with the same person ring once.
 // - Organizations share BULK_MAX_CONCURRENT fairly: with N of them dialling,
 //   none takes more than its 1/N share.
-// - Calls go out in groups of the size the person chose ("calls at once"): the next group is
-//   dialled only when every call of the last one is over, so 50 people at 7 go 7, 7, 7... and a last 1.
+// - A run keeps as many calls on the line as the person chose ("calls at once"): the moment one ends,
+//   the next person is dialled at the following pass, without waiting for the others. 50 people at 7:
+//   seven on the line from the first call to the last, never eight.
 // - If the voice server cannot be reached, nothing was dialled: the run pauses
 //   with the reason rather than failing every row. The same when Plivo itself cannot place calls
 //   (no balance, wrong keys, a rate limit) and when BULK_FAIL_STREAK dials in a row are refused:
@@ -129,13 +130,13 @@ export async function runOnce({ now = new Date() } = {}) {
       continue;
     }
     const mine = counts[run.id] ?? 0;
-    // A group goes out only when the one before it is entirely over.
-    const slots = mine > 0 ? 0 : Math.max(0, Math.min(run.parallel, config.BULK_MAX_CONCURRENT - open, share - (orgOpen[run.org_id] ?? 0)));
-    let waiting = slots <= 0 && mine === 0 ? "Waiting for other calls to finish." : null;
+    // Every slot this run was given that is empty, as far as the server and the organization's share allow.
+    const slots = Math.max(0, Math.min(run.parallel - mine, config.BULK_MAX_CONCURRENT - open, share - (orgOpen[run.org_id] ?? 0)));
+    let waiting = slots <= 0 && mine < run.parallel ? "Waiting for other calls to finish." : null;
     const claimed = await BulkCall.claim(run.id, slots);
     let streak = 0;
     // The first call shows whether the line works (balance, keys, voice server). Only if it was placed are the
-    // rest of the group dialled together, so a group takes about one dial's time and a broken line costs one request.
+    // rest of the free slots filled together, so they take about one dial's time and a broken line costs one request.
     const dialled = new Map();
     if (claimed.length > 1) {
       dialled.set(0, await dialOne(run, claimed[0], now));

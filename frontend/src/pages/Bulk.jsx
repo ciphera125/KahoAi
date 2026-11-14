@@ -5,7 +5,7 @@ import { can, useMe } from "../auth.jsx";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { get, post } from "../api.js";
-import { countsKey, groupsText } from "../bulk.js";
+import { countsKey, slotsText } from "../bulk.js";
 import { parseCallList } from "../csv.js";
 import { Icon, Modal, OutcomePill, plural, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
 import { startPolling } from "../poll.js";
@@ -157,8 +157,8 @@ function NewRun({ onClose, onStarted }) {
             {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{n}</option>)}
           </select>
           <div className="hint" id="parallel-hint">{Number(parallel) >= 1 && list
-            ? `${list.rows.length} people go out in groups of ${parallel}: ${groupsText(list.rows.length, Number(parallel))}. The next group is called only when the last one is over.`
-            : "Calls go out in groups of this size. Up to 10, your plan's limit."}
+            ? `${list.rows.length} people, ${slotsText(list.rows.length, Number(parallel))}`
+            : "How many calls are on the line at once. Up to 10, your plan's limit."}
             {Number(parallel) >= 10 ? " Using all 10 lines leaves none for incoming calls while it runs." : ""}</div>
         </div>
         <div className="field"><label className="f">If nobody answers</label>

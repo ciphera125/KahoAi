@@ -40,23 +40,29 @@ async function setup() {
 const start = (b, body) => b.post("/api/bulk-calls").send({ consent: true, parallel: 2, ...body });
 
 describe("50 people, 5 at once", () => {
-  it("goes out as ten groups of five, never more than five on the line, each number once", async () => {
+  it("keeps five on the line from first to last, never more, each number once", async () => {
     const { b, n, a } = await setup();
     const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(50), parallel: 5 })).body;
-    const sizes = [];
     let worst = 0;
-    for (let g = 0; g < 11 && dials().length < 50; g++) {
-      const before = dials().length;
+    let lowestWhileQueued = 5;
+    let nextToEnd = 1;
+    for (let round = 0; round < 80; round++) {
       await tick();
-      for (let again = 0; again < 3; again++) { await tick(); worst = Math.max(worst, await onTheLine()); }
-      sizes.push(dials().length - before);
-      for (let k = before + 1; k <= dials().length; k++) await ended(k);
+      const open = await onTheLine();
+      worst = Math.max(worst, open);
+      const queued = (await db.query("SELECT count(*)::int AS n FROM bulk_items WHERE status = 'queued'")).rows[0].n;
+      if (queued > 0) lowestWhileQueued = Math.min(lowestWhileQueued, open); // people waiting: the line must be full
+      if (nextToEnd > dials().length) break;
+      await ended(nextToEnd++); // the oldest call ends; calls end one at a time, unevenly
+      if (round % 3 === 0 && nextToEnd <= dials().length) await ended(nextToEnd++);
     }
     await tick();
-    expect(sizes).toEqual(Array(10).fill(5));
     expect(worst).toBe(5);
-    const numbers = dials().map((d) => d.body.to);
-    expect(new Set(numbers).size).toBe(50);
+    expect(lowestWhileQueued).toBe(5); // a slot never sits empty while someone is waiting
+    expect(dials()).toHaveLength(50);
+    expect(new Set(dials().map((d) => d.body.to)).size).toBe(50);
+    for (let k = 1; k <= 50; k++) await ended(k).catch(() => {});
+    await tick();
     expect((await b.get(`/api/bulk-calls/${run.id}`)).body.status).toBe("done");
   });
 });

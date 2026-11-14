@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { bulkMessage, groupsText, runEach } from "./bulk.js";
+import { bulkMessage, runEach, slotsText } from "./bulk.js";
 
 test("runEach reports how many worked and how many failed, and tries every one", async () => {
   const seen = [];
@@ -22,14 +22,14 @@ test("a message never claims success it did not have", () => {
     { text: "None were deleted. 2 could not be changed (x). Try again.", bad: true });
 });
 
-test("groupsText says how a list is split into groups of the size chosen", () => {
-  assert.equal(groupsText(22, 7), "7, 7, 7 and a last 1");
-  assert.equal(groupsText(21, 7), "7, 7, 7");
-  assert.equal(groupsText(5, 7), "one group of 5");
-  assert.equal(groupsText(7, 7), "7");
-  assert.equal(groupsText(50, 7), "7, 7, 7 \u2026 (7 groups of 7) and a last 1");
-  assert.equal(groupsText(10, 1), "1, 1, 1 \u2026 (10 groups of 1)");
+test("slotsText says how many are on the line at once and that a new call starts as each one ends", () => {
+  assert.equal(slotsText(50, 7), "7 at a time: a new call starts as soon as one ends.");
+  assert.equal(slotsText(5, 7), "all 5 at once.");
+  assert.equal(slotsText(7, 7), "all 7 at once.");
+  assert.equal(slotsText(10, 1), "1 at a time: a new call starts as soon as one ends.");
+  assert.equal(slotsText(1, 1), "just 1 call.");
 });
+
 
 test("countsKey changes when anything the rows depend on changes, and only then", async () => {
   const { countsKey } = await import("./bulk.js");

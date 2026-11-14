@@ -99,56 +99,62 @@ describe("calls at once is chosen by the person, not assumed", () => {
   });
 });
 
-describe("batches: the next group is dialled only when the last group is finished", () => {
+describe("slots: a call that ends is replaced at once, never more than the number chosen are on the line", () => {
   const ended = (n, status = "answered") => internal("put", `/internal/v1/calls/req-${String(n).padStart(4, "0")}-bulk`).send({ status, duration_secs: 20 });
+  const onTheLine = async () => (await db.query("SELECT count(*)::int AS n FROM bulk_items WHERE status IN ('dialling', 'calling')")).rows[0].n;
 
-  it("50 people with 7 at once go out as 7, 7, 7, 7, 7, 7, 7 and a last 1", async () => {
+  it("50 people with 7 at once: seven on the line, and each call that ends is replaced by the next person", async () => {
     const { b, n, a } = await setup();
     const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(50), parallel: 7 })).body;
-    const sizes = [];
-    for (let g = 0; g < 8; g++) {
-      const before = dials().length;
-      await tick(); // settles the last group, then dials the next one
-      sizes.push(dials().length - before);
-      await tick();
-      expect(dials().length - before).toBe(sizes[g]); // nobody new while the group is on the line
-      for (let k = before + 1; k <= dials().length; k++) await ended(k);
-    }
     await tick();
-    expect(sizes).toEqual([7, 7, 7, 7, 7, 7, 7, 1]);
+    expect(dials()).toHaveLength(7);
+    let worst = 7;
+    let endedUpTo = 0;
+    for (let round = 0; round < 60 && dials().length < 50; round++) {
+      endedUpTo += 3; // three calls end between passes, whichever they are
+      for (let k = endedUpTo - 2; k <= endedUpTo && k <= dials().length; k++) await ended(k);
+      await tick();
+      worst = Math.max(worst, await onTheLine());
+    }
+    for (let k = 1; k <= dials().length; k++) await ended(k).catch(() => {});
+    await tick();
+    expect(worst).toBe(7);
+    expect(dials()).toHaveLength(50);
+    expect(new Set(dials().map((d) => d.body.to)).size).toBe(50);
     expect((await b.get(`/api/bulk-calls/${run.id}`)).body.status).toBe("done");
   });
 
-  it("the next group waits for the slowest call of the last one, however many have finished", async () => {
+  it("a slow call does not hold the others back: each free slot is filled at the next pass", async () => {
     const { b, n, a } = await setup();
     await start(b, { agent_id: a.id, from_id: n.id, rows: rows(9), parallel: 3 });
     await tick();
     expect(dials()).toHaveLength(3);
     await ended(1); await ended(2); // two of three done, one still talking
-    await tick(); await tick();
-    expect(dials()).toHaveLength(3);
-    await ended(3);
     await tick();
-    expect(dials()).toHaveLength(6); // now, and only now, the next three
-    expect(dials().map((d) => d.body.to)).toEqual(Array.from({ length: 6 }, (_, i) => `+9198765${String(i).padStart(5, "0")}`));
+    expect(dials()).toHaveLength(5); // the two freed slots are filled, the talker is left alone
+    expect(await onTheLine()).toBe(3);
+    await tick();
+    expect(dials()).toHaveLength(5); // nothing more while all three are on the line
+    expect(dials().map((d) => d.body.to)).toEqual(Array.from({ length: 5 }, (_, i) => `+9198765${String(i).padStart(5, "0")}`));
   });
 
-  it("calls are never more than the number chosen, and the last group is just what is left", async () => {
+  it("the last calls are just what is left, and the run ends when they do", async () => {
     const { b, n, a } = await setup();
     const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(7), parallel: 3 })).body;
-    const groups = [];
-    for (let g = 0; g < 3; g++) {
-      const before = dials().length;
-      await tick();
-      groups.push(dials().length - before);
-      for (let k = before + 1; k <= dials().length; k++) await ended(k);
-    }
     await tick();
-    expect(groups).toEqual([3, 3, 1]);
+    for (let k = 1; k <= 3; k++) await ended(k);
+    await tick();
+    expect(dials()).toHaveLength(6);
+    for (let k = 4; k <= 6; k++) await ended(k);
+    await tick();
+    expect(dials()).toHaveLength(7);
+    expect(await onTheLine()).toBe(1);
+    await ended(7);
+    await tick();
     expect((await b.get(`/api/bulk-calls/${run.id}`)).body.status).toBe("done");
   });
 
-  it("a person who was not answered and is tried again joins a later group, not the one in progress", async () => {
+  it("a person who was not answered and is tried again waits their time, then takes a free slot", async () => {
     const { b, n, a } = await setup();
     const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(2), parallel: 2, retries: 1, retry_after_hours: 1 })).body;
     await tick();
@@ -239,7 +245,7 @@ describe("a run that cannot succeed stops instead of burning the list", () => {
 });
 
 describe("running a bulk call", () => {
-  it("dials at most `parallel` at once, through the agent, and the next group only when all of them end", async () => {
+  it("dials at most `parallel` at once, through the agent, and a new call as each one ends", async () => {
     const { b, n, a } = await setup();
     await b.patch(`/api/agents/${a.id}`).send({ settings: { ring_secs: 40, max_minutes: 10 } });
     const run = (await start(b, { agent_id: a.id, from_id: n.id, rows: rows(5), parallel: 2 })).body;
@@ -252,7 +258,7 @@ describe("running a bulk call", () => {
     // The voice service reports the first one ended.
     await internal("put", "/internal/v1/calls/req-0001-bulk").send({ status: "answered", duration_secs: 42 });
     await tick();
-    expect(dials()).toHaveLength(2); // one is free, but a group goes out only when the last one is over
+    expect(dials()).toHaveLength(3); // the free slot is filled at once; the other call is still talking
     await internal("put", "/internal/v1/calls/req-0002-bulk").send({ status: "answered", duration_secs: 30 });
     await tick();
     expect(dials()).toHaveLength(4);
