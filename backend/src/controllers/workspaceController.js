@@ -20,11 +20,6 @@ export async function me(req, res) {
   const [counts, members] = await Promise.all([Workspace.counts(org), User.members(org)]);
   const out = { ...req.user, counts,
     members: members.map((m) => ({ name: m.name, email: m.email, role: m.role })) };
-  if (["owner", "admin"].includes(req.user.role)) {
-    const invite = await User.currentInvite(org);
-    out.invite_code = invite.code;
-    out.invite_expires = invite.expires;
-  }
   res.json(out);
 }
 

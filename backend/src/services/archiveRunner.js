@@ -4,7 +4,7 @@ import { config } from "../config/env.js";
 import { pool } from "../db/pool.js";
 import { logger } from "../utils/logger.js";
 import { archiveOnce } from "./archive.js";
-import { archiveUsers } from "./archiveUsers.js";
+import { archiveAdmin } from "./archiveAdmin.js";
 
 const LOCK = 727278;
 let timer = null;
@@ -15,7 +15,7 @@ export async function runLocked() {
   try {
     const { rows } = await client.query("SELECT pg_try_advisory_lock($1) AS ok", [LOCK]);
     if (!rows[0].ok) return null;
-    try { const r = await archiveOnce(); const u = await archiveUsers(); return { filed: r.filed + u.filed, failed: r.failed + u.failed }; } finally { await client.query("SELECT pg_advisory_unlock($1)", [LOCK]).catch(() => {}); }
+    try { const r = await archiveOnce(); const u = await archiveAdmin(); return { filed: r.filed + u.filed, failed: r.failed + u.failed }; } finally { await client.query("SELECT pg_advisory_unlock($1)", [LOCK]).catch(() => {}); }
   } finally { client.release(); }
 }
 

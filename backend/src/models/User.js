@@ -1,8 +1,8 @@
 // Accounts, organizations, sessions, device cookies, invites and the sign-in lockout.
 //
-// Signing up without an invite creates an organization, with you as its owner.
-// An invite code (one live code per organization, single use, a week) joins
-// that organization as a member. Passwords are kept only as scrypt hashes,
+// Signing up without an invite creates an organization, with you as its admin.
+// An invite code (models/Invite.js: single use, a week, made for one role) joins
+// that organization with exactly that role. Passwords are kept only as scrypt hashes,
 // sessions only as the SHA-256 of their token. A session ends after
 // SESSION_SECS, or after IDLE_SECS unused.
 //
@@ -12,7 +12,9 @@
 // addresses. A browser that has signed in before carries a device cookie and
 // has its own count (OWASP "device cookies"). Counts live in PostgreSQL.
 import { AVATARS } from "./avatars.js";
-import { ASSIGNABLE, BELOW_ADMIN, DEFAULT_ROLE, can, permissionsOf } from "./permissions.js";
+import { ASSIGNABLE, can, permissionsOf } from "./permissions.js";
+import { summarize } from "./Billing.js";
+import * as Invite from "./Invite.js";
 import { randomBytes } from "node:crypto";
 import { asSystem, inOrg, systemQuery } from "../db/pool.js";
 import { hexId, safeEqual, scryptHashAsync, sha256, token } from "../utils/crypto.js";
@@ -28,7 +30,6 @@ const LOCKOUTS = [
   { scope: "pair", max: 5, secs: 300 },    // one email from one address
   { scope: "email", max: 50, secs: 3600 }, // one email from anywhere (spread-out guessing)
 ];
-const INVITE_SECS = 7 * 24 * 3600;
 const MIN_PASSWORD = 8, MAX_PASSWORD = 200;
 const EMAIL = /^[^@\s]{1,64}@[^@\s]{1,190}\.[^@\s]{2,24}$/;
 
@@ -49,22 +50,6 @@ export function publicUser(u) {
 
 export async function hasAccounts() {
   return (await systemQuery("SELECT EXISTS (SELECT 1 FROM users) AS any")).rows[0].any;
-}
-
-/** The organization's live invite ({code, expires} in Unix seconds), made fresh
- * when there is none, it expired or was used, or `renew` asks for one. */
-export async function currentInvite(orgId, { renew = false } = {}) {
-  return inOrg(orgId, async (db) => {
-    if (!renew) {
-      const { rows } = await db.query("SELECT code, expires_at FROM invites WHERE org_id = $1 AND expires_at > now()", [orgId]);
-      if (rows[0]) return { code: rows[0].code, expires: rows[0].expires_at.getTime() / 1000 };
-    }
-    const { rows } = await db.query(
-      `INSERT INTO invites (code, org_id, expires_at) VALUES ($1, $2, now() + make_interval(secs => $3))
-       ON CONFLICT (org_id) DO UPDATE SET code = EXCLUDED.code, expires_at = EXCLUDED.expires_at
-       RETURNING code, expires_at`, [token(12), orgId, INVITE_SECS]);
-    return { code: rows[0].code, expires: rows[0].expires_at.getTime() / 1000 };
-  });
 }
 
 function checkSignUp(fields) {
@@ -94,16 +79,16 @@ export async function signUp(fields) {
   const salt = randomBytes(16);
   const hash = await scryptHashAsync(password, salt); // before the transaction: it is slow
   return asSystem(async (db) => {
-    let orgId, role;
+    let orgId, role, inviteRole = null;
     if (fields.invite) {
-      const { rows } = await db.query("DELETE FROM invites WHERE code = $1 AND expires_at > now() RETURNING org_id",
-        [String(fields.invite).slice(0, 100)]);
-      if (!rows[0]) throw new AuthError("That invite code is not valid. Codes work once, for a week; ask for a new one.", 403);
-      orgId = rows[0].org_id;
+      const used = await Invite.consume(db, fields.invite);
+      if (!used) throw new AuthError(BAD_INVITE, 403);
+      orgId = used.org_id;
+      inviteRole = used.role; // what the code was made for, never what the person asked for
       role = "member";
     } else {
       orgId = `org_${hexId()}`;
-      role = "owner";
+      role = "admin";
       await db.query("INSERT INTO organizations (id, name) VALUES ($1, $2)", [orgId, organization]);
     }
     const taken = await db.query("SELECT 1 FROM users WHERE email = $1", [email]);
@@ -111,6 +96,8 @@ export async function signUp(fields) {
     const id = `u_${hexId()}`;
     await db.query(`INSERT INTO users (id, name, email, company, role, salt, hash, org_id) VALUES ($1, $2, $3, '', $4, $5, $6, $7)`,
       [id, name, email, role, salt.toString("hex"), hash, orgId]);
+    // The membership is made by a trigger from users.role; the code's own role replaces the default one.
+    if (inviteRole) await db.query("UPDATE memberships SET role = $3 WHERE user_id = $1 AND org_id = $2", [id, orgId, inviteRole]);
     const { rows } = await db.query(`SELECT ${USER_COLS} FROM users u JOIN memberships m ON m.user_id = u.id AND m.org_id = u.org_id
       JOIN organizations o ON o.id = m.org_id WHERE u.id = $1`, [id]);
     return publicUser(rows[0]);
@@ -124,7 +111,7 @@ export async function checkPassword(email, password, device, ip) {
   device = asToken(device);
   return asSystem(async (db) => {
     // Lands on the organization used last (users.org_id), or any other they are still in.
-    const { rows } = await db.query(`SELECT u.id, u.name, u.email, u.company, u.created_at, u.seen_at, u.salt, u.hash,
+    const { rows } = await db.query(`SELECT u.id, u.name, u.email, u.company, u.created_at, u.seen_at, u.salt, u.hash, u.disabled_at,
         m.role, m.org_id, o.name AS org_name
       FROM users u JOIN memberships m ON m.user_id = u.id JOIN organizations o ON o.id = m.org_id
       WHERE u.email = $1 ORDER BY (m.org_id = u.org_id) DESC, m.created_at LIMIT 1`, [email]);
@@ -145,6 +132,8 @@ export async function checkPassword(email, password, device, ip) {
       return null;
     }
     await db.query("DELETE FROM login_failures WHERE key = ANY($1)", [keys.filter((k) => k.scope !== "email").map((k) => k.key)]);
+    // Said only once the password is right, so nobody can tell from the answer whether an address has an account.
+    if (user.disabled_at) throw new AuthError("This account has been switched off. Contact Kaho AI.", 403);
     return publicUser(user);
   }).then((user) => {
     if (!user) throw new AuthError("That email and password do not match.");
@@ -168,17 +157,36 @@ export async function changePassword(userId, current, next) {
   });
 }
 
-export async function startSession(userId, orgId = null) {
+export const SUPPORT_SECS = 2 * 3600;
+
+/** A new session. `impersonatedBy` marks one opened by Kaho support from the admin site: short, and not a sign-in by the person. */
+export async function startSession(userId, orgId = null, { impersonatedBy = null, secs = SESSION_SECS } = {}) {
   const raw = token(32);
   await asSystem(async (db) => {
     await db.query("DELETE FROM sessions WHERE user_id = $1 AND expires_at <= now()", [userId]);
     await db.query(`DELETE FROM sessions WHERE token_hash IN (SELECT token_hash FROM sessions WHERE user_id = $1
       ORDER BY expires_at DESC OFFSET $2)`, [userId, MAX_SESSIONS_PER_USER - 1]);
-    await db.query(`INSERT INTO sessions (token_hash, user_id, expires_at, org_id)
-      VALUES ($1, $2, now() + make_interval(secs => $3), $4)`, [sha256(raw), userId, SESSION_SECS, orgId]);
-    await db.query("UPDATE users SET last_login_at = now() WHERE id = $1", [userId]);
+    await db.query(`INSERT INTO sessions (token_hash, user_id, expires_at, org_id, impersonated_by)
+      VALUES ($1, $2, now() + make_interval(secs => $3), $4, $5)`, [sha256(raw), userId, secs, orgId, impersonatedBy]);
+    if (!impersonatedBy) await db.query("UPDATE users SET last_login_at = now() WHERE id = $1", [userId]);
   });
   return raw;
+}
+
+/** Spend a support link: one use, inside its minute, for a person still in that organization with their account on. */
+export async function consumeSupportToken(raw) {
+  raw = asToken(raw);
+  const refused = () => new AuthError("This support link is not valid, or it has expired.");
+  if (!raw) throw refused();
+  return asSystem(async (db) => {
+    const { rows: [t] } = await db.query(`UPDATE impersonations SET used_at = now() WHERE token_hash = $1 AND used_at IS NULL AND expires_at > now()
+      RETURNING user_id, org_id, admin_email`, [sha256(raw)]);
+    if (!t) throw refused();
+    const { rows } = await db.query(`SELECT ${USER_COLS} FROM users u JOIN memberships m ON m.user_id = u.id AND m.org_id = $2
+      JOIN organizations o ON o.id = m.org_id WHERE u.id = $1 AND u.disabled_at IS NULL`, [t.user_id, t.org_id]);
+    if (!rows[0]) throw refused();
+    return { user: publicUser(rows[0]), adminEmail: t.admin_email };
+  });
 }
 
 export async function forSessionToken(raw) {
@@ -186,17 +194,31 @@ export async function forSessionToken(raw) {
   if (!raw) return null;
   return asSystem(async (db) => {
     // A session whose organization the person has since left signs them out.
-    const { rows } = await db.query(`SELECT ${USER_COLS}, s.last_seen_at FROM sessions s
+    const { rows } = await db.query(`SELECT ${USER_COLS}, s.last_seen_at, s.impersonated_by,
+        bs.status AS b_status, bs.unmetered AS b_unmetered, bs.balance_minutes AS b_balance, bs.period_end AS b_period_end,
+        bs.terms AS b_terms, bs.plan_id AS b_plan_id, bp.name AS b_plan_name
+      FROM sessions s
       JOIN users u ON u.id = s.user_id
       JOIN memberships m ON m.user_id = u.id AND m.org_id = coalesce(s.org_id, u.org_id)
       JOIN organizations o ON o.id = m.org_id
-      WHERE s.token_hash = $1 AND s.expires_at > now() AND s.last_seen_at > now() - make_interval(secs => $2)`,
+      LEFT JOIN subscriptions bs ON bs.org_id = m.org_id
+      LEFT JOIN plans bp ON bp.id = bs.plan_id
+      WHERE s.token_hash = $1 AND s.expires_at > now() AND s.last_seen_at > now() - make_interval(secs => $2)
+        AND u.disabled_at IS NULL`,
     [sha256(raw), IDLE_SECS]);
     if (!rows[0]) return null;
     if (Date.now() - rows[0].last_seen_at.getTime() > TOUCH_SECS * 1000) {
       await db.query("UPDATE sessions SET last_seen_at = now() WHERE token_hash = $1", [sha256(raw)]);
     }
-    return publicUser(rows[0]);
+    const r = rows[0];
+    const user = publicUser(r);
+    // The plan comes with the session lookup, so deciding whether the Studio is open costs no extra query.
+    user.billing = summarize(r.b_status ? { status: r.b_status, unmetered: r.b_unmetered, balance_minutes: r.b_balance,
+      period_end: r.b_period_end, terms: r.b_terms, plan_id: r.b_plan_id, plan_name: r.b_plan_name } : null);
+    // Kaho staff signed in from the admin site. Shown to the person, so it is never a secret; WHO is kept off the wire.
+    user.support = Boolean(r.impersonated_by);
+    Object.defineProperty(user, "support_by", { value: r.impersonated_by ?? null, enumerable: false });
+    return user;
   });
 }
 
@@ -236,8 +258,8 @@ export async function members(orgId) {
   // People are visible across organizations only through their membership of this one.
   const { rows } = await asSystem((db) => db.query(`SELECT u.id, u.name, u.email, u.avatar, m.role, m.created_at
     FROM memberships m JOIN users u ON u.id = m.user_id WHERE m.org_id = $1
-    ORDER BY CASE m.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 WHEN 'manager' THEN 2 WHEN 'builder' THEN 3
-      WHEN 'operator' THEN 4 ELSE 5 END, m.created_at`, [orgId]));
+    ORDER BY CASE m.role WHEN 'admin' THEN 0 WHEN 'manager' THEN 1 WHEN 'builder' THEN 2
+      WHEN 'operator' THEN 3 ELSE 4 END, m.created_at`, [orgId]));
   const active = rows.length ? (await systemQuery("SELECT user_id, max(last_seen_at) AS at FROM sessions WHERE user_id = ANY($1) GROUP BY user_id",
     [rows.map((u) => u.id)])).rows : [];
   const last = Object.fromEntries(active.map((a) => [a.user_id, a.at.toISOString()]));
@@ -252,31 +274,40 @@ async function teammate(db, orgId, userId) {
   return rows[0];
 }
 
-/** Give someone a role. The owner may give any role but owner; an admin may give the four
- * below admin, and cannot touch another admin. The owner's own role never changes. */
+/** One admin at a time changes who is in charge, so two admins demoting each other at the same moment cannot
+ * leave nobody in charge. The lock is held to the end of the transaction. */
+async function lockOrganization(db, orgId) {
+  await db.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`roles:${orgId}`]);
+}
+async function adminsLeft(db, orgId) {
+  return (await db.query("SELECT count(*)::int AS n FROM memberships WHERE org_id = $1 AND role = 'admin'", [orgId])).rows[0].n;
+}
+const NEEDS_AN_ADMIN = "an organization must always keep at least one admin";
+
+/** Give someone a role. An admin may give any role, including admin, to anyone but themselves: that, with the rule
+ * that the last admin is never taken away, is what keeps someone in charge. */
 export async function changeRole(actor, userId, role) {
   if (!can(actor.role, "team.roles")) throw forbidden("your role does not allow changing roles");
   if (userId === actor.id) throw new ValidationError("you cannot change your own role");
-  if (!ASSIGNABLE.includes(role)) throw new ValidationError(`role must be one of: ${ASSIGNABLE.join(", ")}`);
-  if (actor.role !== "owner" && !BELOW_ADMIN.includes(role)) throw forbidden("only the owner can make someone an admin");
+  if (typeof role !== "string" || !ASSIGNABLE.includes(role)) throw new ValidationError(`role must be one of: ${ASSIGNABLE.join(", ")}`);
   return asSystem(async (db) => {
+    await lockOrganization(db, actor.org_id);
     const target = await teammate(db, actor.org_id, userId);
-    if (target.role === "owner") throw forbidden("the owner's role cannot be changed");
-    if (target.role === "admin" && actor.role !== "owner") throw forbidden("only the owner can change an admin's role");
     await db.query("UPDATE memberships SET role = $1 WHERE user_id = $2 AND org_id = $3", [role, target.id, actor.org_id]);
+    if (await adminsLeft(db, actor.org_id) < 1) throw new ValidationError(NEEDS_AN_ADMIN); // rolls the change back
     return { id: target.id, name: target.name, role };
   });
 }
 
-/** Admins remove members; the owner removes anyone but themselves. Their sessions end with them. */
+/** Admins remove people, other admins too, but never themselves. Their sessions end with them. */
 export async function removeMember(actor, userId) {
   if (userId === actor.id) throw new ValidationError("you cannot remove yourself");
   return asSystem(async (db) => {
+    await lockOrganization(db, actor.org_id);
     const t = await teammate(db, actor.org_id, userId);
-    if (t.role === "owner" || (t.role === "admin" && actor.role !== "owner")) {
-      throw forbidden("you can only remove people with a lower role than yours");
-    }
+    if (!can(actor.role, "team.manage")) throw forbidden("your role does not allow removing people");
     await db.query("DELETE FROM memberships WHERE user_id = $1 AND org_id = $2", [t.id, actor.org_id]);
+    if (await adminsLeft(db, actor.org_id) < 1) throw new ValidationError(NEEDS_AN_ADMIN); // rolls the removal back
     await db.query("DELETE FROM sessions WHERE user_id = $1 AND org_id = $2", [t.id, actor.org_id]);
     // Their account goes too if this was their only organization; otherwise they land in another one.
     const rest = await db.query("SELECT org_id FROM memberships WHERE user_id = $1 ORDER BY created_at LIMIT 1", [t.id]);
@@ -295,7 +326,7 @@ export async function organizations(userId, currentOrgId) {
   return rows.map((r) => ({ id: r.id, name: r.name, role: r.role, current: r.id === currentOrgId }));
 }
 
-/** A new organization owned by this person: a separate environment with nothing in it yet. */
+/** A new organization with this person as its admin: a separate environment with nothing in it yet. */
 export async function createOrganization(userId, rawName) {
   const name = words(rawName);
   if (!name || name.length > 80) throw new ValidationError("give the organization a name (up to 80 characters)");
@@ -304,8 +335,8 @@ export async function createOrganization(userId, rawName) {
     if (n >= MAX_ORGS) throw new ValidationError(`you can be in at most ${MAX_ORGS} organizations`);
     const id = `org_${hexId()}`;
     await db.query("INSERT INTO organizations (id, name) VALUES ($1, $2)", [id, name]);
-    await db.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'owner')", [userId, id]);
-    return { id, name, role: "owner" };
+    await db.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, 'admin')", [userId, id]);
+    return { id, name, role: "admin" };
   });
 }
 
@@ -321,18 +352,17 @@ export async function switchOrganization(userId, rawSession, orgId) {
   });
 }
 
-/** Join another organization with its invite code, as a member, while signed in. */
+/** Join another organization with its invite code, while signed in, with the role the code was made for. */
 export async function joinOrganization(userId, invite) {
   if (wrongKind(invite)) throw new AuthError(BAD_INVITE, 403);
   return asSystem(async (db) => {
-    const { rows } = await db.query("DELETE FROM invites WHERE code = $1 AND expires_at > now() RETURNING org_id",
-      [String(invite ?? "").slice(0, 100)]);
-    if (!rows[0]) throw new AuthError("That invite code is not valid. Codes work once, for a week; ask for a new one.", 403);
+    const used = await Invite.consume(db, invite);
+    if (!used) throw new AuthError(BAD_INVITE, 403);
     const { rows: [{ n }] } = await db.query("SELECT count(*)::int AS n FROM memberships WHERE user_id = $1", [userId]);
     if (n >= MAX_ORGS) throw new ValidationError(`you can be in at most ${MAX_ORGS} organizations`);
     await db.query("INSERT INTO memberships (user_id, org_id, role) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
-      [userId, rows[0].org_id, DEFAULT_ROLE]);
-    return rows[0].org_id;
+      [userId, used.org_id, used.role]);
+    return used.org_id;
   });
 }
 

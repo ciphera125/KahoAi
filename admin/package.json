@@ -1,0 +1,33 @@
+{
+  "name": "kaho-admin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Kaho AI Admin: the separate site where Kaho staff run every organization, plan and top-up. Its own sign-in, its own origin; shares the Studio's components and look by import.",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint .",
+    "test": "node --test 'src/**/*.test.js'"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "1.3.1",
+    "@radix-ui/react-tooltip": "1.4.1",
+    "motion": "14.9.1",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-router-dom": "7.18.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@vitejs/plugin-react": "5.0.4",
+    "eslint": "10.0.1",
+    "eslint-plugin-react-hooks": "7.1.0",
+    "globals": "17.3.0",
+    "vite": "7.3.7"
+  },
+  "overrides": {
+    "minimatch": "11.0.4"
+  }
+}

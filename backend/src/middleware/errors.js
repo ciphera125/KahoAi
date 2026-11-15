@@ -12,7 +12,10 @@ const isBusy = (err) => BUSY_CODES.has(err?.code) || BUSY_TEXT.test(String(err?.
 export function errorHandler(err, req, res, _next) {
   if (err.type === "entity.too.large") return res.status(413).json({ error: "the request is too large" });
   if (err.type === "entity.parse.failed") return res.status(400).json({ error: "the request is not valid JSON" });
-  if (err.expose && err.status >= 400 && err.status < 600) return res.status(err.status).json({ error: err.message });
+  if (err.expose && err.status >= 400 && err.status < 600) {
+    // `code` is for the page (a locked plan, no minutes), never for a person to read.
+    return res.status(err.status).json({ error: err.message, ...(typeof err.code === "string" ? { code: err.code } : {}) });
+  }
   if (isBusy(err)) {
     logger.warn({ err: { message: err.message, code: err.code }, reqId: req.id }, "database busy; answered 503");
     if (res.headersSent) return res.end();

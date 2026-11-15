@@ -1,8 +1,8 @@
 // A call's files in Supabase Storage, named so a person can find them.
 //
 // The voice service uploads a recording as `2026/11/<call id>.opus`, the only name it can know.
-// The Studio then files it in `1-recordings/2026-11-08_1555_99999999.opus` and writes the
-// transcript as `2-transcripts/2026-11-08_1555_99999999.txt`: the same name in two simple
+// The Studio then files it in `call-recordings/2026-11-08_1555_99999999.opus` and writes the
+// transcript as a spreadsheet, `call-transcripts/2026-11-08_1555_99999999.csv`: the same name in two simple
 // folders, so a recording and its words are easy to find. The name carries no person, and the
 // transcript has no name, phone number or e-mail in it (redact.js).
 //
@@ -13,12 +13,24 @@ import { logger } from "../utils/logger.js";
 import * as Call from "../models/Call.js";
 import * as CallAnswer from "../models/CallAnswer.js";
 import { redactPII } from "../models/redact.js";
-import { fileStem, transcriptText } from "../models/transcriptText.js";
-import { moveRecording, putText, recordingsConfigured } from "./storage.js";
+import { fileStem } from "../models/transcriptText.js";
+import { sheet } from "../utils/csv.js";
+import { FOLDERS } from "./archive.js";
+import { moveRecording, putCsv, recordingsConfigured } from "./storage.js";
 
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
-export const RECORDINGS = "1-recordings";
-export const TRANSCRIPTS = "2-transcripts";
+export const RECORDINGS = FOLDERS.recordings;
+export const TRANSCRIPTS = FOLDERS.transcripts;
+
+const clock = (iso) => new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(iso));
+
+/** A call's words as rows: when, who spoke, what was said; then what was saved on the call. */
+export function transcriptSheet({ turns = [], answers = [] }, names = []) {
+  const rows = turns.map((t) => [t.at ? clock(t.at) : "", t.role === "agent" ? "Agent" : "Caller", redactPII(t.text, { names, selfIntro: t.role !== "agent" })]);
+  for (const a of answers) rows.push(["", "Saved answer", redactPII(`${a.label}: ${a.value}`, { names })]);
+  if (!rows.length) rows.push(["", "Note", "Nothing was said on this call."]);
+  return sheet(["Time (IST)", "Who spoke", "What was said"], rows);
+}
 
 export async function publishCallFiles(callId) {
   try {
@@ -44,9 +56,8 @@ export async function publishCallFiles(callId) {
 
     if (row.has_transcript) {
       const [turns, answers] = await Promise.all([Call.turns(org, callId), CallAnswer.forCall(org, callId)]);
-      const path = `${TRANSCRIPTS}/${stem}.txt`;
-      const text = redactPII(transcriptText({ ...meta, name: null, peer: null, turns, answers, anonymous: true }), { names: [meta.name] });
-      if (await putText(path, text)) {
+      const path = `${TRANSCRIPTS}/${stem}.csv`;
+      if (await putCsv(path, transcriptSheet({ turns, answers }, [meta.name]))) {
         await asSystem((db) => db.query("UPDATE calls SET transcript_path = $2 WHERE call_id = $1", [callId, path]));
       }
     }

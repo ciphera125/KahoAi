@@ -24,6 +24,7 @@ import { config } from "../config/env.js";
 import { lockPool } from "../db/pool.js";
 import * as Activity from "../models/Activity.js";
 import * as Agent from "../models/Agent.js";
+import * as Billing from "../models/Billing.js";
 import * as BulkCall from "../models/BulkCall.js";
 import { logger } from "../utils/logger.js";
 import { OutsideWindowError, placeCall } from "./calling.js";
@@ -65,7 +66,12 @@ async function dialOne(run, item, now) {
       await BulkCall.mark(item.id, { status: "queued", placed_at: null });
       return windowText(err.window, err.whose);
     }
-    if (err.stage === "preflight" || err.stage === "provider") {
+    // Too many calls at once for the plan, right now: it is not this person's fault and not a reason to stop. Wait for a slot.
+    if (err.code === "too_many_calls") {
+      await BulkCall.mark(item.id, { status: "queued", placed_at: null });
+      return "Waiting for other calls to finish.";
+    }
+    if (err.stage === "preflight" || err.stage === "provider" || err.stage === "billing") {
       // Nothing was dialled: the voice server is down, or Plivo cannot place calls for this account.
       // It is not this person's number, so they stay queued for when it is fixed.
       await BulkCall.mark(item.id, { status: "queued", placed_at: null });
@@ -111,7 +117,10 @@ export async function runOnce({ now = new Date() } = {}) {
   const orgOpen = {};
   for (const r of runs) orgOpen[r.org_id] = (orgOpen[r.org_id] ?? 0) + (counts[r.id] ?? 0);
   // The voice server's capacity is shared with calls placed by hand and inbound ones.
-  let open = sum(counts) + await BulkCall.liveOutsideCalls(config.BULK_OUTSIDE_CAP);
+  const outside = await BulkCall.liveOutsideByOrg();
+  let open = sum(counts) + BulkCall.cappedTotal(outside, config.BULK_OUTSIDE_CAP);
+  // What each organization's plan allows: minutes, being active, and how many calls at once.
+  const limits = config.BILLING_ENFORCED ? await Billing.limitsFor([...new Set(runs.map((r) => r.org_id))]) : new Map();
   const dialling = new Set(runs.filter((r) => r.status === "running").map((r) => r.org_id));
   const share = Math.max(1, Math.ceil(config.BULK_MAX_CONCURRENT / Math.max(1, dialling.size)));
   const say = (run, waiting) => (waiting === (run.waiting ?? null) ? null : BulkCall.setRun(run.id, { waiting }));
@@ -123,6 +132,8 @@ export async function runOnce({ now = new Date() } = {}) {
       await BulkCall.setRun(run.id, { status: "paused", waiting: "Its agent was deleted. Cancel this bulk call." });
       continue;
     }
+    const why = Billing.pauseReason(limits.get(run.org_id));
+    if (why) { await pauseRun(run, why); continue; }
     const hours = bulkWindow(agent);
     if (!Agent.inCallWindow(hours, now)) {
       await say(run, agent.call_window?.enabled ? windowText(hours)
@@ -131,7 +142,9 @@ export async function runOnce({ now = new Date() } = {}) {
     }
     const mine = counts[run.id] ?? 0;
     // Every slot this run was given that is empty, as far as the server and the organization's share allow.
-    const slots = Math.max(0, Math.min(run.parallel - mine, config.BULK_MAX_CONCURRENT - open, share - (orgOpen[run.org_id] ?? 0)));
+    // ... and what the plan allows at once, counting this organization's calls placed by hand too.
+    const planRoom = (limits.get(run.org_id)?.simultaneous ?? Infinity) - (orgOpen[run.org_id] ?? 0) - (outside.get(run.org_id) ?? 0);
+    const slots = Math.max(0, Math.min(run.parallel - mine, config.BULK_MAX_CONCURRENT - open, share - (orgOpen[run.org_id] ?? 0), planRoom));
     let waiting = slots <= 0 && mine < run.parallel ? "Waiting for other calls to finish." : null;
     const claimed = await BulkCall.claim(run.id, slots);
     let streak = 0;

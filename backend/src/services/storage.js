@@ -8,6 +8,7 @@ import { logger } from "../utils/logger.js";
 export const SIGNED_URL_SECS = 600;
 const TIMEOUT_MS = 5000;
 
+export const adminConfigured = () => Boolean(config.SUPABASE_URL && config.SUPABASE_SECRET_KEY && config.SUPABASE_ADMIN_BUCKET);
 export const recordingsConfigured = () => Boolean(config.SUPABASE_URL && config.SUPABASE_SECRET_KEY && config.SUPABASE_RECORDINGS_BUCKET);
 
 /** { url, download_url } for an object path like 2026/11/<call_id>.opus. One attempt, 5 s. */
@@ -74,7 +75,7 @@ async function storageCall(method, path, { body, headers = {} } = {}) {
   }
 }
 
-const inBucket = (path) => `/object/${encodeURIComponent(config.SUPABASE_RECORDINGS_BUCKET)}/${path.split("/").map(encodeURIComponent).join("/")}`;
+const inBucket = (path, bucket = config.SUPABASE_RECORDINGS_BUCKET) => `/object/${encodeURIComponent(bucket)}/${path.split("/").map(encodeURIComponent).join("/")}`;
 
 /** Rename an object in the bucket. true when it is now at `to`. */
 export async function moveRecording(from, to) {
@@ -90,4 +91,14 @@ export async function putText(path, text) {
   if (!recordingsConfigured()) return false;
   return storageCall("POST", inBucket(path), {
     headers: { "Content-Type": "text/plain; charset=utf-8", "x-upsert": "true" }, body: text });
+}
+
+/**
+ * File a spreadsheet, replacing one of the same name. `bucket` defaults to the customers' bucket; the admin's records
+ * pass the admin bucket. The file opens with a byte-order mark so Hindi and accents survive Excel.
+ */
+export async function putCsv(path, text, bucket = config.SUPABASE_RECORDINGS_BUCKET) {
+  if (!config.SUPABASE_URL || !config.SUPABASE_SECRET_KEY || !bucket || !path.endsWith(".csv")) return false;
+  return storageCall("POST", inBucket(path, bucket), {
+    headers: { "Content-Type": "text/csv; charset=utf-8", "x-upsert": "true" }, body: `\uFEFF${text}` });
 }

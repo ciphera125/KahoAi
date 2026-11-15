@@ -14,12 +14,12 @@ describe("accounts", () => {
     }
   });
 
-  it("makes the first account the owner, then signs in and out", async () => {
+  it("makes the first account an admin, then signs in and out", async () => {
     const b = await owner();
     const me = await b.get("/api/me");
     expect(me.status).toBe(200);
-    expect(me.body).toMatchObject({ name: "Asha Rao", email: "asha@acme.in", role: "owner" });
-    expect(me.body.invite_code).toBeTruthy();
+    expect(me.body).toMatchObject({ name: "Asha Rao", email: "asha@acme.in", role: "admin" });
+    expect(me.body).not.toHaveProperty("invite_code");
     expect(JSON.stringify(me.body)).not.toMatch(/hash|salt/);
     expect((await b.post("/api/auth/logout")).body).toEqual({ signed_out: true });
     expect((await b.get("/api/me")).status).toBe(401);
@@ -62,7 +62,7 @@ describe("accounts", () => {
     const o = await owner();
     const wrong = await browser().post("/api/auth/signup").send({ name: "X", email: "x@y.in", password: "12345678", invite: "guess" });
     expect(wrong.status).toBe(403);
-    const code = (await o.get("/api/me")).body.invite_code;
+    const code = (await o.post("/api/invites").send({ role: "viewer" })).body.code;
     const ok = await browser().post("/api/auth/signup").send({ name: "Ravi", email: "ravi@acme.in", password: "12345678", invite: code });
     expect(ok.status).toBe(200);
     expect(ok.body.role).toBe("viewer"); // someone who joins can only look until an admin gives them a role
@@ -72,26 +72,15 @@ describe("accounts", () => {
 
   it("refuses an expired invite", async () => {
     const o = await owner();
-    const code = (await o.get("/api/me")).body.invite_code;
+    const code = (await o.post("/api/invites").send({ role: "viewer" })).body.code;
     await db.query("UPDATE invites SET expires_at = now() - interval '1 second'");
     const r = await browser().post("/api/auth/signup").send({ name: "R", email: "r@acme.in", password: "12345678", invite: code });
     expect(r.status).toBe(403);
   });
 
-  it("lets only the owner make a new invite, which replaces the old", async () => {
-    const o = await owner();
-    const old = (await o.get("/api/me")).body.invite_code;
-    const m = await member(o);
-    expect((await m.post("/api/auth/invite")).status).toBe(403);
-    const fresh = await o.post("/api/auth/invite");
-    expect(fresh.body.invite_code).not.toBe(old);
-    const r = await browser().post("/api/auth/signup").send({ name: "Y", email: "y@y.in", password: "12345678", invite: old });
-    expect(r.status).toBe(403);
-  });
-
   it("signs an email up once", async () => {
     const o = await owner();
-    const code = (await o.get("/api/me")).body.invite_code;
+    const code = (await o.post("/api/invites").send({ role: "viewer" })).body.code;
     const r = await browser().post("/api/auth/signup").send({ name: "A", email: "asha@acme.in", password: "12345678", invite: code });
     expect(r.status).toBe(400);
     expect(r.body.error).toBe("an account with this email already exists; sign in");
@@ -155,18 +144,13 @@ describe("accounts", () => {
     expect((await o.get("/api/me")).status).toBe(401);
   });
 
-  it("only the owner can change roles, not even an admin (enforced at the route)", async () => {
+  it("only an admin can change roles (enforced at the route)", async () => {
     const o = await owner();
     const m = await member(o);
-    // Promote Ravi to admin so we can test whether an admin can change roles.
-    await o.patch(`/api/team/${m.user.id}`).send({ role: "admin" });
-    // A third member for the admin to try changing.
     const m2 = await member(o, { name: "Priya", email: "priya@acme.in", password: "12345678" });
-    // The admin cannot change roles, only the owner can.
-    expect((await m.patch(`/api/team/${m2.user.id}`).send({ role: "admin" })).status).toBe(403);
-    expect((await m.patch(`/api/team/${m2.user.id}`).send({ role: "admin" })).body.error).toMatch(/owner/);
-    // The owner can.
+    expect((await m.patch(`/api/team/${m2.user.id}`).send({ role: "manager" })).status).toBe(403); // a viewer
     expect((await o.patch(`/api/team/${m2.user.id}`).send({ role: "admin" })).status).toBe(200);
+    expect((await m2.patch(`/api/team/${m.user.id}`).send({ role: "manager" })).status).toBe(200); // now an admin too
   });
 
   it("ends an idle session even before its absolute expiry", async () => {

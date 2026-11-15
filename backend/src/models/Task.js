@@ -76,7 +76,7 @@ async function ownedContact(db, orgId, contactId) {
 
 /** `source` is set by the caller of this function, never by the request body. */
 export async function create(orgId, { title, due_at: due, contact_id: contactId, external_id: externalId } = {},
-  { source = "studio" } = {}) {
+  { source = "studio", keepExisting = false } = {}) {
   const clean = cleanText(title, MAX_TITLE, "task");
   const when = dueAt(due);
   return inOrg(orgId, async (db) => {
@@ -86,7 +86,8 @@ export async function create(orgId, { title, due_at: due, contact_id: contactId,
       `INSERT INTO tasks (id, org_id, contact_id, title, due_at, source, external_id)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (org_id, external_id) DO UPDATE
-         SET title = EXCLUDED.title, due_at = EXCLUDED.due_at, contact_id = EXCLUDED.contact_id
+         SET title = ${keepExisting ? "tasks.title" : "EXCLUDED.title"}, due_at = ${keepExisting ? "tasks.due_at" : "EXCLUDED.due_at"},
+           contact_id = ${keepExisting ? "tasks.contact_id" : "EXCLUDED.contact_id"}
        RETURNING id`,
       [id, orgId, contact, clean, when, source, externalId ? String(externalId).slice(0, 100) : null]);
     return show(db, orgId, rows[0].id);

@@ -52,7 +52,7 @@ describe("the three user files, as spreadsheets", () => {
     const { users } = await usersExport();
     const rows = csv(users);
     expect(rows[0]).toEqual(["Name", "Email", "Organization", "Role", "Joined", "Last signed in"]);
-    expect(rows.slice(1).map((r) => [r[1], r[2], r[3]]).sort()).toEqual([["asha@acme.in", "Acme", "owner"], ["ravi@acme.in", "Acme", "manager"], ["zoya@other.in", "Other", "owner"]]);
+    expect(rows.slice(1).map((r) => [r[1], r[2], r[3]]).sort()).toEqual([["asha@acme.in", "Acme", "admin"], ["ravi@acme.in", "Acme", "manager"], ["zoya@other.in", "Other", "admin"]]);
     expect(rows[1][4]).toMatch(/^\d{4}-\d{2}-\d{2}/);
   });
 

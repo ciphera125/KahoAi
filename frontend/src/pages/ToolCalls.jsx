@@ -29,8 +29,9 @@ export default function ToolCalls({ embedded = false }) {
   useEffect(() => { get("/api/agents").then(setAgents).catch(() => {}); }, []);
   const [shownCalls, callPager] = usePaged(data?.calls ?? [], 10);
 
-  const tools = useMemo(() => [...new Set(
-    (data?.calls ?? []).flatMap((c) => c.turns.flatMap((t) => t.calls.map((x) => x.tool))))].sort(), [data]);
+  // Every tool this organization has used, from the server: built from what is on screen, the list shrank to the one
+  // tool you had just chosen and there was no way back to the others.
+  const tools = data?.tools ?? [];
   const set = (patch) => setFilters((f) => ({ ...f, ...patch }));
 
   return (
@@ -66,7 +67,7 @@ export default function ToolCalls({ embedded = false }) {
           <div className="field"><label className="f">Tool</label>
             <select value={filters.tool} onChange={(e) => set({ tool: e.target.value })}>
               <option value="">Any tool</option>
-              {tools.map((t) => <option key={t} value={t}>{t}</option>)}
+              {tools.map((t) => <option key={t.name} value={t.name}>{t.label}</option>)}
             </select></div>
           <div className="field"><label className="f">How it went</label>
             <select value={filters.status} onChange={(e) => set({ status: e.target.value })}>
@@ -85,7 +86,9 @@ export default function ToolCalls({ embedded = false }) {
 
       {!data && <Spinner />}
       {data?.calls.length === 0 && <div className="card"><p className="hint">
-        Nothing here yet. This fills up as agents use tools on calls.</p></div>}
+        {query ? "No tool calls match these filters." : "Nothing here yet. This fills up as agents use tools on calls."}</p></div>}
+      {data?.truncated && <div className="banner"><Icon name="warn" /><span>Showing the newest {data.shown} of {data.total.toLocaleString("en-IN")} tool calls.
+        Choose an agent, a tool or a day to see older ones.</span></div>}
       {shownCalls.map((call) => <CallNode key={call.call_id} call={call} technical={technical} />)}
       {data && data.calls.length > 0 && callPager}
     </section>

@@ -49,6 +49,7 @@ async function worker() {
   const { startPlivoSyncRunner, stopPlivoSyncRunner } = await import("./services/plivoSyncRunner.js");
   const { startRecordingRetentionRunner, stopRecordingRetentionRunner } = await import("./services/recordingRetentionRunner.js");
   const { startArchiveRunner, stopArchiveRunner } = await import("./services/archiveRunner.js");
+  const { startBillingRunner, stopBillingRunner } = await import("./services/billingRunner.js");
   const server = createApp().listen(config.PORT, config.HOST);
   const internal = createInternalApp().listen(config.INTERNAL_PORT, config.INTERNAL_HOST);
   for (const s of [server, internal]) s.on("error", (err) => { logger.fatal({ err: err.message }, "could not listen"); process.exit(1); });
@@ -59,10 +60,12 @@ async function worker() {
   startPlivoSyncRunner();
   startRecordingRetentionRunner();
   startArchiveRunner();
+  startBillingRunner();
   const shutdown = async () => {
     stopPlivoSyncRunner();
     stopRecordingRetentionRunner();
     stopArchiveRunner();
+    stopBillingRunner();
     server.close();
     internal.close();
     server.closeIdleConnections();

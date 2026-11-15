@@ -353,6 +353,11 @@ _NO_REASON = re.compile(
 )
 
 
+def _alnum(text: str) -> str:
+    """Words only, lowercased, so "Asha  Rao." and "asha rao" are the same name."""
+    return " ".join(re.findall(r"[^\W_]+", text.lower()))
+
+
 def _is_placeholder(value: str) -> bool:
     """A stand-in for a value the model does not have: "?", "unknown", no letters."""
     text = value.strip().lower().strip(" .")
@@ -432,6 +437,14 @@ async def capture_lead(args: dict, call: CallContext) -> dict:
     if not phone:
         return {"error": "there is no number to reach them on; ask the caller for one"}
 
+    # The model sometimes saves the same lead again a turn later, in slightly different words.
+    # One request from one person on one call is one lead; a different request from the same
+    # person is another.
+    same = (_alnum(name), _alnum(reason))
+    saved = call.state.setdefault("saved_leads", set())
+    if same in saved:
+        return {"status": "already_saved", "phone_saved": phone}
+
     # Free text can hold anything a caller said, including a full Aadhaar or PAN,
     # which must never reach disk. Same rule as the transcript, same function.
     now = datetime.now(UTC)
@@ -449,6 +462,7 @@ async def capture_lead(args: dict, call: CallContext) -> dict:
     # interleaving lines.
     with (directory / f"{now:%Y-%m-%d}.jsonl").open("a", encoding="utf-8") as f:
         f.write(json.dumps(lead, ensure_ascii=False) + "\n")
+    saved.add(same)
     logger.info(f"Lead captured for call {call.call_id}")
     if call.report_lead is not None:
         try:

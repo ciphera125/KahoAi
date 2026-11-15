@@ -9,7 +9,7 @@ export const MAX_PAGE = 50;
 const MAX_TEXT = 160;
 // Every page a notification may send you to. A name that is not here is saved without a link.
 const VIEWS = new Set(["dashboard", "calls", "contacts", "agents", "prompts", "numbers", "team", "errors", "leads",
-  "tasks", "your-tools", "tool-calls", "tags", "settings", "bulk", "live"]);
+  "tasks", "your-tools", "tool-calls", "tags", "settings", "bulk", "live", "billing"]);
 
 export async function add(orgId, kind, text, { view = null, ref = null, actor = null } = {}) {
   await inOrg(orgId, async (db) => {

@@ -29,8 +29,8 @@ beforeEach(async () => { await freshDb(); log = []; refuse = false; });
 
 const CALL = "99999999-9999-9999-9999-999999999999";
 const BUCKET = "/storage/v1/object/call-recordings";
-const REC = "1-recordings/2026-11-08_1555_99999999";
-const TXT = "2-transcripts/2026-11-08_1555_99999999";
+const REC = "call-recordings/2026-11-08_1555_99999999";
+const TXT = "call-transcripts/2026-11-08_1555_99999999";
 
 async function aFinishedCall(b, { name = "Ravi Kumar", recorded = true } = {}) {
   await line(b);
@@ -53,7 +53,7 @@ async function aFinishedCall(b, { name = "Ravi Kumar", recorded = true } = {}) {
 const row = async () => (await db.query("SELECT recording_path, transcript_path FROM calls WHERE call_id = $1", [CALL])).rows[0];
 
 describe("a call's files in Supabase Storage", () => {
-  it("files the recording in 1-recordings, named for the day and time and nothing about the person", async () => {
+  it("files the recording in call-recordings, named for the day and time and nothing about the person", async () => {
     const b = await owner();
     await aFinishedCall(b);
     await publishCallFiles(CALL);
@@ -63,16 +63,16 @@ describe("a call's files in Supabase Storage", () => {
     expect((await row()).recording_path).toBe(`${REC}.opus`);
   });
 
-  it("saves the transcript in 2-transcripts with the same name, with no name, number or e-mail in it", async () => {
+  it("saves the transcript in call-transcripts, as a spreadsheet with the same name, with no name, number or e-mail in it", async () => {
     const b = await owner();
     await aFinishedCall(b);
     await publishCallFiles(CALL);
-    const put = log.find((r) => r.method === "POST" && r.url === `${BUCKET}/${TXT}.txt`);
-    expect(put.type).toMatch(/^text\/plain/);
+    const put = log.find((r) => r.method === "POST" && r.url === `${BUCKET}/${TXT}.csv`);
+    expect(put.type).toMatch(/^text\/csv/);
     expect(put.body).not.toMatch(/Ravi|Kumar|9876543210|\+91/);
-    expect(put.body).toContain("Caller: Hi");
+    expect(put.body).toContain("Caller,Hi");
     expect(put.auth).toMatch(/^Bearer /);
-    expect((await row()).transcript_path).toBe(`${TXT}.txt`);
+    expect((await row()).transcript_path).toBe(`${TXT}.csv`);
   });
 
   it("does the transcript alone for a call that was not recorded", async () => {
@@ -80,7 +80,7 @@ describe("a call's files in Supabase Storage", () => {
     await aFinishedCall(b, { recorded: false });
     await publishCallFiles(CALL);
     expect(log.some((r) => r.url === "/storage/v1/object/move")).toBe(false);
-    expect((await row()).transcript_path).toBe(`${TXT}.txt`);
+    expect((await row()).transcript_path).toBe(`${TXT}.csv`);
   });
 
   it("does nothing twice: a recording already under its name is left where it is", async () => {
@@ -97,7 +97,7 @@ describe("a call's files in Supabase Storage", () => {
     await aFinishedCall(b, { name: '../../etc/passwd "x"' });
     await publishCallFiles(CALL);
     const { recording_path: path } = await row();
-    expect(path).toMatch(/^1-recordings\/[A-Za-z0-9_-]+\.opus$/);
+    expect(path).toMatch(/^call-recordings\/[A-Za-z0-9_-]+\.opus$/);
     expect(path).not.toContain("..");
   });
 
@@ -153,7 +153,7 @@ describe("they are deleted together", () => {
     log = [];
     await runOnce({ days: 60 });
     const deleted = log.filter((r) => r.method === "DELETE").map((r) => r.url);
-    expect(deleted).toEqual(expect.arrayContaining([`${BUCKET}/${REC}.opus`, `${BUCKET}/${TXT}.txt`]));
+    expect(deleted).toEqual(expect.arrayContaining([`${BUCKET}/${REC}.opus`, `${BUCKET}/${TXT}.csv`]));
     expect(await row()).toEqual({ recording_path: null, transcript_path: null });
   });
 });

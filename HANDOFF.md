@@ -2221,3 +2221,59 @@ Pushed first: `main` == `origin/main` at `72d3458`. Then, on the owner's request
 Backend 701, frontend 55, voice 915 pass; lint clean. Committed, NOT pushed (ask first). Still open: the voice server stays one instance
 (in-memory stream tokens, nonce store, limiter); Supabase pooler's own client limit is invisible to `max_connections`, check it in the
 dashboard and set `PGPOOL_MAX` x workers under it; not checked in a real browser or a real Plivo call.
+
+### 2026-11-15: plans, minutes, top-ups, the admin site, and the tool-call audit
+
+Owner's brief: audit everything and make tool calls accurate; a separate admin site (own folder, own URL, own sign-in, only
+adityanair5002@gmail.com and aayushimakker10@gmail.com) that controls everything per user, including per-minute rates; the
+rate card of 2026-11-15 as subscription plans; no plan, no Studio; Settings > Billing with top-ups; a balance in the top bar
+left of the theme switch; top-ups saved in Supabase as their own folder; the user is notified at every step.
+
+**Built, test-first (red shown, then green; mutation-checked: 14 of 14 security guards fail a test when removed, after two
+missing tests were added):** migration 028 (plans, subscriptions, `minute_ledger` with a balance trigger and a guard,
+`topups`, `admins`, `admin_sessions`, `admin_audit`, `impersonations`; existing organizations become `unmetered`) and 029
+(tool rows). Backend: `Billing.js`, `Admin.js`, `AdminOps.js`, `middleware/billing.js` (the gate), `adminAuth.js`,
+`billingRunner.js` (ends and warns about plans hourly), routes `/api/plans`, `/api/billing/*`, `/api/admin/*`, `/api/auth/support-signin`.
+Placing a call, bulk calls (pause with a reason; calls at once capped by the plan) and inbound calls (`call-config` `blocked`,
+the phone server answers a short message) all follow the plan. Studio: `ChoosePlan`, Settings > Billing, the minutes badge,
+the support banner, `/support`. New `admin/` app (Overview, Organizations and one organization whole, People, Top-ups, Plans
+and rates, Admin record, System). Supabase: `10-topups/`. Tool calls: see CLEANROOM 2026-11-15 (the last row but one).
+**Verified for real, in a browser, against an isolated local database (not Supabase):** a new organization sees only the rate
+card; choosing Growth waits for payment; the admin site (own sign-in; a stranger refused with the right setup code) started it,
+the Studio opened by itself within 15 s, the badge read 2,000 min; the admin's per-customer extra-minute price (5.25) was the
+price the customer saw; a top-up request, its confirmation and each notification arrived; a call-end through the voice service's
+own endpoint charged 3 minutes for 125 s; suspending locked the open Studio tab within a minute; "open the Studio as" opened a
+support session with the banner. Attacked for real with curl (see the report): sign-up gate, brute force, cross-door cookies,
+forged origin/host/forwarded/content type, a customer paying themselves, 25 path tricks against the plan gate, the database role
+against the append-only tables. Found and fixed on the way: the notification header button was full width (`.menu button`), tables
+had no padding, a stale payment note, "1 calls".
+**Owner actions before this is live (nothing here touched Supabase):** (1) set `ADMIN_SIGNUP_CODE` (16+ characters) in
+`backend/.env`; (2) restart the backend: it applies migrations 028 and 029 to the live database, and your existing organizations
+become `unmetered` (nothing stops; assign them a plan from the admin site when you want them metered); (3) `cd admin && npm install
+&& npm run dev`, open http://localhost:5174, create both admin accounts; (4) set `BILLING_PAYMENT_INSTRUCTIONS` so customers
+know how to pay; (5) restart the phone server for the inbound check; (6) in production set `ADMIN_ORIGINS` to the admin site's https address.
+**Not built, on purpose:** a payment gateway (no keys; top-ups are confirmed by an admin; the ledger is ready for a webhook);
+deleting call logs after the plan's "days kept" (shown as the term, not enforced); a second factor for admin sign-in; the voice
+server is still one instance (unchanged). Pen-test findings in the report, not fixed: admin has no 2FA; the per-cookie admin
+rate limit can be dodged by sending fake cookies (the per-address limit still holds, same as the Studio); an admin can open
+any account (recorded, but powerful: keep the two addresses to the two people).
+
+## Session 2026-11-15 (late): owner merged into admin, role-specific invites (IN PROGRESS, suite red on purpose)
+
+Done, uncommitted, new tests green:
+- System check made honest (`backend/src/services/health.js`, tests in `tests/health.test.js`): a 404/502 from the phone-server address is no longer "reachable" (dead tunnel), Plivo with zero credit fails, the model check looks for `GROQ_MODEL_ID` in the Studio key's model list.
+- Migration `030_one_admin_role_and_role_invites.sql` (NOT applied to the live DB; the live backend still runs the old code, do not restart it until the suite is green): owner becomes admin, owner CHECK and `memberships_one_owner` dropped, `invites` gets role / made_by / created_at and loses one-code-per-org.
+- `models/Invite.js` (create / list / revoke / consume, max 25 open, advisory lock), routes `GET/POST /api/invites`, `DELETE /api/invites/:code` (team.manage). `/api/auth/invite` and `invite_code` in `/api/me` are removed on purpose. `User.signUp` and `joinOrganization` give the role stored on the code.
+- `User.changeRole` / `removeMember`: no owner rules; an admin may make or remove any admin but not themselves; org-level advisory lock plus an "at least one admin" check (proved red without the lock). `tests/rolesAndInvites.test.js` (26 tests) is green; `tests/helpers.js` `member()` now takes `{ role }` and uses `/api/invites`.
+
+Still to do (33 older tests fail because they assume `owner` or the single invite code; update each test to the new behaviour, do not weaken it): adminOps, archive, audit, auth, billing, import, orgs, pentestFixes, permissions, tenancy, userExport, toolLog tests. Source still mentioning the owner role: `models/AdminOps.js` (changeRole/removeMember, listOrgs `owner_email`, orgDetail ordering; add the last-admin guard there), `models/Billing.js` (`role: "owner"` in `tell` actor), `scripts/import-legacy.js`, and the frontend (`auth.jsx` isOwner, `Team.jsx`, `Layout.jsx` profile-menu invite code + ROLE_LABEL, `Settings.jsx` text, `ChoosePlan.jsx`, `Billing.jsx` wording, `tour.js`).
+
+Not started from the owner's 2026-11-15 list: Settings "People" section with role picker + code list, Organization tab redesign with highlighted plan card and "write to Kaho" box, customer requests table plus admin notification panel and per-org request count, admin pagination and polish, CSV-only storage with renamed bucket and a separate admin bucket, plan-name badge beside the minutes badge. Answers still owed to the owner: why the API key exists (`/api/v1` machine access, org-scoped, hashed, rate-limited), how invites work now, why owner and admin both existed.
+
+
+## Session 2026-11-15 (end): the owner-role merge, requests, CSV storage are DONE
+Supersedes the "IN PROGRESS" entry above. Backend 923 tests, voice 944, frontend and admin tests green; both sites build.
+Done: owner merged into admin; role invites + Settings People; customer requests + admin bell/Requests page/org counts/paging
+on every long list; Studio Organization tab (plan card, Write to Kaho), gold plan badge beside the minutes badge; System check
+accuracy; CSV-only storage with new folder names and a separate admin bucket (`archiveAdmin.js`); `move_storage.mjs` and
+`verify_storage.mjs`. Live rollout (migrations 030/031, new env, bucket copy, restarts) is recorded in the last section below if done.

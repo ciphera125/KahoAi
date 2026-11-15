@@ -22,17 +22,10 @@ export async function requireSession(req, _res, next) {
   }
 }
 
-/** Members do the daily work; the owner alone changes numbers and their
- * credentials, deletes agents and prompts, deletes in bulk and syncs from Plivo. */
-export function requireOwner(req, _res, next) {
-  if (req.user?.role !== "owner") return next(forbidden("only the organization's owner can do this"));
-  next();
-}
-
-/** Owner or admin: numbers and credentials, deleting agents and prompts, bulk
+/** An admin: numbers and credentials, deleting agents and prompts, bulk
  * deletes, syncing from Plivo, invites and removing members. */
 export function requireAdmin(req, _res, next) {
-  if (!["owner", "admin"].includes(req.user?.role)) return next(forbidden("only an admin of this organization can do this"));
+  if (req.user?.role !== "admin") return next(forbidden("only an admin of this organization can do this"));
   next();
 }
 

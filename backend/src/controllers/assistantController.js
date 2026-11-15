@@ -44,7 +44,7 @@ export async function archiveStatus(req, res) {
   const { recordingsConfigured } = await import("../services/storage.js");
   const s = status(req.user.org_id);
   res.json({ configured: recordingsConfigured(), last_run: s.lastRun, last_filed: s.lastFiled, last_error: s.lastError,
-    folders: ["1-recordings", "2-transcripts", "3-users", "4-user-emails", "5-unique-users", ...FOLDERS] });
+    folders: Object.values(FOLDERS) });
 }
 
 export async function health(req, res) {

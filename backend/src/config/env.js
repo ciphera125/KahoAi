@@ -66,7 +66,8 @@ const schema = z.object({
   TOOL_WEBHOOK_URL: z.string().optional(),
   SUPABASE_URL: z.url().or(z.literal("")).optional(),            // call recordings: signed links to the private Storage bucket
   SUPABASE_SECRET_KEY: z.string().optional(),
-  SUPABASE_RECORDINGS_BUCKET: z.string().optional(),
+  SUPABASE_RECORDINGS_BUCKET: z.string().optional(),          // the customers' bucket: recordings, transcripts and each organization's records
+  SUPABASE_ADMIN_BUCKET: z.string().optional(),               // Kaho staff's own records, a separate bucket from the customers'
   RECORDING_RETENTION_DAYS: z.coerce.number().positive().default(60), // cloud copies are deleted after this many days
   RECORDING_RETENTION_INTERVAL_MS: z.coerce.number().int().positive().default(3_600_000),
   ARCHIVE_INTERVAL_MS: z.coerce.number().int().positive().default(300_000), // audit, tool, Builder and call records filed in Storage
@@ -78,7 +79,42 @@ const schema = z.object({
   GROQ_MODEL_ID: z.string().default("openai/gpt-oss-20b"),
   // Publish needs a passing test of the same draft. An admin can still publish over it.
   REQUIRE_AGENT_TEST: bool(true),
+  // Billing. Off only for tests and local trials: with it off no organization is ever locked or metered.
+  BILLING_ENFORCED: bool(true),
+  BILLING_WRITES_PER_HOUR: int(60, 1, 10000),
+  BILLING_INTERVAL_MS: int(3_600_000, 1000, 86_400_000), // how often plans are checked for the end of their month
+  // A new organization starts its plan at once, without an admin confirming payment. Off by default: a plan
+  // is active only when Kaho has been paid (or an admin says so).
+  SUBSCRIPTION_AUTO_ACTIVATE: bool(false),
+  BILLING_PAYMENT_INSTRUCTIONS: z.string().max(600).optional(),  // shown with a plan or top-up request: how to pay
+  STUDIO_URL: z.url().optional(),                                 // where "open as this person" lands; defaults to the first allowed origin
+  // The admin site: its own origin(s), accounts and cookie. Only these e-mails may ever have an admin account,
+  // and a new one needs ADMIN_SIGNUP_CODE as well (an e-mail address is not proof of who is typing it).
+  ADMIN_EMAILS: z.string().default("adityanair5002@gmail.com,aayushimakker10@gmail.com"),
+  ADMIN_ORIGINS: z.string().default("http://localhost:5174"),
+  ADMIN_SIGNUP_CODE: z.string().min(16, "ADMIN_SIGNUP_CODE must be at least 16 characters").optional().or(z.literal("")),
+  ADMIN_AUTH_RATE_LIMIT_PER_MIN: int(10, 1, 1000),
+  ADMIN_RATE_LIMIT_PER_MIN: int(300, 1, 100000),
 });
+
+const LOOPBACK = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+/**
+ * Why these admin-site addresses may not be used, or null. In production they must be https, except on this
+ * machine itself (localhost, 127.0.0.1, [::1]): the Studio is served that way in production mode too, and the hostname is
+ * read by the URL parser, so "localhost.evil.com" and "localhost@evil.com" are not mistaken for it.
+ */
+export function adminOriginsProblem(origins, production) {
+  if (!production) return null;
+  for (const raw of origins) {
+    let url;
+    try { url = new URL(raw); } catch { return `ADMIN_ORIGINS has '${String(raw).slice(0, 60)}', which is not an address`; }
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && LOOPBACK.has(url.hostname) && !url.username && !url.password)) {
+      return "ADMIN_ORIGINS must be https addresses in production (plain http is only allowed on this machine)";
+    }
+  }
+  return null;
+}
 
 function load() {
   const parsed = schema.safeParse(process.env);
@@ -89,6 +125,8 @@ function load() {
   const env = parsed.data;
   const production = env.NODE_ENV === "production";
   if (production && env.PUBLIC_SCHEME !== "https") throw new Error("Bad configuration:\n  PUBLIC_SCHEME must be https in production");
+  const adminProblem = adminOriginsProblem(list(env.ADMIN_ORIGINS), production);
+  if (adminProblem) throw new Error(`Bad configuration:\n  ${adminProblem}`);
   const origins = list(env.ALLOWED_ORIGINS);
   const hosts = env.ALLOWED_HOSTS ? list(env.ALLOWED_HOSTS)
     : [`localhost:${env.PORT}`, `127.0.0.1:${env.PORT}`, ...origins.map((o) => new URL(o).host)];
@@ -97,6 +135,11 @@ function load() {
     production,
     origins,
     hosts,
+    adminEmails: list(env.ADMIN_EMAILS).map((e) => e.toLowerCase()),
+    adminOrigins: list(env.ADMIN_ORIGINS),
+    adminHosts: [...new Set([...(env.ALLOWED_HOSTS ? list(env.ALLOWED_HOSTS) : [`localhost:${env.PORT}`, `127.0.0.1:${env.PORT}`]),
+      ...list(env.ADMIN_ORIGINS).map((o) => new URL(o).host)])],
+    studioUrl: env.STUDIO_URL ?? origins[0],
     trustProxy: bool(false).parse(env.TRUST_PROXY),
     cookieSecure: bool(production).parse(env.COOKIE_SECURE),
   };

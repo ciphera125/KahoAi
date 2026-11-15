@@ -3,6 +3,7 @@
 import { pageNumber } from "../utils/paging.js";
 import { inOrg } from "../db/pool.js";
 import { ValidationError } from "../utils/errors.js";
+import { day } from "../utils/days.js";
 
 export const PAGE_SIZES = [10, 25, 50];
 const clean = (text, n) => String(text ?? "").split(/\s+/).filter(Boolean).join(" ").slice(0, n);
@@ -14,21 +15,6 @@ export async function record(orgId, { actor, role, action, detail, ref = null })
 
 const like = (q) => `%${String(q).replace(/[\\%_]/g, "\\$&")}%`;
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
-/** On the calendar: 2026-02-31 is not a day, though Date.parse rolls it into March. */
-function isRealDay(raw) {
-  const [y, m, d] = raw.split("-").map(Number);
-  const t = new Date(Date.UTC(y, m - 1, d));
-  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d && y >= 1900;
-}
-/** A day typed as YYYY-MM-DD (India time), or null. Anything else is refused. */
-function day(raw, label) {
-  if (raw === undefined || raw === null || raw === "") return null;
-  if (typeof raw !== "string" || !DAY.test(raw) || !isRealDay(raw)) {
-    throw new ValidationError(`${label} must be a day like 2026-11-14`);
-  }
-  return raw;
-}
 // The days are India's, since that is where the people reading the log are.
 const range = (a, b) => `($${a}::date IS NULL OR (at AT TIME ZONE 'Asia/Kolkata')::date >= $${a}::date) AND ($${b}::date IS NULL OR (at AT TIME ZONE 'Asia/Kolkata')::date <= $${b}::date)`;
 

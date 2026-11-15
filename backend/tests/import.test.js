@@ -37,7 +37,7 @@ describe("importing the Python Studio", () => {
     expect(r.counts).toMatchObject({ users: 1, agents: 1, prompts: 1, contacts: 1, tags: 1, numbers: 1, transcripts: 1 });
     const b = browser();
     expect((await b.post("/api/auth/login").send({ email: "old@acme.in", password: "legacy pass" })).status).toBe(200);
-    expect((await b.get("/api/me")).body).toMatchObject({ org_name: "Old Co", role: "owner" });
+    expect((await b.get("/api/me")).body).toMatchObject({ org_name: "Old Co", role: "admin" });
     expect((await b.get("/api/contacts")).body.contacts.map((c) => c.name)).toEqual(["Asha"]);
     expect((await b.get("/api/agents")).body.map((a) => a.name)).toEqual(["Main line"]);
     const { rows } = await db.query("SELECT DISTINCT org_id FROM contacts UNION SELECT DISTINCT org_id FROM agents UNION SELECT org_id FROM calls");
@@ -52,7 +52,7 @@ describe("importing the Python Studio", () => {
     const again = await importLegacy({ ...files, orgId });
     expect(again.counts).toEqual({});
     expect((await b.get("/api/contacts")).body.contacts.map((c) => c.name)).toEqual(["Asha"]);
-    expect((await b.get("/api/team")).body.map((u) => [u.name, u.role])).toEqual([["Asha Rao", "owner"], ["Old", "admin"]]);
+    expect((await b.get("/api/team")).body.map((u) => [u.name, u.role])).toEqual([["Asha Rao", "admin"], ["Old", "admin"]]);
   });
 
   it("refuses an organization that does not exist", async () => {

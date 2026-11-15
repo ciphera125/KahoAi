@@ -10,7 +10,7 @@ describe("the audit log", () => {
     const r = await b.get("/api/audit");
     expect(r.status).toBe(200);
     expect(r.body.total).toBeGreaterThan(0);
-    expect(r.body.entries[0]).toMatchObject({ actor: expect.any(String), role: "owner", action: "agent",
+    expect(r.body.entries[0]).toMatchObject({ actor: expect.any(String), role: "admin", action: "agent",
       detail: expect.stringMatching(/Created the agent Ria/) });
   });
 
@@ -18,7 +18,7 @@ describe("the audit log", () => {
     const b = await owner();
     const org = (await db.query("SELECT id FROM organizations LIMIT 1")).rows[0].id;
     const { record } = await import("../src/models/Audit.js");
-    for (let i = 0; i < 260; i++) await record(org, { actor: "A", role: "owner", action: "agent", detail: `change ${i}` });
+    for (let i = 0; i < 260; i++) await record(org, { actor: "A", role: "admin", action: "agent", detail: `change ${i}` });
     expect((await b.get("/api/audit?per_page=10")).body.total).toBe(260);
   });
 
@@ -87,9 +87,9 @@ describe("what the audit log catches", () => {
     expect(text).not.toContain(key.key);
   });
 
-  it("records a renewed invite code", async () => {
+  it("records a made invite code", async () => {
     const b = await owner();
-    await b.post("/api/auth/invite").send({});
+    await b.post("/api/invites").send({ role: "viewer" });
     expect(await log(b)).toMatch(/invite code/i);
   });
 
@@ -98,14 +98,14 @@ describe("what the audit log catches", () => {
     const { db } = await import("./helpers.js");
     const org = (await db.query("SELECT id FROM organizations LIMIT 1")).rows[0].id;
     const { record } = await import("../src/models/Audit.js");
-    await record(org, { actor: "Asha", role: "owner", action: "agent", detail: "old change" });
-    await record(org, { actor: "Asha", role: "owner", action: "agent", detail: "new change" });
+    await record(org, { actor: "Asha", role: "admin", action: "agent", detail: "old change" });
+    await record(org, { actor: "Asha", role: "admin", action: "agent", detail: "new change" });
     await db.query("UPDATE audit_log SET at = '2026-01-10T06:00:00Z' WHERE detail = 'old change'");
     const only = (await b.get("/api/audit?per_page=50&from=2026-01-10&to=2026-01-10")).body;
     expect(only.entries.map((e) => e.detail)).toEqual(["old change"]);
     const csv = (await b.get("/api/audit.csv?from=2026-01-10&to=2026-01-10")).text;
     expect(csv.split("\r\n")[0]).toBe("date,time,who,role,what,detail");
-    expect(csv).toContain("2026-01-10,11:30,Asha,owner,agent,old change");
+    expect(csv).toContain("2026-01-10,11:30,Asha,admin,agent,old change");
     expect(csv).not.toContain("new change");
     expect((await b.get("/api/audit?from=not-a-date")).status).toBe(400);
   });

@@ -13,12 +13,12 @@ describe("organizations", () => {
     await b.post("/api/contacts").send({ name: "Asha in Acme", numbers: ["9876543210"] });
     const r = await b.post("/api/orgs").send({ name: "Acme staging" });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ name: "Acme staging", role: "owner" });
+    expect(r.body).toMatchObject({ name: "Acme staging", role: "admin" });
     const me = (await b.get("/api/me")).body;
-    expect(me).toMatchObject({ org_name: "Acme staging", role: "owner" });
+    expect(me).toMatchObject({ org_name: "Acme staging", role: "admin" });
     expect(await names(b)).toEqual([]);
     const list = (await b.get("/api/orgs")).body;
-    expect(list.map((o) => [o.name, o.role, o.current])).toEqual([["Acme", "owner", false], ["Acme staging", "owner", true]]);
+    expect(list.map((o) => [o.name, o.role, o.current])).toEqual([["Acme", "admin", false], ["Acme staging", "admin", true]]);
   });
 
   it("switching back shows that organization's data again, and sign-in lands on the last one used", async () => {
@@ -47,30 +47,30 @@ describe("organizations", () => {
   it("a signed-in person joins another organization with its invite code, as a member there", async () => {
     const acme = await owner();
     const other = await owner({ name: "Ravi", email: "ravi@other.in", organization: "Other" });
-    const code = (await acme.get("/api/me")).body.invite_code;
+    const code = (await acme.post("/api/invites").send({ role: "viewer" })).body.code;
     const r = await other.post("/api/orgs/join").send({ invite: code });
     expect(r.status).toBe(200);
     expect((await other.get("/api/me")).body).toMatchObject({ org_name: "Acme", role: "viewer" });
     // A member there: admin-only things are refused, in that organization only.
     expect((await other.post("/api/numbers").send({ provider: "plivo", number: "+918065520552", credentials: {} })).status).toBe(403);
-    expect((await acme.get("/api/team")).body.map((u) => [u.name, u.role])).toEqual([["Asha Rao", "owner"], ["Ravi", "viewer"]]);
-    // Still the owner of their own.
+    expect((await acme.get("/api/team")).body.map((u) => [u.name, u.role])).toEqual([["Asha Rao", "admin"], ["Ravi", "viewer"]]);
+    // Still the admin of their own.
     const own = (await other.get("/api/orgs")).body.find((o) => o.name === "Other");
     await other.post(`/api/orgs/${own.id}/switch`);
-    expect((await other.get("/api/me")).body.role).toBe("owner");
+    expect((await other.get("/api/me")).body.role).toBe("admin");
     expect((await other.post("/api/orgs/join").send({ invite: code })).status).toBe(403); // used once
   });
 
   it("removing someone from one organization leaves their account and their other organizations", async () => {
     const acme = await owner();
     const other = await owner({ name: "Ravi", email: "ravi@other.in", organization: "Other" });
-    await other.post("/api/orgs/join").send({ invite: (await acme.get("/api/me")).body.invite_code });
+    await other.post("/api/orgs/join").send({ invite: (await acme.post("/api/invites").send({ role: "viewer" })).body.code });
     const ravi = (await acme.get("/api/team")).body.find((u) => u.name === "Ravi");
     expect((await acme.delete(`/api/team/${ravi.id}`)).status).toBe(200);
     expect((await acme.get("/api/team")).body.map((u) => u.name)).toEqual(["Asha Rao"]);
     const back = browser();
     await back.post("/api/auth/login").send({ email: "ravi@other.in", password: "correct horse" });
-    expect((await back.get("/api/me")).body).toMatchObject({ org_name: "Other", role: "owner" });
+    expect((await back.get("/api/me")).body).toMatchObject({ org_name: "Other", role: "admin" });
   });
 
   it("a member made in an organization by invite still works as before", async () => {

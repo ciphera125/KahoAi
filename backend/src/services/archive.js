@@ -1,11 +1,14 @@
-// Filing the platform's records in Supabase Storage, beside the call recordings but each in its own
-// folder of the same private bucket:
+// Filing each organization's records in Supabase Storage, in its own bucket, as spreadsheets (CSV) only: they open
+// in Excel, Numbers or Google Sheets, and every folder and column is named for what it holds.
 //
-//   6-audit-logs/<organization>/<year>/<month>/<day>.jsonl       who changed what
-//   7-tool-logs/<organization>/<year>/<month>/<day>.jsonl        tools made or changed, and every tool call
-//   8-builder-history/<organization>/<year>/<month>/<day>.jsonl  what Kaho Builder was asked
-//   9-call-records/<day>_<time>_<id>.json                        one record per finished call
-// (1-recordings, 2-transcripts and 3 to 5, the people, are filed by callFiles.js and archiveUsers.js.)
+//   who-changed-what/<organization>/<year>/<month>/<day>.csv         who changed what
+//   agent-tool-activity/<organization>/<year>/<month>/<day>.csv      tools made or changed, and every tool call
+//   kaho-builder-requests/<organization>/<year>/<month>/<day>.csv    what Kaho Builder was asked
+//   call-log/<organization>/<year>/<month>/<day>.csv                 one row per finished call
+//   call-answers/<organization>/<year>/<month>/<day>.csv             what was saved on calls
+//   topups-and-minutes/<organization>/<year>/<month>/<day>.csv       every top-up request, decision and credit of the minute wallet
+// (call-recordings and call-transcripts are filed by callFiles.js. The platform's own records, kept for
+// Kaho staff, are in the separate admin bucket: archiveAdmin.js.)
 // Nothing here carries a person's name, phone number or e-mail: see redact.js.
 //
 // Storage cannot append, so a day's file is rewritten whole from the database (the record of truth)
@@ -14,16 +17,19 @@
 // path. A refusal from Storage is counted, shown in the Studio's Error Logs, and retried next pass.
 import { systemQuery } from "../db/pool.js";
 import { logger } from "../utils/logger.js";
+import { sheet, stamp } from "../utils/csv.js";
 import * as Call from "../models/Call.js";
 import * as CallAnswer from "../models/CallAnswer.js";
 import * as ErrorLog from "../models/ErrorLog.js";
 import { redactPII } from "../models/redact.js";
-import { fileStem } from "../models/transcriptText.js";
-import { putText, recordingsConfigured } from "./storage.js";
+import { putCsv, recordingsConfigured } from "./storage.js";
 
-export const FOLDERS = ["6-audit-logs", "7-tool-logs", "8-builder-history", "9-call-records"];
+/** Where each kind of record lives in the customers' bucket. */
+export const FOLDERS = { recordings: "call-recordings", transcripts: "call-transcripts", changes: "who-changed-what", tools: "agent-tool-activity",
+  builder: "kaho-builder-requests", calls: "call-log", answers: "call-answers", topups: "topups-and-minutes" };
+/** And in the admin bucket. */
+export const ADMIN_FOLDERS = { activity: "admin-activity", organizations: "organizations", requests: "customer-requests", topups: "all-topups", people: "people" };
 const DAY_MS = 86_400_000;
-const CALLS_PER_PASS = 200;
 
 /** A moment's calendar day in India, as 2026-11-08. */
 export const istDay = (when = new Date()) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(when);
@@ -34,33 +40,89 @@ const blank = { lastRun: null, lastError: null, lastFiled: 0 };
 /** The last pass: one organization's own, or (no argument) the whole timer's, for tests and logs. */
 export const status = (org) => ({ ...(org ? (perOrg.get(org) ?? blank) : state) });
 
-const ROLLUPS = {
-  "6-audit-logs": async (org, since) => (await systemQuery(
-    "SELECT at, actor, role, action, detail, ref FROM audit_log WHERE org_id = $1 AND at >= $2 ORDER BY at, id", [org, since])).rows,
-  "8-builder-history": async (org, since) => (await systemQuery(
-    `SELECT id, at, agent_id, prompt, reply, outcome, kind, names, edited_from FROM builder_history
-      WHERE org_id = $1 AND at >= $2 ORDER BY at, id`, [org, since])).rows
-    .map((r) => ({ ...r, prompt: redactPII(r.prompt), reply: redactPII(r.reply) })),
-  "7-tool-logs": async (org, since) => {
-    const changes = (await systemQuery(
-      `SELECT at, actor, role, action, source, kind, tool_name, tool_label, agent_id, history_id, detail FROM tool_log
-        WHERE org_id = $1 AND at >= $2 ORDER BY at, id`, [org, since])).rows.map((r) => ({ type: "change", ...r }));
-    const calls = (await systemQuery(
-      `SELECT e.at, e.call_id, e.name, e.event, e.ok, e.secs, e.turn, e.text FROM call_events e
-        WHERE e.org_id = $1 AND e.event IN ('tool', 'tool_rejected') AND e.at >= $2 ORDER BY e.at, e.id`, [org, since]))
-      .rows.map((r) => ({ type: "call", at: r.at, call_id: r.call_id, tool: r.name, event: r.event, ok: r.ok, secs: r.secs, turn: r.turn, result: redactPII(r.text) }));
-    return [...changes, ...calls].sort((a, b) => new Date(a.at) - new Date(b.at));
-  },
-};
+const yn = (v) => (v ? "yes" : "no");
+const list = (v) => (Array.isArray(v) ? v.join("; ") : (v ?? ""));
 
-function jsonLine(row) {
-  return JSON.stringify({ ...row, at: row.at instanceof Date ? row.at.toISOString() : row.at });
-}
+// Each kind: its folder, its columns in plain words, and the rows (each with an `at` that decides the day it is filed under).
+const ROLLUPS = {
+  changes: { head: ["When (IST)", "Who", "Their role", "What kind of change", "What happened", "Related item"],
+    rows: async (org, since) => (await systemQuery(
+      "SELECT at, actor, role, action, detail, ref FROM audit_log WHERE org_id = $1 AND at >= $2 ORDER BY at, id", [org, since])).rows,
+    line: (r) => [stamp(r.at), r.actor, r.role, r.action, r.detail, r.ref] },
+  builder: { head: ["When (IST)", "Agent", "What was asked", "What Kaho Builder answered", "Outcome", "Kind", "Names used", "Edited from"],
+    rows: async (org, since) => (await systemQuery(
+      `SELECT id, at, agent_id, prompt, reply, outcome, kind, names, edited_from FROM builder_history
+        WHERE org_id = $1 AND at >= $2 ORDER BY at, id`, [org, since])).rows
+      .map((r) => ({ ...r, prompt: redactPII(r.prompt), reply: redactPII(r.reply) })),
+    line: (r) => [stamp(r.at), r.agent_id, r.prompt, r.reply, r.outcome, r.kind, list(r.names), r.edited_from] },
+  // One row per event, each in the day it happened: a request is filed on the day it was asked for and its
+  // confirmation on the day it was decided, so rewriting a day's file never loses what an earlier day held.
+  // The people are ids ("kaho-staff" for an admin), and free text goes through the same redaction as the rest.
+  topups: { head: ["When (IST)", "What happened", "Reference", "Minutes", "Price per minute (paise)", "Amount (paise)", "By", "Note"],
+    rows: async (org, since) => {
+      const events = (await systemQuery(
+        `SELECT created_at AS at, 'requested' AS event, id, minutes, rate_paise, amount_paise, reference, requested_by AS by, NULL::text AS note
+           FROM topups WHERE org_id = $1 AND created_at >= $2
+         UNION ALL
+         SELECT decided_at, CASE status WHEN 'paid' THEN 'paid and minutes added' WHEN 'cancelled' THEN 'withdrawn' ELSE status END, id, minutes, rate_paise, amount_paise, reference,
+           CASE WHEN decided_by = 'requester' THEN requested_by ELSE 'kaho-staff' END, note
+           FROM topups WHERE org_id = $1 AND decided_at IS NOT NULL AND decided_at >= $2`, [org, since])).rows
+        .map((r) => ({ at: r.at, what: r.event === "requested" ? "requested" : r.event, ref: r.reference, minutes: r.minutes, rate: r.rate_paise, amount: Number(r.amount_paise), by: r.by, note: r.note ? redactPII(r.note) : "" }));
+      const credits = (await systemQuery(
+        `SELECT at, kind, minutes, note FROM minute_ledger WHERE org_id = $1 AND kind <> 'usage' AND at >= $2 ORDER BY at, id`, [org, since])).rows
+        .map((r) => ({ at: r.at, what: `minutes ${r.kind === "plan" ? "from the plan" : r.kind === "topup" ? "added by a top-up" : "adjusted by Kaho"}`, ref: "", minutes: r.minutes, rate: "", amount: "", by: "", note: r.note ? redactPII(r.note) : "" }));
+      return [...events, ...credits].sort((a, b) => new Date(a.at) - new Date(b.at));
+    },
+    line: (r) => [stamp(r.at), r.what, r.ref, r.minutes, r.rate, r.amount, r.by, r.note] },
+  tools: { head: ["When (IST)", "Kind", "Who or which call", "What", "Tool", "Worked", "Seconds", "Turn", "Detail or result"],
+    rows: async (org, since) => {
+      const changes = (await systemQuery(
+        `SELECT at, actor, role, action, source, kind, tool_name, tool_label, detail FROM tool_log
+          WHERE org_id = $1 AND at >= $2 ORDER BY at, id`, [org, since])).rows
+        .map((r) => ({ at: r.at, kind: "tool change", who: `${r.actor ?? ""}${r.role ? ` (${r.role})` : ""}`, what: r.action, tool: r.tool_label || r.tool_name || "", ok: "", secs: "", turn: "", detail: r.detail }));
+      const calls = (await systemQuery(
+        `SELECT e.at, e.call_id, e.name, e.event, e.ok, e.secs, e.turn, e.text FROM call_events e
+          WHERE e.org_id = $1 AND e.event IN ('tool', 'tool_rejected') AND e.at >= $2 ORDER BY e.at, e.id`, [org, since])).rows
+        .map((r) => ({ at: r.at, kind: "tool call", who: r.call_id, what: r.event === "tool_rejected" ? "refused" : "ran", tool: r.name, ok: r.ok === null ? "" : yn(r.ok), secs: r.secs ?? "", turn: r.turn ?? "", detail: redactPII(r.text) }));
+      return [...changes, ...calls].sort((a, b) => new Date(a.at) - new Date(b.at));
+    },
+    line: (r) => [stamp(r.at), r.kind, r.who, r.what, r.tool, r.ok, r.secs, r.turn, r.detail] },
+  // One row per finished call, filed under the day it ended. Nothing says who the person was: only the last four digits of their number.
+  calls: { head: ["Call", "Started (IST)", "Ended (IST)", "Agent", "Direction", "Outcome", "Reason it ended", "Length (seconds)", "Number (last 4 digits)", "Summary", "Lead saved", "Cost"],
+    rows: async (org, since) => {
+      const { rows } = await systemQuery(
+        `SELECT call_id, peer, direction, status, cause, cost, started_at, ended_at, duration_secs, summary, lead FROM calls
+          WHERE org_id = $1 AND ended_at IS NOT NULL AND ended_at >= $2 ORDER BY ended_at, call_id`, [org, since]);
+      const out = [];
+      for (const r of rows) {
+        const meta = await Call.forFiles(org, r.call_id).catch(() => ({}));
+        out.push({ ...r, at: r.ended_at, agent: meta.agent ?? "", summary: redactPII(r.summary ?? "", { names: [meta.name] }) });
+      }
+      return out;
+    },
+    line: (r) => [r.call_id, stamp(r.started_at), stamp(r.ended_at), r.agent, r.direction, r.status, r.cause, r.duration_secs, String(r.peer ?? "").replace(/\D/g, "").slice(-4), r.summary, yn(r.lead), r.cost] },
+  answers: { head: ["Call", "Saved at (IST)", "Question", "Answer", "What the caller said"],
+    rows: async (org, since) => {
+      const { rows } = await systemQuery(
+        `SELECT call_id FROM calls WHERE org_id = $1 AND ended_at IS NOT NULL AND ended_at >= $2 ORDER BY ended_at, call_id`, [org, since]);
+      const out = [];
+      for (const { call_id: id } of rows) {
+        const meta = await Call.forFiles(org, id).catch(() => ({}));
+        for (const a of await CallAnswer.forCall(org, id).catch(() => [])) {
+          const clean = (t) => redactPII(t ?? "", { names: [meta.name] });
+          out.push({ at: a.at ?? a.created_at ?? meta.startedAt, call: id, label: a.label || a.field_key, value: clean(a.value), raw: clean(a.raw_text) });
+        }
+      }
+      return out;
+    },
+    line: (r) => [r.call, stamp(r.at), r.label, r.value, r.raw] },
+};
 
 /** One kind of record for one organization: a file per day, each rewritten whole. */
 async function fileRollup(kind, org, now, days) {
+  const spec = ROLLUPS[kind];
   const first = istDay(new Date(now.getTime() - (days - 1) * DAY_MS)); // the whole of the oldest day, never half of it
-  const rows = await ROLLUPS[kind](org, new Date(`${first}T00:00:00+05:30`));
+  const rows = await spec.rows(org, new Date(`${first}T00:00:00+05:30`));
   const byDay = new Map();
   for (const row of rows) {
     const day = istDay(new Date(row.at));
@@ -68,52 +130,9 @@ async function fileRollup(kind, org, now, days) {
   }
   let filed = 0;
   let failed = 0;
-  for (const [day, list] of byDay) {
-    const path = `${kind}/${org}/${day.slice(0, 4)}/${day.slice(5, 7)}/${day}.jsonl`;
-    if (await putText(path, `${list.map(jsonLine).join("\n")}\n`)) filed++; else failed++;
-  }
-  return { filed, failed };
-}
-
-/** A finished call as one record: when, how long, how it went, what was said and which tools ran, and
- * nothing that says who the person was. Only the last four digits of their number are kept. */
-async function callRecord(org, callId) {
-  const meta = await Call.forFiles(org, callId);
-  const { rows: [row] } = await systemQuery(
-    `SELECT peer, direction, status, cause, cost, started_at, ended_at, duration_secs, summary, lead, agent_version
-       FROM calls WHERE call_id = $1 AND org_id = $2`, [callId, org]);
-  const names = [meta.name];
-  const clean = (t) => redactPII(t, { names });
-  const turns = (await Call.turns(org, callId).catch(() => [])).map((t) => ({ ...t, text: redactPII(t.text, { names, selfIntro: t.role !== "agent" }) }));
-  const answers = (await CallAnswer.forCall(org, callId)).map((a) => ({ ...a, value: clean(a.value), raw_text: clean(a.raw_text) }));
-  const tools = (await systemQuery(
-    `SELECT at, name, event, ok, secs, turn, text FROM call_events WHERE call_id = $1 AND org_id = $2
-       AND event IN ('tool', 'tool_rejected') ORDER BY id`, [callId, org])).rows
-    .map((t) => ({ at: t.at?.toISOString?.() ?? null, name: t.name, event: t.event, ok: t.ok, secs: t.secs, turn: t.turn, result: clean(t.text) }));
-  const { peer, ...rest } = row;
-  return { record: { call_id: callId, agent: meta.agent, agent_id: meta.agentId, ...rest, summary: clean(row.summary),
-    caller_number_last4: String(peer ?? "").replace(/\D/g, "").slice(-4) || null,
-    started_at: row.started_at?.toISOString?.() ?? null, ended_at: row.ended_at?.toISOString?.() ?? null, turns, tools, answers },
-  path: `9-call-records/${fileStem({ startedAt: meta.startedAt, callId, anonymous: true })}.json` };
-}
-
-async function fileCalls(org) {
-  const { rows } = await systemQuery(
-    `SELECT call_id FROM calls WHERE org_id = $1 AND ended_at IS NOT NULL AND archived_at IS NULL
-      ORDER BY ended_at LIMIT ${CALLS_PER_PASS}`, [org]);
-  let filed = 0;
-  let failed = 0;
-  for (const { call_id: id } of rows) {
-    try {
-      const { record, path } = await callRecord(org, id);
-      if (await putText(path, JSON.stringify(record, null, 1))) {
-        await systemQuery("UPDATE calls SET archive_path = $2, archived_at = now() WHERE call_id = $1", [id, path]);
-        filed++;
-      } else failed++;
-    } catch (err) {
-      failed++;
-      logger.warn({ err: String(err?.message ?? err).slice(0, 200), call: id }, "could not build a call's record");
-    }
+  for (const [day, items] of byDay) {
+    const path = `${FOLDERS[kind]}/${org}/${day.slice(0, 4)}/${day.slice(5, 7)}/${day}.csv`;
+    if (await putCsv(path, sheet(spec.head, items.map(spec.line)))) filed++; else failed++;
   }
   return { filed, failed };
 }
@@ -139,8 +158,6 @@ export async function archiveOnce({ days = 2, now = new Date(), orgId = null } =
           const r = await fileRollup(kind, org, now, days);
           filed += r.filed; orgFailed += r.failed;
         }
-        const c = await fileCalls(org);
-        filed += c.filed; orgFailed += c.failed;
       } catch (err) {
         orgFailed++;
         logger.error({ err: String(err?.message ?? err).slice(0, 200), org }, "filing records failed");

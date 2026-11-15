@@ -40,12 +40,21 @@ _FAILED_FLAGS = ("ok", "saved", "added", "moved", "done")
 
 
 def tool_succeeded(result) -> bool:
-    """False when the tool says it could not do what was asked."""
+    """False when the tool says it could not do what was asked.
+
+    `what_to_do` on its own is a tool saying it could not (the line the agent reads out). A lookup
+    that ran carries `found`: with it, `what_to_do` is advice that rides along with a good answer
+    ("answer only from these passages") or with an empty one ("say you are not sure"), and neither
+    is a broken tool. Reading it as one recorded every successful document search as failed."""
     if not isinstance(result, dict):
         return True
-    if "error" in result or "what_to_do" in result:
+    if "error" in result:
         return False
-    return all(result.get(flag) is not False for flag in _FAILED_FLAGS)
+    if any(result.get(flag) is False for flag in _FAILED_FLAGS):
+        return False
+    if "found" in result:
+        return True
+    return "what_to_do" not in result
 
 
 class CallTranscript:

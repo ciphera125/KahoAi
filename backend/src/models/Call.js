@@ -1,11 +1,14 @@
 // Calls: how each one ended and what its transcript says.
 import { pageNumber } from "../utils/paging.js";
 import { deliverCallCompleted } from "../services/webhook.js";
+import { settleUsage } from "./Billing.js";
 import { createHash } from "node:crypto";
 import { asSystem, inOrg } from "../db/pool.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { blankDigits, maskForAudit, maskSensitive } from "../utils/masking.js";
 import { TOOL_CATALOG } from "./toolCatalog.js";
+import { labelsFor as customToolLabels } from "./CustomTool.js";
+import { day, endOfDay, startOfDay } from "../utils/days.js";
 import { AGENT_ID, CALL_ID, normalizeNumber } from "../utils/phone.js";
 
 export const STATUSES = ["ringing", "answered", "declined", "no_answer", "failed"];
@@ -73,6 +76,7 @@ export async function recordOutcome(callId, fields, { orgId = null } = {}) {
     [callId, org, ...cols.map((c) => clean[c])]);
     await db.query("UPDATE call_events e SET org_id = c.org_id FROM calls c WHERE c.call_id = $1 AND e.call_id = c.call_id AND e.org_id IS NULL", [callId]);
   });
+  await settleUsage(callId); // its minutes, once; never raises
 }
 
 export async function countsByAgent(orgId) {
@@ -102,6 +106,14 @@ const when = (raw) => {
   const d = raw ? new Date(String(raw)) : new Date();
   return Number.isNaN(d.getTime()) ? new Date() : d;
 };
+
+/** The tool's own words say it ran a lookup ("found": true or false) and did not fail. */
+function ranLookup(text) {
+  try {
+    const result = JSON.parse(text).result;
+    return typeof result?.found === "boolean" && !("error" in result);
+  } catch { return false; }
+}
 
 function leadSaved(e) {
   if (e.name !== "capture_lead") return false;
@@ -144,6 +156,9 @@ export async function ingest(callId, events) {
         secs = Number.isFinite(Number(e.seconds)) ? Number(e.seconds) : null;
         turn = Number.isInteger(e.turn) ? e.turn : null;
         ok = typeof e.ok === "boolean" ? e.ok : null;
+        // A document lookup says it ran with `found`, whether it found something or nothing. Older voice services
+        // wrote ok:false for it (the advice that rides along was read as an error), so it is set right here.
+        if (ok === false && ranLookup(text)) ok = true;
         count = () => { call.lead = call.lead || leadSaved(e); };
       } else if (event === "tool_rejected") {
         // The tool the model tried to call when the provider refused the turn: the one
@@ -176,6 +191,7 @@ export async function ingest(callId, events) {
       call.caller_turns, call.lead, call.summary, call.has_transcript, duration, call.agent_version ?? null]);
     await db.query("SELECT pg_notify('call_events', $1)", [callId]); // delivered on commit
   });
+  await settleUsage(callId); // a call's own start and end give its length too
   // A summary is the last thing a call writes. Sending is off the call path and never raises.
   if (events.some((e) => e?.event === "summary")) setImmediate(() => deliverCallCompleted(callId));
 }
@@ -267,51 +283,56 @@ function asToolCall(row, labels) {
   };
 }
 
+export const MAX_TOOL_ROWS = 500;
+
 /**
  * Every tool call, as Call > Turn > Tool call. Grouped here rather than in the page, so
- * the same shape serves the history and one call's own view.
+ * the same shape serves the history and one call's own view. `total` is how many calls match
+ * the filters, `shown` how many are returned (the newest `limit`), and `tools` every tool this
+ * organization's calls have ever used, whatever is filtered, so a filter can be changed back.
  */
-export async function toolCalls(orgId, { limit = 50, tool = null, status = null, agentId = null,
+export async function toolCalls(orgId, { limit = 100, tool = null, status = null, agentId = null,
   contact = null, from = null, to = null } = {}) {
-  const n = Math.min(Math.max(1, Number(limit) || 50), 200);
+  const n = Math.min(Math.max(1, Number(limit) || 100), MAX_TOOL_ROWS);
+  if (status && !["worked", "failed"].includes(status)) throw new ValidationError("status must be worked or failed");
+  const first = day(from, "from"); const last = day(to, "to");
+  if (first && last && first > last) throw new ValidationError("'from' is after 'to'");
   const where = ["e.org_id = $1", "e.event IN ('tool', 'tool_rejected')"];
   const params = [orgId];
   const at = () => "$" + params.length;
-  if (tool) { params.push(String(tool)); where.push(`e.name = ${at()}`); }
+  if (tool) { params.push(String(tool).slice(0, 60)); where.push(`e.name = ${at()}`); }
   if (status === "failed") where.push("(e.ok IS FALSE OR e.event = 'tool_rejected')");
   if (status === "worked") where.push("(e.ok IS NOT FALSE AND e.event = 'tool')");
   if (agentId) { params.push(String(agentId)); where.push(`c.agent_id = ${at()}`); }
   if (contact) {
-    params.push(`%${String(contact)}%`);
+    params.push(`%${String(contact).replace(/[\\%_]/g, "\\$&").slice(0, 100)}%`);
     where.push(`(ct.name ILIKE ${at()} OR c.peer ILIKE ${at()})`);
   }
-  if (from) { params.push(new Date(`${from}T00:00:00Z`)); where.push(`e.at >= ${at()}`); }
-  if (to) { params.push(new Date(`${to}T23:59:59Z`)); where.push(`e.at <= ${at()}`); }
+  // India's days, like the dashboard and the audit log: a call at 01:30 on the 9th is on the 9th.
+  if (first) { params.push(startOfDay(first)); where.push(`e.at >= ${at()}`); }
+  if (last) { params.push(endOfDay(last)); where.push(`e.at <= ${at()}`); }
   params.push(n);
   const limitAt = at();
 
-  const { rows } = await inOrg(orgId, (db) => db.query(
-    `SELECT e.id, e.call_id, e.at, e.name, e.text, e.secs, e.ok, e.turn, e.event,
-       c.peer, c.agent_id, c.agent_version, c.started_at, a.name AS agent_name, ct.name AS contact_name
-     FROM call_events e
-     JOIN calls c ON c.call_id = e.call_id AND c.org_id = e.org_id
-     LEFT JOIN agents a ON a.id = c.agent_id AND a.org_id = c.org_id
-     LEFT JOIN contact_numbers cn ON cn.number = c.peer AND cn.org_id = c.org_id
-     LEFT JOIN contacts ct ON ct.id = cn.contact_id AND ct.org_id = c.org_id
-     WHERE ${where.join(" AND ")} ORDER BY e.id DESC LIMIT ${limitAt}`, params));
+  const { rows, tools } = await inOrg(orgId, async (db) => ({
+    rows: (await db.query(
+      `SELECT e.id, e.call_id, e.at, e.name, e.text, e.secs, e.ok, e.turn, e.event, count(*) OVER () AS total,
+         c.peer, c.agent_id, c.agent_version, c.started_at, a.name AS agent_name, ct.name AS contact_name,
+         -- what the caller said just before, by order, not by a count that drifts when a spoken number is joined into one line
+         (SELECT u.text FROM call_events u WHERE u.call_id = e.call_id AND u.org_id = e.org_id AND u.event = 'turn'
+            AND u.role = 'user' AND u.id < e.id ORDER BY u.id DESC LIMIT 1) AS said
+       FROM call_events e
+       JOIN calls c ON c.call_id = e.call_id AND c.org_id = e.org_id
+       LEFT JOIN agents a ON a.id = c.agent_id AND a.org_id = c.org_id
+       LEFT JOIN contact_numbers cn ON cn.number = c.peer AND cn.org_id = c.org_id
+       LEFT JOIN contacts ct ON ct.id = cn.contact_id AND ct.org_id = c.org_id
+       WHERE ${where.join(" AND ")} ORDER BY e.id DESC LIMIT ${limitAt}`, params)).rows,
+    tools: (await db.query(`SELECT DISTINCT name FROM call_events WHERE org_id = $1 AND event IN ('tool', 'tool_rejected')
+      AND name IS NOT NULL ORDER BY name`, [orgId])).rows.map((r) => r.name),
+  }));
 
-  // What the caller said on each turn, so a tool call can be read in context.
-  const callIds = [...new Set(rows.map((r) => r.call_id))];
-  const said = new Map();
-  if (callIds.length) {
-    const { rows: turns } = await inOrg(orgId, (db) => db.query(
-      `SELECT call_id, text, row_number() OVER (PARTITION BY call_id ORDER BY id) AS turn
-       FROM call_events WHERE org_id = $1 AND call_id = ANY($2) AND event = 'turn' AND role = 'user'`,
-      [orgId, callIds]));
-    for (const t of turns) said.set(`${t.call_id}:${t.turn}`, t.text);
-  }
-
-  const labels = Object.fromEntries(TOOL_CATALOG.map((t) => [t.name, t.label]));
+  const labels = { ...Object.fromEntries(TOOL_CATALOG.map((t) => [t.name, t.label])), ...(await customToolLabels(orgId)) };
+  const total = rows.length ? Number(rows[0].total) : 0;
   const byCall = new Map();
   for (const row of [...rows].reverse()) {
     if (!byCall.has(row.call_id)) {
@@ -323,12 +344,13 @@ export async function toolCalls(orgId, { limit = 50, tool = null, status = null,
     const turn = row.turn ?? null;
     let group = call.turns.find((t) => t.turn === turn);
     if (!group) {
-      group = { turn, said: turn ? (said.get(`${row.call_id}:${turn}`) ?? null) : null, calls: [] };
+      group = { turn, said: turn ? (row.said ?? null) : null, calls: [] };
       call.turns.push(group);
     }
     group.calls.push(asToolCall(row, labels));
   }
-  return { calls: [...byCall.values()].reverse() };
+  return { calls: [...byCall.values()].reverse(), total, shown: rows.length, truncated: total > rows.length,
+    tools: tools.map((name) => ({ name, label: labels[name] ?? name })) };
 }
 
 /** Transcript lines after `afterId` that the live view shows; tool lines carry only the tool's name. */

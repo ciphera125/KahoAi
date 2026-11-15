@@ -47,10 +47,21 @@ function sessionKey(req) {
   return `ip:${ipKeyGenerator(req.ip)}`;
 }
 
+// The admin site counts its own: sign-in per address, everything else per admin session.
+function cookieKey(name) {
+  return (req) => {
+    const match = (req.headers.cookie || "").match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+    return match ? `s:${createHash("sha256").update(match[1]).digest("hex").slice(0, 32)}` : `ip:${ipKeyGenerator(req.ip)}`;
+  };
+}
+
 export const ipLimiter = rateLimit({ ...common, limit: config.IP_RATE_LIMIT_PER_MIN,
   keyGenerator: (req) => ipKeyGenerator(req.ip), store: store("ip") });
 export const sessionLimiter = rateLimit({ ...common, limit: config.API_RATE_LIMIT_PER_MIN,
   keyGenerator: sessionKey, store: store("api") });
+export const adminAuthLimiter = rateLimit({ ...common, limit: config.ADMIN_AUTH_RATE_LIMIT_PER_MIN, keyGenerator: (req) => `ip:${ipKeyGenerator(req.ip)}`,
+  store: store("admin-auth") });
+export const adminLimiter = rateLimit({ ...common, limit: config.ADMIN_RATE_LIMIT_PER_MIN, keyGenerator: cookieKey("kaho_admin"), store: store("admin-api") });
 export const authLimiter = rateLimit({ ...common, limit: config.AUTH_RATE_LIMIT_PER_MIN, store: store("auth") });
 
 // Guessing invite codes: counted per signed-in person, not per address, so one person guessing
@@ -81,6 +92,12 @@ export const archiveRunPerMinute = rateLimit({ ...common, limit: config.ARCHIVE_
   keyGenerator: perOrg, store: store("archive-run") });
 export const healthPerMinute = rateLimit({ ...common, limit: config.HEALTH_PER_MIN, handler: costlyRefused("The system check"),
   keyGenerator: perOrg, store: store("health") });
+
+// Choosing a plan, asking for a top-up, withdrawing one: per organization, an hour at a time, so a stuck
+// button or a script cannot fill the admins' queue.
+const billingRefused = (_req, res) => res.status(429).json({ error: "Too many billing requests in the last hour. Please wait and try again." });
+export const billingWritesPerHour = rateLimit({ ...common, windowMs: 3_600_000, limit: config.BILLING_WRITES_PER_HOUR, handler: billingRefused,
+  keyGenerator: perOrg, store: store("billing-writes") });
 
 /** Forget every count (tests). */
 export const resetRateLimits = () => Promise.all(memoryStores.map((m) => m.resetAll()));

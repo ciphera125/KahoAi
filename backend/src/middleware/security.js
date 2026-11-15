@@ -6,23 +6,29 @@ import { forbidden, HttpError } from "../utils/errors.js";
 const UNSAFE = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 /** Only our own hosts (no DNS rebinding) and, unless behind a trusted proxy, no forwarded requests. */
-export function hostCheck(req, _res, next) {
+export const hostCheckFor = (hosts) => (req, _res, next) => {
   const forwarded = req.headers["x-forwarded-for"] || req.headers.forwarded;
-  if (!config.hosts.includes(req.headers.host) || (forwarded && !config.trustProxy)) {
+  if (!hosts().includes(req.headers.host) || (forwarded && !config.trustProxy)) {
     return next(forbidden("this server only answers to its own address"));
   }
   next();
-}
+};
 
 /** Cross-site protection: a request from another site's page is refused, and a
  * state change must say which page sent it (browsers always do). */
-export function originCheck(req, _res, next) {
+export const originCheckFor = (origins, who) => (req, _res, next) => {
   const origin = req.headers.origin;
-  if (origin ? !config.origins.includes(origin) : UNSAFE.has(req.method)) {
-    return next(forbidden("requests must come from the Studio itself"));
+  if (origin ? !origins().includes(origin) : UNSAFE.has(req.method)) {
+    return next(forbidden(`requests must come from ${who} itself`));
   }
   next();
-}
+};
+
+// The Studio and the admin site each answer only to their own pages and addresses.
+export const hostCheck = hostCheckFor(() => config.hosts);
+export const originCheck = originCheckFor(() => config.origins, "the Studio");
+export const adminHostCheck = hostCheckFor(() => config.adminHosts);
+export const adminOriginCheck = originCheckFor(() => config.adminOrigins, "the admin site");
 
 /** A body, if there is one, must be JSON. */
 export function jsonOnly(req, _res, next) {

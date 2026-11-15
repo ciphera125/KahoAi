@@ -24,3 +24,8 @@ process.env.SUPABASE_RECORDINGS_BUCKET = "call-recordings";
 // Publishing normally needs a passing test of the draft; most tests are about something
 // else and publish freely. tests/agentTest.test.js turns it on where it is the point.
 process.env.REQUIRE_AGENT_TEST = "false";
+// Billing is switched off for the suite as a whole (hundreds of tests sign up and use the Studio at once);
+// tests/billing*.test.js and tests/admin*.test.js turn it on for themselves.
+process.env.BILLING_ENFORCED = "false";
+process.env.ADMIN_SIGNUP_CODE = "test-admin-setup-code-0123456789";
+process.env.ADMIN_ORIGINS = "http://localhost:5174";

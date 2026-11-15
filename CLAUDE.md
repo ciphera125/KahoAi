@@ -65,6 +65,11 @@ apps/voice/prompt_store.py  the per-number prompt from before agents (migrated i
 scripts/call.py          dial out through Plivo into the same pipeline (--number, --agent)
 apps/voice/recording.py  call audio to recordings/<call_id>.recording.wav, and its deletion after RECORDING_RETENTION_DAYS
 apps/voice/resilience.py  what happens when a provider fails mid-call (backup TTS, apology, hang-up rules)
+admin/                   the ADMIN SITE: its own React app (:5174), its own sign-in, cookie and origin; reuses the
+                         Studio's components by import. Kaho staff only: organizations, plans, per-minute rates, top-ups,
+                         people, support access. Served by backend/src/routes/admin.js under /api/admin.
+backend/src/models/Billing.js  plans, subscriptions, the minute wallet (ledger), top-ups; backend/src/middleware/billing.js
+                         is the plan gate (no active plan, no Studio); models/Admin.js + AdminOps.js are the admin side
 apps/voice/tools.py      tools the agent can call (decorator registry; TOOLS_ENABLED picks them):
                          end_call, capture_lead, transfer_to_human, call_webhook
 scripts/talk.py          local mic/speaker run (same as apps/voice/main.py)
@@ -266,3 +271,45 @@ call has yet been held in Hindi end to end, though the Hindi voices themselves
 work against the live APIs. Every recorded call opens with
 "This call may be recorded." (`RECORDING_NOTICE`), which the caller cannot talk
 over; the deeper DPDP / Aadhaar Data Vault question is with the owner's CA.
+
+## One role in charge, role invites, requests, storage (2026-11-15, late)
+
+**One role in charge: admin.** The owner role is gone (migration 030). Whoever creates an organization is an admin; an admin
+makes anyone an admin and may remove another admin, never themselves, and the last admin can never be removed or demoted (an
+advisory lock makes two admins demoting each other at once safe). Roles: admin, manager, agent builder (`builder`), caller
+(`operator`), viewer. **An invite code carries its role** (`models/Invite.js`): an admin picks manager, builder, caller or viewer
+(never admin; promote afterwards) in Settings, People; the role is stored with the code, nothing sent at sign-up can change it;
+many codes may be open (25 max), listed and cancellable. `/api/me` no longer carries a code and `/api/auth/invite` is gone.
+**Requests**: a customer writes to Kaho or asks for a plan change (`models/Requests.js`, `org_requests`, migration 031); the admin
+site shows them in a notification bell, a Requests page, a per-organization count and highlighted plan-change cards, and the
+answer comes back to the customer. Putting an organization on the plan it asked for closes that request.
+**Storage is spreadsheets only (CSV, UTF-8 with a mark so Hindi opens in Excel, formula-safe cells) in two buckets.** Customers'
+bucket (`SUPABASE_RECORDINGS_BUCKET`, now `kaho-customer-records`): `call-recordings/`, `call-transcripts/`, `who-changed-what/`,
+`agent-tool-activity/`, `kaho-builder-requests/`, `call-log/`, `call-answers/`, `topups-and-minutes/`. Admin bucket
+(`SUPABASE_ADMIN_BUCKET`, `kaho-admin-records`): `admin-activity/`, `organizations/`, `customer-requests/`, `all-topups/`, `people/`
+(`archiveAdmin.js`; no password, hash, session, setup code or IP). `scripts/move_storage.mjs` copies to new buckets (never deletes),
+`scripts/verify_storage.mjs` checks both against the database.
+
+## Plans, minutes and the admin site (2026-11-15)
+
+**No plan, no Studio.** An organization with no active plan sees only the rate card (`ChoosePlan.jsx`); every other
+`/api` route answers 402 with a `subscription_*` code (`middleware/billing.js`). Choosing a plan is not paying for it: a
+plan starts when an admin confirms payment (no payment gateway is connected, so a top-up is a *request* until an admin
+confirms it; `SUBSCRIPTION_AUTO_ACTIVATE` skips that for trials). Organizations that existed before migration 028 are
+`unmetered` (active, no limit) until an admin assigns a plan: nothing that worked stopped.
+
+**Money is paise, time is minutes, and the ledger is the truth.** `minute_ledger` adds up (a trigger keeps
+`subscriptions.balance_minutes` equal to it); a money entry can never be rewritten, only a call's own usage line may
+change its minutes. A call is charged to its next whole minute, once, however often its length is reported. A plan's terms
+are copied into the subscription when it starts, so editing the rate card never changes a customer; an admin edits the
+customer's own terms. Placing a call is checked against the plan (active, minutes left, calls at once); bulk calls pause
+with the reason instead of failing rows; an inbound call for a blocked organization gets a short message, not the agent
+(`call-config` carries `blocked`; a failed lookup fails OPEN, so a caller is never turned away by our own error).
+
+**The admin site is a separate door.** Own accounts (`admins`), own cookie `kaho_admin` (path `/api/admin`), own origin
+(`ADMIN_ORIGINS`), own rate limits. Only `ADMIN_EMAILS` may ever hold an account AND sign-up needs `ADMIN_SIGNUP_CODE` (an
+e-mail address is not proof of who is typing it); with no code configured nobody can sign up. The allowlist is re-checked on
+every request. Every admin change is written to the append-only `admin_audit` and told to the organization it touches.
+"Open the Studio as" is a one-use 60-second link, a 2-hour session marked `support`, shown on screen and in the team's audit log.
+Top-ups are filed in Supabase Storage under `10-topups/` (one event per row, people as ids, free text redacted).
+

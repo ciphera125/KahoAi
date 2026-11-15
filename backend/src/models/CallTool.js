@@ -6,6 +6,7 @@
 //
 // Every reply is shaped for the agent to act on: `ok`, and a `message` it can say when
 // something could not be done. None of these throw at a live call.
+import { createHash } from "node:crypto";
 import { asSystem } from "../db/pool.js";
 import { logger } from "../utils/logger.js";
 import { parseAnswer } from "./answerValue.js";
@@ -17,6 +18,9 @@ import { latestForContact } from "./CallAnswer.js";
 
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const no = (message) => ({ ok: false, message });
+
+/** "Buy  MILK." and "buy milk" are the same words. */
+const sameWords = (text) => createHash("sha1").update(String(text).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()).digest("hex").slice(0, 12);
 
 /** The organization the call belongs to, and the contact on the other end. */
 async function callSubject(callId) {
@@ -80,8 +84,11 @@ const HANDLERS = {
       if (!read.ok) return no(read.message);
       due = read.value;
     }
+    // `idem` is this call, tool and turn; the title makes it this task. Two different tasks in one breath are
+    // two tasks, and the same one sent twice is one, with the words it was first saved with.
     const task = await Task.create(subject.org_id,
-      { title, due_at: due, contact_id: subject.contact_id, external_id: idem }, { source: "call" });
+      { title, due_at: due, contact_id: subject.contact_id, external_id: `${idem}:${sameWords(title)}` },
+      { source: "call", keepExisting: true });
     return { ok: true, task_id: task.id, title: task.title, due: task.due_at };
   },
 

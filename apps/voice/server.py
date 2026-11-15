@@ -243,6 +243,19 @@ def answer_xml(host: str, stream_token: str, apology: str = DEFAULT_APOLOGY) -> 
     )
 
 
+# What a caller hears when the organization they rang cannot take calls right now. Said by Plivo
+# itself, with no agent and no model, and never a word about plans or minutes: that is between
+# Kaho and its customer.
+UNAVAILABLE_MESSAGE = "Sorry, we cannot take your call right now. Please try again later."
+
+
+def unavailable_xml(message: str = UNAVAILABLE_MESSAGE) -> str:
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<Response><Speak language="en-IN">{escape(message)}</Speak><Hangup/></Response>'
+    )
+
+
 def transfer_number() -> str | None:
     """The human line the agent may hand calls to, from TRANSFER_NUMBER only."""
     number = clean_caller(env("TRANSFER_NUMBER"))
@@ -338,6 +351,12 @@ async def answer(request: Request, token: str | None = Query(None)):
         config = await agent_config_for(number=first("To"), caller=caller)
     else:
         config = None
+    # An inbound call for an organization whose plan is not open, or that has no minutes left, is
+    # not answered by the agent. A call already dialled out (`peer`) was allowed when it was
+    # placed, so the person who picked up is not cut off.
+    if config and config.get("blocked") and not peer:
+        logger.warning(f"Not answering an inbound call: {config['blocked']}")
+        return Response(unavailable_xml(), media_type="text/xml")
     if config:
         max_secs = min(max_secs, config["max_secs"])
     logger.info(f"{'Outbound call to' if peer else 'Inbound call from'} {caller or 'unknown'}")

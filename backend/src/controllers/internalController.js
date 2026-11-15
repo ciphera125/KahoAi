@@ -9,6 +9,8 @@ import * as CallAnswer from "../models/CallAnswer.js";
 import * as CallTool from "../models/CallTool.js";
 import { publishCallFiles } from "../services/callFiles.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
+import * as Billing from "../models/Billing.js";
+import { logger } from "../utils/logger.js";
 
 /** Never an error: a call must start even if this lookup fails. */
 export async function callConfig(req, res) {
@@ -17,7 +19,15 @@ export async function callConfig(req, res) {
   // The caller's own number, so {{customer_name}} and the rest are filled in before the
   // prompt ever reaches the model.
   const caller = typeof req.query.caller === "string" && req.query.caller ? req.query.caller : null;
-  res.json({ config: agentId ? await Agent.callConfig(agentId, { caller }) : null });
+  const config = agentId ? await Agent.callConfig(agentId, { caller }) : null;
+  if (config) {
+    // If the plan cannot be read, the call is answered: a caller must never be turned away because of a lookup that failed.
+    config.blocked = await Billing.blockReason(config.org_id).catch((err) => {
+      logger.warn({ err: err.message }, "could not read an organization's plan for a call; answering it");
+      return null;
+    });
+  }
+  res.json({ config });
 }
 
 export async function recordOutcome(req, res) {

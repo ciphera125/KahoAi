@@ -5,13 +5,14 @@ import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
 import * as Tooltip from "@radix-ui/react-tooltip";
 import { get, patch, post } from "../api.js";
-import { useAuth } from "../auth.jsx";
+import { isAdmin, useAuth } from "../auth.jsx";
 import { addPage, withDays } from "../feed.js";
 import { LogoMark, Wordmark } from "../logo.jsx";
 import { NAV } from "../nav.js";
 import Tour from "./Tour.jsx";
 import { ago, Avatar, ErrorBoundary, Icon, initials, Modal, PasswordInput, useToast } from "../ui.jsx";
 import { startPolling } from "../poll.js";
+import { minutesText } from "../billing.js";
 
 const RAIL_KEY = "kaho.rail.open";
 const readRail = () => { try { return localStorage.getItem(RAIL_KEY) === "1"; } catch { return false; } };
@@ -20,7 +21,7 @@ const readRail = () => { try { return localStorage.getItem(RAIL_KEY) === "1"; } 
 // page, and the panel button pins it open (remembered on this browser). On a
 // phone it is a drawer behind the menu button instead.
 export default function Layout() {
-  const { me } = useAuth();
+  const { me, signOut } = useAuth();
   const [pinned, setPinned] = useState(readRail);
   const [peek, setPeek] = useState(false);
   const [drawer, setDrawer] = useState(false);
@@ -74,10 +75,16 @@ export default function Layout() {
       </Tooltip.Provider>
       <main className="wrap">
         <div className="inner">
+          {me.support && (
+            <div className="support-bar" role="status"><Icon name="eye" />
+              <span>Kaho support is signed in as you. What is changed here is recorded as support.</span>
+              <button type="button" className="ghost small-btn" onClick={signOut}>End support session</button></div>
+          )}
           <div className="topbar">
             <button type="button" className="icon-btn menu-btn" onClick={() => setDrawer(true)} aria-label="Open menu"><Icon name="menu" /></button>
             <span className="topbar-brand"><LogoMark size={30} waves={false} /><Wordmark /></span>
             <span className="grow" />
+            <MinutesBadge />
             <ThemeToggle />
             <TourButton />
             <Bell />
@@ -114,7 +121,7 @@ function RailLink({ path, icon, label, showTip }) {
 
 /** The organization name under KahoAI: switch to another of yours, make a new
  * one (a separate environment), or join one with an invite code. */
-function OrgSwitcher() {
+export function OrgSwitcher() {
   const { me } = useAuth();
   const toast = useToast();
   const [open, setOpen] = useState(false);
@@ -167,8 +174,8 @@ function OrgSwitcher() {
       {form && (
         <Modal title={form === "create" ? "New organization" : "Join an organization"} onClose={() => setForm(null)}>
           <p className="sub" style={{ marginBottom: "var(--s4)" }}>{form === "create"
-            ? "A separate environment with its own agents, contacts, numbers, calls and team. You are its owner; invite people to it from Team."
-            : "Enter the invite code someone in that organization gave you. You join it as a member and keep your other organizations."}</p>
+            ? "A separate environment with its own agents, contacts, numbers, calls and team. You are its admin; invite people to it from Settings, then People."
+            : "Enter the invite code someone in that organization gave you. You join it with the role the code was made for, and keep your other organizations."}</p>
           <div className="field">
             <label className="f" htmlFor="org-text">{form === "create" ? "Name" : "Invite code"}</label>
             <input id="org-text" value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} autoFocus
@@ -181,6 +188,37 @@ function OrgSwitcher() {
         </Modal>
       )}
     </div>
+  );
+}
+
+/** The minutes this organization has left, always in view, to the left of the theme switch. Click for Billing. */
+function MinutesBadge() {
+  const navigate = useNavigate();
+  const { refresh } = useAuth();
+  const [s, setS] = useState(null);
+  // If the plan has been closed since this page loaded (suspended, ended), say so to the app at once: it shows the plan screen.
+  const load = useCallback(() => get("/api/billing/summary").then((x) => { setS(x); if (x.locked) refresh(); }).catch(() => {}), [refresh]);
+  useEffect(() => { load(); return startPolling(load, 60000); }, [load]);
+  // A top-up confirmation or a call's end changes the balance: look again when the bell hears of billing news.
+  useEffect(() => {
+    const again = () => load();
+    window.addEventListener("kaho:billing-changed", again);
+    return () => window.removeEventListener("kaho:billing-changed", again);
+  }, [load]);
+  if (!s?.enforced || s.locked) return null;
+  const text = s.unmetered ? "No limit" : minutesText(s.minutes_left);
+  const title = s.unmetered ? "Your plan has no minute limit"
+    : s.level === "empty" ? "No minutes left. Click to top up." : s.level === "low" ? "Running low. Click to top up." : "Minutes left on your plan. Click for billing.";
+  const badge = (
+    <button type="button" className={`minutes-badge ${s.unmetered ? "ok" : s.level}`} title={title} aria-label={`${text} left. ${title}`} onClick={() => navigate("/settings?tab=billing")}>
+      <Icon name="clock" /><span className="mb-num">{text}</span><span className="mb-word"> left</span>
+    </button>
+  );
+  return (
+    <>
+      {s.plan_name && <button type="button" className={`plan-badge plan-${String(s.plan_id ?? "").replace(/[^a-z0-9]/g, "")}`} title={`You are on the ${s.plan_name} plan. Click for details.`} aria-label={`${s.plan_name} plan`} onClick={() => navigate("/settings?tab=billing")}><Icon name="star" />{s.plan_name}</button>}
+      {badge}
+    </>
   );
 }
 
@@ -207,10 +245,10 @@ function ThemeToggle() {
 }
 
 // What each kind of notification is about, as an icon.
-const ROLE_LABEL = { owner: "Owner", admin: "Admin", manager: "Manager", builder: "Agent builder", operator: "Caller", viewer: "Viewer" };
+const ROLE_LABEL = { admin: "Admin", manager: "Manager", builder: "Agent builder", operator: "Caller", viewer: "Viewer" };
 const roleLabel = (id) => ROLE_LABEL[id] ?? id;
 
-const KIND_ICON = { call: "call", agent: "agent", prompt: "prompt", account: "team", error: "warn", lead: "contacts" };
+const KIND_ICON = { call: "call", agent: "agent", prompt: "prompt", account: "team", error: "warn", lead: "contacts", billing: "wallet" };
 
 function Bell() {
   const [items, setItems] = useState([]);
@@ -226,12 +264,19 @@ function Bell() {
 
   // The newest page, now and every half minute: new things appear on top without losing what was scrolled to.
   const refresh = useCallback(() => get("/api/notifications?limit=20").then((r) => {
+    if (r.items.some((n) => n.unread && n.kind === "billing")) window.dispatchEvent(new Event("kaho:billing-changed"));
     setItems((have) => addPage(have, r.items));
     setNext((have) => (have === null && !ready ? r.next : have));
     setUnread(r.unread);
     setReady(true);
   }).catch(() => {}), [ready]);
   useEffect(() => { refresh(); return startPolling(refresh, 30000); }, [refresh]);
+  // A person's own action (a top-up request, a withdrawal) is news at once, not in half a minute.
+  useEffect(() => {
+    const again = () => { refresh(); };
+    window.addEventListener("kaho:notifications-changed", again);
+    return () => window.removeEventListener("kaho:notifications-changed", again);
+  }, [refresh]);
 
   const loadMore = useCallback(async () => {
     if (!next || loading) return;
@@ -310,20 +355,14 @@ function Profile({ onClose }) {
   const toast = useToast();
   const [changing, setChanging] = useState(false);
   const [cur, setCur] = useState(""); const [next, setNext] = useState("");
-  const [invite, setInvite] = useState(null);
   const [icons, setIcons] = useState([]);
   useEffect(() => { get("/api/avatars").then(setIcons).catch(() => {}); }, []);
   const chooseIcon = async (icon) => {
     try { await patch("/api/me/profile", { avatar: icon }); await refresh(); toast(icon ? "Icon changed." : "Back to your initials."); }
     catch (e) { toast(e.message, true); }
   };
-  useEffect(() => { get("/api/me").then((m) => setInvite(m.invite_code ? { code: m.invite_code, expires: m.invite_expires } : null)).catch(() => {}); }, []);
   const changePassword = async () => {
     try { await post("/api/auth/password", { current: cur, new: next }); await refresh(); toast("Password changed."); setChanging(false); setCur(""); setNext(""); }
-    catch (e) { toast(e.message, true); }
-  };
-  const newInvite = async () => {
-    try { const r = await post("/api/auth/invite"); setInvite({ code: r.invite_code, expires: r.invite_expires }); toast("New invite code. The old one no longer works."); }
     catch (e) { toast(e.message, true); }
   };
   return (
@@ -340,17 +379,7 @@ function Profile({ onClose }) {
         ))}
       </div>
       {me.avatar && <button type="button" className="link" style={{ marginBottom: "var(--s4)" }} onClick={() => chooseIcon(null)}>Go back to my initials</button>}
-      {invite && (
-        <div className="card" style={{ marginBottom: "var(--s4)" }}>
-          <div className="f" style={{ marginBottom: 8 }}>Invite a teammate</div>
-          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-            <span className="code" style={{ padding: "3px 8px", borderRadius: 4, background: "var(--surface-2)", border: "1px solid var(--border)" }}>{invite.code}</span>
-            <button type="button" className="ghost small-btn" onClick={() => navigator.clipboard.writeText(invite.code).then(() => toast("Invite code copied. They enter it when they create their account."), () => toast("Could not copy; select the code instead.", true))}>Copy</button>
-            <button type="button" className="ghost small-btn" onClick={newInvite}>New code</button>
-            <span className="hint">Works once, for a week. They join {me.org_name}.</span>
-          </div>
-        </div>
-      )}
+      {isAdmin(me) && <p className="hint" style={{ marginBottom: "var(--s4)" }}>To invite someone, open Settings, then People. You choose the role the invite code gives.</p>}
       {changing ? (
         <div className="card">
           <div className="field"><label className="f">Current password</label><PasswordInput value={cur} onChange={(e) => setCur(e.target.value)} /></div>

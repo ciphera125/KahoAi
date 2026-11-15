@@ -3,6 +3,7 @@
 // The organization comes from the key and is put on the request here. Nothing downstream
 // may read an organization from the body, so a key can only ever write into its own.
 import * as ApiKey from "../models/ApiKey.js";
+import { BillingError, lockMessage, summary } from "../models/Billing.js";
 import { AuthError } from "../utils/errors.js";
 
 export async function requireApiKey(req, _res, next) {
@@ -10,6 +11,8 @@ export async function requireApiKey(req, _res, next) {
   const presented = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
   const orgId = presented ? await ApiKey.orgFor(presented) : null;
   if (!orgId) return next(new AuthError("a valid API key is required", 401));
+  const plan = await summary(orgId);
+  if (plan.locked) return next(new BillingError(402, plan.reason, lockMessage(plan.reason)));
   req.apiOrgId = orgId;
   next();
 }

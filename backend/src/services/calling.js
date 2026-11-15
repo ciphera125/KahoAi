@@ -4,6 +4,7 @@ import * as OrgSettings from "../models/OrgSettings.js";
 import { LANGUAGE_CHOICES, LANGUAGE_VALUES } from "../models/language.js";
 import { config } from "../config/env.js";
 import * as Agent from "../models/Agent.js";
+import { assertCanCall } from "../models/Billing.js";
 import * as Call from "../models/Call.js";
 import * as Contact from "../models/Contact.js";
 import * as PhoneNumber from "../models/PhoneNumber.js";
@@ -51,6 +52,8 @@ export async function placeCall(org, { fromId, to: raw, agentId, language = null
     if (!agent || agent.org_id !== org) throw new ValidationError("choose an agent that exists");
     if (!Agent.inCallWindow(agent.call_window, now)) throw new OutsideWindowError(agent.call_window);
   }
+  // The plan: an active one, minutes left, and room for one more call at once.
+  await assertCanCall(org);
   const missing = ["PUBLIC_HOST", "WEBHOOK_SECRET"].filter((k) => !config[k]);
   if (missing.length) throw new ValidationError(`missing in the server settings: ${missing.join(", ")}`);
   const creds = await PhoneNumber.credentials(org, row.id);

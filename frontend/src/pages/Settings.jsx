@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { minutesText, STATUS_WORDS } from "../billing.js";
 import Usage from "./Usage.jsx";
+import Billing from "./Billing.jsx";
+import People from "./People.jsx";
 import { del, get, patch, post } from "../api.js";
 import { serverView } from "../paginate.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
 import { Icon, Pager, Spinner, useConfirm, useToast } from "../ui.jsx";
 
-const TABS = [["organization", "Organization"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
+const TABS = [["organization", "Organization"], ["people", "People"], ["billing", "Billing"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
   ["webhook", "Send calls to your system"], ["usage", "Usage"], ["system", "Is everything working?"], ["audit", "Audit log"]];
 
 export default function Settings() {
@@ -24,6 +27,8 @@ export default function Settings() {
           <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>)}
       </div>
       {tab === "organization" && <Organization />}
+      {tab === "people" && <People />}
+      {tab === "billing" && <Billing />}
       {tab === "calls" && <CallRules />}
       {tab === "roles" && <Roles />}
       {tab === "webhook" && <Webhook />}
@@ -48,13 +53,12 @@ function Organization() {
   const mine = roles?.roles.find((r) => r.id === me.role);
   return (
     <>
-      <div className="card" style={{ maxWidth: 680 }}>
-        <h2 style={{ margin: "0 0 var(--s3)" }}>Organization</h2>
-        <dl className="settings-grid">
-          <dt>Name</dt><dd>{me.org_name}</dd>
-          <dt>Your role</dt><dd><b>{mine?.label ?? me.role}</b><div className="hint">{mine?.summary}</div></dd>
-        </dl>
+      <div className="org-hero">
+        <div className="org-mark" aria-hidden="true">{me.org_name.slice(0, 1).toUpperCase()}</div>
+        <div><h2>{me.org_name}</h2><div className="hint">You are {mine ? `${/^[aeiou]/i.test(mine.label) ? "an" : "a"} ${mine.label}` : me.role}. {mine?.summary}</div></div>
       </div>
+      <PlanCard />
+      {can(me, "billing.manage") && <WriteToKaho />}
       <div className="card" style={{ maxWidth: 680, marginTop: "var(--s4)" }}>
         <h2 style={{ margin: "0 0 var(--s3)" }}>Phone</h2>
         <dl className="settings-grid">
@@ -70,6 +74,54 @@ function Organization() {
         </dl>
       </div>
     </>
+  );
+}
+
+/** The plan this organization is on, shown large and highlighted. */
+function PlanCard() {
+  const navigate = useNavigate();
+  const [o, setO] = useState(null);
+  useEffect(() => { get("/api/billing").then(setO).catch(() => {}); }, []);
+  if (!o || !o.plan_name) return null;
+  const left = o.unmetered ? "No minute limit" : minutesText(o.minutes_left);
+  return (
+    <div className={`card plan-card plan-${String(o.plan_id ?? "").replace(/[^a-z0-9]/g, "")}`} style={{ maxWidth: 680 }}>
+      <div className="plan-card-top"><span className="plan-name"><Icon name="star" />{o.plan_name}</span>
+        <span className={`pill ${o.status === "active" ? "active" : "warn"}`}>{STATUS_WORDS[o.status] ?? o.status}</span></div>
+      <div className="plan-facts"><div><span className="k">Minutes left</span><b>{left}</b></div>
+        <div><span className="k">Calls at once</span><b>{o.simultaneous ?? "-"}</b></div>
+        {o.period_end && <div><span className="k">Runs until</span><b>{new Date(o.period_end).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })}</b></div>}</div>
+      <button type="button" className="ghost" onClick={() => navigate("/settings?tab=billing")}>Billing and top-ups</button>
+    </div>
+  );
+}
+
+/** A note to Kaho: anything the organization needs. It reaches the admin site and the answer comes back here. */
+function WriteToKaho() {
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [list, setList] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => get("/api/requests").then(setList).catch(() => {}), []);
+  useEffect(() => { load(); }, [load]);
+  const send = async () => {
+    setBusy(true);
+    try { await post("/api/requests", { message: text }); setText(""); toast("Sent to Kaho. The answer will show here."); window.dispatchEvent(new Event("kaho:notifications-changed")); load(); }
+    catch (e) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="card" style={{ maxWidth: 680, marginTop: "var(--s4)" }}>
+      <h2 style={{ margin: "0 0 var(--s3)" }}>Write to Kaho</h2>
+      <p className="hint">Need more calls at once, a different plan, or help with something? Write it here. Kaho answers on this page.</p>
+      <textarea value={text} maxLength={1000} rows={3} placeholder="What do you need?" onChange={(e) => setText(e.target.value)} aria-label="Your request to Kaho" />
+      <div className="actions"><span className="hint">{text.length}/1000</span><button type="button" className="primary" disabled={busy || !text.trim()} onClick={send}>Send to Kaho</button></div>
+      {list && list.length > 0 && (
+        <ul className="req-list">{list.map((r) => (
+          <li key={r.id}><span className={`pill ${r.status === "open" ? "warn" : r.status === "done" ? "active" : "muted"}`}>{r.status === "open" ? "Waiting" : r.status === "done" ? "Answered" : "Closed"}</span>
+            <span>{r.kind === "plan_change" ? `Plan change${r.plan_id ? `: ${r.plan_id}` : ""}` : r.message}</span>
+            {r.response && <div className="hint">Kaho: {r.response}</div>}</li>))}</ul>
+      )}
+    </div>
   );
 }
 
@@ -97,7 +149,7 @@ function CallRules() {
       <h2 style={{ margin: "0 0 var(--s2)" }}>Call rules for everyone</h2>
       <p className="hint" style={{ marginBottom: "var(--s4)" }}>
         These hold for every agent and every call in {me.org_name}, whatever an individual agent is set to.
-        {!editable && " Only an owner or admin can change them."}</p>
+        {!editable && " Only an admin can change them."}</p>
 
       <div className="toggle-line">
         <div><b>Only call during certain hours</b>
@@ -132,8 +184,7 @@ function Roles() {
   return (
     <>
       <p className="hint" style={{ marginBottom: "var(--s4)", maxWidth: 760 }}>
-        Whoever creates an organization is its <b>owner</b>. They make admins, and give everyone else one of the other roles on the Team page.
-        Someone who joins with an invite code can only look until they are given a role. You are a <b>{data.roles.find((r) => r.id === me.role)?.label}</b>.</p>
+        The admin is in charge and can do everything; whoever creates an organization is one. An admin chooses the role an invite code gives, and changes anyone's role under People. You are a <b>{data.roles.find((r) => r.id === me.role)?.label}</b>.</p>
       <div className="role-cards">
         {data.roles.map((r) => (
           <div key={r.id} className={`card role-card${r.id === me.role ? " mine" : ""}`}>

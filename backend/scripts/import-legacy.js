@@ -52,7 +52,7 @@ export async function importLegacy({ data = path.join(ROOT, "data"), calls: call
 
     for (const u of users) {
       // An organization has one owner: into an existing one, the old owner is an admin.
-      const role = u.role === "owner" && !fresh ? "admin" : (u.role === "owner" ? "owner" : "member");
+      const role = u.role === "owner" ? "admin" : "member";
       const r = await db.query(`INSERT INTO users (id, name, email, company, role, salt, hash, created_at, seen_at, org_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT DO NOTHING`,
       [u.id, u.name, String(u.email).toLowerCase(), u.company || "", role, u.salt, u.hash, iso(u.created_at),

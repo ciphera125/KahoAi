@@ -185,7 +185,7 @@ function PublishBar({ agent, check, me, confirm, onChanged }) {
         <ul className="problems">
           {check.problems.map((p) => <li key={p.code + p.found}>{p.message}</li>)}
           {untested && check.problems.length === 0 && <li>Test this agent first. Publishing needs a test of exactly these words to have passed.</li>}
-          {!isAdmin(me) && <li className="hint">Only an owner or admin can publish over this.</li>}
+          {!isAdmin(me) && <li className="hint">Only an admin can publish over this.</li>}
         </ul>
       )}
       {agent.draft_changed && <TestPanel agent={agent} check={check} onChanged={onChanged} />}

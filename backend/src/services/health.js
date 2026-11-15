@@ -44,7 +44,13 @@ const CHECKS = [
     if (!config.GROQ_API_KEY) return no("Not set up: GROQ_API_KEY is missing, so Kaho Builder and Test this agent cannot work.");
     const r = await http(`${config.GROQ_API_BASE}/openai/v1/models`, { headers: { Authorization: `Bearer ${config.GROQ_API_KEY}` } });
     if (r.error) return no(`The model service ${r.error}.`);
-    return r.res.ok ? yes(`Key accepted (${config.GROQ_MODEL_ID}).`) : no(`The model service refused the key (${r.res.status}).`);
+    if (!r.res.ok) return no(`The model service refused the Studio's key (${r.res.status}).`);
+    // The key being accepted is not the same as the model being there: look for the one the Studio really uses.
+    const list = (await r.res.json().catch(() => null))?.data;
+    if (Array.isArray(list) && !list.some((m) => m?.id === config.GROQ_MODEL_ID)) {
+      return no(`The Studio's key works, but this account does not offer the model ${config.GROQ_MODEL_ID}.`);
+    }
+    return yes(`The Studio's own key was accepted and ${config.GROQ_MODEL_ID} is available. Calls use the phone server's key, which is its own setting.`);
   }],
   ["storage", "Storage (recordings and records)", async () => {
     if (!recordingsConfigured()) return no("Not set up: the Supabase settings are missing, so recordings and records stay only in the database.");
@@ -59,13 +65,23 @@ const CHECKS = [
     const auth = Buffer.from(`${id}:${token}`).toString("base64");
     const r = await http(`${config.PLIVO_API_BASE}/v1/Account/${encodeURIComponent(id)}/`, { headers: { Authorization: `Basic ${auth}` } });
     if (r.error) return no(`Plivo ${r.error}.`);
-    return r.res.ok ? yes("Credentials accepted.") : no(r.res.status === 402 ? "Plivo has insufficient balance. Add credit in the Plivo console." : `Plivo refused the credentials (${r.res.status}).`);
+    if (!r.res.ok) return no(r.res.status === 402 ? "Plivo has insufficient balance. Add credit in the Plivo console." : `Plivo refused the credentials (${r.res.status}).`);
+    // Accepted credentials with an empty balance still cannot place a call, so the balance is part of "working".
+    const credit = Number((await r.res.json().catch(() => null))?.cash_credits);
+    if (!Number.isFinite(credit)) return yes("Credentials accepted. The balance was not reported, so it could not be checked.");
+    if (credit <= 0) return no("Plivo accepts the credentials but the account has no credit left, so calls will fail. Add credit in the Plivo console.");
+    return yes(`Credentials accepted. Plivo balance: $${credit.toFixed(2)}.`);
   }],
   ["phone_server", "Phone server (the voice service)", async () => {
     if (!config.PUBLIC_HOST) return no("Not set up: PUBLIC_HOST is missing, so Plivo has nowhere to send calls.");
     const r = await http(`${config.PUBLIC_SCHEME}://${config.PUBLIC_HOST}/answer`);
     if (r.error) return no(`The phone server at ${config.PUBLIC_HOST} ${r.error}. Start it and your tunnel.`);
-    return r.res.status < 500 ? yes(`Reachable at ${config.PUBLIC_HOST}.`) : no(`The phone server answered with an error (${r.res.status}).`);
+    // Our phone server refuses an unsigned request (403), or a call with no details (400), or answers (200). A 404 or a
+    // gateway error is something else answering at that address, most often a tunnel that is down: calls would not arrive.
+    if ([200, 400, 403].includes(r.res.status)) return yes(`The phone server answers at ${config.PUBLIC_HOST}.`);
+    return r.res.status >= 500
+      ? no(`The phone server answered with an error (${r.res.status}). If you use a tunnel, check that it is running.`)
+      : no(`Something answered at ${config.PUBLIC_HOST} but it was not the phone server (HTTP ${r.res.status}). The tunnel may be down or pointing elsewhere, so calls would not arrive.`);
   }],
 ];
 
@@ -77,12 +93,14 @@ export function warnings(settings = liveConfig) {
   if (!config.REQUIRE_AGENT_TEST) out.push("Agents can be published without a passing test (REQUIRE_AGENT_TEST is off).");
   if (config.DATABASE_SSL && config.DATABASE_SSL !== "verify") out.push("The database connection is not certificate-checked (DATABASE_SSL is not verify).");
   if (!config.TRANSFER_NUMBER) out.push("No TRANSFER_NUMBER is set, so an agent cannot hand a call to a person.");
+  if (config.BILLING_ENFORCED === false) out.push("BILLING_ENFORCED is off: no organization is charged, locked out or counted, whatever plan it is on. Switch it on before real customers.");
+  if (config.SUBSCRIPTION_AUTO_ACTIVATE === true) out.push("SUBSCRIPTION_AUTO_ACTIVATE is on: a plan starts the moment it is chosen, without anyone confirming payment.");
   if (config.WEB_CONCURRENCY > 1 && !config.REDIS_URL) out.push(`${config.WEB_CONCURRENCY} workers are running without REDIS_URL, so each keeps its own rate-limit count and the limits are really ${config.WEB_CONCURRENCY} times higher. Set REDIS_URL.`);
   return out;
 }
 
-export async function systemHealth(orgId) {
-  const checks = await Promise.all(CHECKS.map(async ([id, label, run]) => {
+async function runChecks(list, orgId) {
+  const checks = await Promise.all(list.map(async ([id, label, run]) => {
     const t = Date.now();
     let r;
     try { r = await run(orgId); } catch { r = no("The check itself failed."); }
@@ -90,3 +108,8 @@ export async function systemHealth(orgId) {
   }));
   return { ok: checks.every((c) => c.ok), checks, warnings: warnings() };
 }
+
+export const systemHealth = (orgId) => runChecks(CHECKS, orgId);
+
+/** The parts of the platform that are not one organization's: for the admin site. */
+export const platformHealth = () => runChecks(CHECKS.filter(([id]) => ["database", "connections", "model", "storage"].includes(id)), null);

@@ -1,0 +1,45 @@
+// /api/admin: the admin site's API. Its own sign-in, its own cookie, its own origin; see app.js.
+import { Router } from "express";
+import * as admin from "../controllers/adminController.js";
+import { requireAdmin } from "../middleware/adminAuth.js";
+import { adminAuthLimiter } from "../middleware/rateLimit.js";
+
+const router = Router();
+router.get("/auth/state", admin.state);
+router.post("/auth/signup", adminAuthLimiter, admin.signUp);
+router.post("/auth/login", adminAuthLimiter, admin.signIn);
+router.post("/auth/logout", admin.signOut);
+
+router.use(requireAdmin);
+router.get("/me", admin.me);
+router.get("/overview", admin.overview);
+router.get("/orgs", admin.orgs);
+router.get("/orgs/:orgId", admin.org);
+router.get("/orgs/:orgId/ledger", admin.orgLedger);
+router.get("/orgs/:orgId/calls", admin.orgCalls);
+router.patch("/orgs/:orgId", admin.rename);
+router.patch("/orgs/:orgId/settings", admin.settings);
+router.post("/orgs/:orgId/plan", admin.assignPlan);
+router.patch("/orgs/:orgId/terms", admin.setTerms);
+router.post("/orgs/:orgId/status", admin.setStatus);
+router.post("/orgs/:orgId/unmetered", admin.setUnmetered);
+router.post("/orgs/:orgId/renew", admin.renew);
+router.post("/orgs/:orgId/minutes", admin.adjustMinutes);
+router.post("/orgs/:orgId/impersonate", admin.impersonate);
+router.patch("/orgs/:orgId/members/:userId", admin.changeRole);
+router.delete("/orgs/:orgId/members/:userId", admin.removeMember);
+router.get("/plans", admin.plans);
+router.patch("/plans/:planId", admin.updatePlan);
+router.get("/topups", admin.topups);
+router.get("/requests", admin.requests);
+router.post("/requests/:id", admin.decideRequest);
+router.get("/notifications", admin.notifications);
+router.post("/topups/:id/approve", admin.decide(true));
+router.post("/topups/:id/reject", admin.decide(false));
+router.get("/users", admin.users);
+router.post("/users/:userId/disable", admin.disable(true));
+router.post("/users/:userId/enable", admin.disable(false));
+router.post("/users/:userId/reset-password", admin.resetPassword);
+router.get("/audit", admin.audit);
+router.get("/health", admin.health);
+export default router;

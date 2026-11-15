@@ -7,6 +7,7 @@ import { normalizeNumber } from "../utils/phone.js";
 import { cleanText } from "../utils/text.js";
 import { checkNumber } from "../services/dialer.js";
 import * as PhoneNumber from "./PhoneNumber.js";
+import { simultaneousFor } from "./Billing.js";
 
 export const MAX_ROWS = 5000;
 export const MAX_PARALLEL = 10;
@@ -60,6 +61,11 @@ export async function create(orgId, { name, agentId, fromId, parallel, rows, cre
   const n = typeof parallel === "number" || (typeof parallel === "string" && parallel.trim() !== "") ? Number(parallel) : NaN;
   if (!Number.isInteger(n) || n < 1 || n > MAX_PARALLEL) {
     throw new ValidationError(`choose how many calls at once, a whole number between 1 and ${MAX_PARALLEL}`);
+  }
+  // The plan's own limit, not only the server's: a plan that allows 2 at once cannot start a list at 7.
+  const allowed = await simultaneousFor(orgId);
+  if (allowed !== null && n > allowed) {
+    throw new ValidationError(`your plan allows ${allowed} call${allowed === 1 ? "" : "s"} at once; choose ${allowed} or fewer`);
   }
   if (!Number.isInteger(retries) || retries < 0 || retries > 3) throw new ValidationError("tries again must be a whole number from 0 to 3");
   if (!Number.isInteger(retryAfterHours) || retryAfterHours < 1 || retryAfterHours > 24) throw new ValidationError("the wait before trying again must be from 1 to 24 hours");
@@ -196,16 +202,22 @@ export async function settleMany(runs) {
  * Bulk calls are left out here: the runner already counts them. */
 export const LIVE_CALL_MINUTES = 20;
 export const RINGING_SECS = 60;
-export async function liveOutsideCalls(capPerOrg = 6) {
-  const { rows } = await asSystem((db) => db.query(`SELECT coalesce(sum(least(g.n, $3)), 0)::int AS n FROM (
-    SELECT count(*) AS n FROM calls c
-    WHERE c.ended_at IS NULL AND (c.status IS NULL OR c.status = 'ringing')
+const OUTSIDE_WHERE = `c.ended_at IS NULL AND (c.status IS NULL OR c.status = 'ringing')
       AND ((c.has_transcript AND c.started_at > now() - make_interval(mins => $1))
         OR (NOT c.has_transcript AND c.status = 'ringing' AND c.started_at > now() - make_interval(secs => $2)))
-      AND NOT EXISTS (SELECT 1 FROM bulk_items i WHERE i.call_id = c.call_id AND i.status IN ('dialling', 'calling'))
-    GROUP BY c.org_id) g`,
-  [LIVE_CALL_MINUTES, RINGING_SECS, capPerOrg]));
-  return rows[0].n;
+      AND NOT EXISTS (SELECT 1 FROM bulk_items i WHERE i.call_id = c.call_id AND i.status IN ('dialling', 'calling'))`;
+
+/** Those calls, counted for each organization (an unknown one is the key null). */
+export async function liveOutsideByOrg() {
+  const { rows } = await asSystem((db) => db.query(
+    `SELECT c.org_id, count(*)::int AS n FROM calls c WHERE ${OUTSIDE_WHERE} GROUP BY c.org_id`, [LIVE_CALL_MINUTES, RINGING_SECS]));
+  return new Map(rows.map((r) => [r.org_id, r.n]));
+}
+
+/** What they add up to against the server's capacity, one organization's share capped at `capPerOrg`. */
+export const cappedTotal = (byOrg, capPerOrg) => [...byOrg.values()].reduce((sum, n) => sum + Math.min(n, capPerOrg), 0);
+export async function liveOutsideCalls(capPerOrg = 6) {
+  return cappedTotal(await liveOutsideByOrg(), capPerOrg);
 }
 
 /** Open calls (dialling or on the line) per organization, across its runs. */

@@ -13,10 +13,14 @@ import errorRoutes from "./errors.js";
 import leadRoutes from "./leads.js";
 import taskRoutes from "./tasks.js";
 import customToolRoutes from "./customTools.js";
+import billingRoutes from "./billing.js";
+import { requireSubscription } from "../middleware/billing.js";
 
 const router = Router();
 router.use("/auth", authRoutes);
 router.use(requireSession);
+router.use(requireSubscription);
+router.use(billingRoutes);
 router.use(workspaceRoutes);
 router.use("/agents", agentRoutes);
 router.use("/prompts", promptRoutes);

@@ -751,3 +751,91 @@ table.matrix .no { color: var(--text-3); }
 .meter i.tone-warn { background: var(--warn, #d99a1f); }
 .meter i.tone-bad { background: var(--bad); }
 .meter i.tone-muted { background: var(--border-strong); }
+
+/* billing: the plan screen, the minutes badge, the balance card, the support bar */
+.plan-page { min-height: 100vh; padding: var(--s5) var(--s6) var(--s7); max-width: 1180px; margin: 0 auto; }
+.plan-top { display: flex; align-items: center; gap: var(--s3); margin-bottom: var(--s6); flex-wrap: wrap; }
+.plan-top .grow { flex: 1; }
+.plan-brand { display: inline-flex; align-items: center; gap: 10px; font-size: 20px; }
+.plan-intro { text-align: center; max-width: 720px; margin: 0 auto var(--s6); }
+.plan-intro h1 { font-size: 30px; letter-spacing: -.02em; }
+.plan-intro .sub { margin: var(--s2) auto var(--s4); }
+.plan-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--s4); align-items: stretch; }
+.plan-card { display: flex; flex-direction: column; gap: var(--s3); padding: var(--s5); border: 1px solid var(--border); border-radius: var(--r-xl); background: var(--surface); position: relative; }
+.plan-card h2 { margin: 0; font-size: 20px; }
+.plan-card.hot { border-color: var(--gold); box-shadow: var(--glow); }
+.plan-card.chosen { border-color: var(--accent); background: var(--accent-soft); }
+.plan-card .pill { align-self: flex-start; }
+.plan-price { font: 700 30px/1.1 var(--display); letter-spacing: -.02em; }
+.plan-price span { font: 500 13px var(--sans); color: var(--text-3); margin-left: 4px; }
+.plan-facts { margin: 0; display: grid; gap: 8px; flex: 1; }
+.plan-facts > div { display: flex; justify-content: space-between; gap: var(--s3); border-top: 1px solid var(--border); padding-top: 8px; font-size: 13px; }
+.plan-facts dt { color: var(--text-2); }
+.plan-facts dd { margin: 0; font-weight: 600; text-align: right; }
+.plan-card button { width: 100%; }
+.plan-foot { text-align: center; margin-top: var(--s5); }
+.banner.info { color: var(--accent); background: var(--accent-soft); text-align: left; }
+.minutes-badge { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; font: 600 12.5px var(--sans); border: 1px solid var(--border-strong); background: var(--surface); color: var(--text); cursor: pointer; white-space: nowrap; }
+.minutes-badge:hover { border-color: var(--accent); }
+.minutes-badge .mb-num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.minutes-badge .mb-word { color: var(--text-3); font-weight: 500; }
+.minutes-badge.low { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
+.minutes-badge.empty { color: var(--bad); background: var(--bad-soft); border-color: transparent; }
+.minutes-badge.low .mb-word, .minutes-badge.empty .mb-word { color: inherit; opacity: .8; }
+.card.balance { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s5); align-items: center; border-top: 4px solid var(--gold); }
+.card.balance.low { border-top-color: var(--warn); }
+.card.balance.empty { border-top-color: var(--bad); }
+.card.balance .k { font-size: 12px; font-weight: 500; color: var(--text-3); }
+.big-number { font: 700 40px/1.15 var(--display); letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.bad-text { color: var(--bad); }
+.topup-row { display: flex; gap: var(--s3); align-items: flex-end; flex-wrap: wrap; }
+.topup-row .field { flex: 1; min-width: 160px; margin-bottom: 0; }
+.topup-price { display: grid; gap: 2px; min-width: 110px; }
+.topup-price .k { font-size: 12px; color: var(--text-3); }
+.topup-price b { font: 700 20px var(--mono); }
+.field-err { font-size: 12.5px; color: var(--bad); margin: 6px 0 0; }
+td.num.plus { color: var(--ok); font-family: var(--mono); }
+td.num.minus { color: var(--text-2); font-family: var(--mono); }
+.support-bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; margin-bottom: var(--s3); border-radius: var(--r-md); background: var(--gold-soft); color: var(--gold-ink); font-weight: 500; }
+.support-bar span { flex: 1; }
+@media (max-width: 760px) {
+  .card.balance { grid-template-columns: 1fr; }
+  .minutes-badge .mb-word { display: none; }
+  .plan-page { padding: var(--s4); }
+}
+
+/* "Mark all as read" sits in a dropdown whose buttons are full width (.menu button); this one is a button of its own. */
+.menu button.notif-mark { width: auto; height: 28px; justify-content: center; padding: 0 10px; gap: 6px; border: 1px solid var(--border-strong); font-weight: 500; }
+
+/* tables: room to breathe, a line between rows (Usage, Billing, and the admin site's lists) */
+table.rows { width: 100%; border-collapse: collapse; }
+table.rows th { padding: 10px 16px; font-size: 12px; font-weight: 600; color: var(--text-3); white-space: nowrap; border-bottom: 1px solid var(--border); }
+table.rows td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: top; }
+table.rows tr:last-child td { border-bottom: 0; }
+table.rows td.num, table.rows th.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* --- plan highlight, organization page and the premium feel (2026-11-15) --- */
+.plan-badge, .plan-chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 999px; font: 700 12.5px var(--sans); letter-spacing: .01em; color: #5b3a00; background: linear-gradient(135deg, #ffe08a, #f5b942); border: 1px solid #e0a52a; cursor: pointer; white-space: nowrap; box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 2px 8px rgba(245,185,66,.28); transition: transform .15s ease, box-shadow .15s ease; }
+.plan-badge:hover { transform: translateY(-1px); box-shadow: 0 1px 0 rgba(255,255,255,.5) inset, 0 6px 14px rgba(245,185,66,.4); }
+.plan-badge svg, .plan-chip svg { width: 14px; height: 14px; fill: currentColor; }
+.plan-chip { height: 26px; cursor: default; box-shadow: none; }
+.org-hero { display: flex; gap: var(--s4); align-items: center; max-width: 680px; margin-bottom: var(--s4); }
+.org-hero h2 { margin: 0 0 4px; }
+.org-mark { width: 56px; height: 56px; border-radius: 16px; display: grid; place-items: center; font: 700 24px var(--sans); color: #fff; background: linear-gradient(135deg, var(--accent), #7c5cff); box-shadow: 0 6px 18px rgba(99,102,241,.35); flex: none; }
+.plan-card { border: 1px solid #e0a52a; background: linear-gradient(135deg, rgba(255,224,138,.28), transparent 70%), var(--surface); }
+.plan-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--s3); }
+.plan-name { display: inline-flex; align-items: center; gap: 8px; font: 700 22px var(--sans); }
+.plan-name svg { width: 20px; height: 20px; fill: #f5b942; }
+.plan-facts { display: flex; gap: var(--s5); flex-wrap: wrap; margin-bottom: var(--s3); }
+.plan-facts > div { display: flex; flex-direction: column; gap: 2px; }
+.plan-facts .k { font-size: 12px; color: var(--text-3); }
+.plan-facts b { font-size: 16px; }
+.req-list { list-style: none; margin: var(--s4) 0 0; padding: 0; display: grid; gap: 10px; }
+.req-list li { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: start; }
+.req-list .hint { grid-column: 2; }
+button, .chip, .card { transition: transform .12s ease, box-shadow .15s ease, border-color .15s ease, background-color .15s ease; }
+button.primary:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99,102,241,.3); }
+button:not(:disabled):active { transform: translateY(0) scale(.98); }
+.chip:not(.on):hover { transform: translateY(-1px); }
+@media (prefers-reduced-motion: reduce) { button, .chip, .card, .plan-badge { transition: none; } }
+@media (max-width: 700px) { .plan-badge { padding: 0 8px; } .plan-badge svg { display: none; } }

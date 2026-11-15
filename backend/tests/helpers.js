@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import request from "supertest";
 import { createApp, createInternalApp } from "../src/app.js";
 import { ownerPool } from "../src/db/pool.js";
@@ -5,18 +6,23 @@ import { migrate } from "../src/db/migrate.js";
 import { resetRateLimits } from "../src/middleware/rateLimit.js";
 
 export const ORIGIN = "http://localhost:5173";
-const TABLES = ["tool_log", "builder_history", "agent_tests", "custom_tools", "tasks", "api_keys", "call_answers", "agent_versions", "error_logs", "bulk_items", "bulk_runs", "meta", "call_events", "calls", "activity", "contact_number_tags", "contact_tags",
+const TABLES = ["impersonations", "admin_sessions", "admin_audit", "admins", "minute_ledger", "org_requests", "topups", "subscriptions", "tool_log", "builder_history", "agent_tests", "custom_tools", "tasks", "api_keys", "call_answers", "agent_versions", "error_logs", "bulk_items", "bulk_runs", "meta", "call_events", "calls", "activity", "contact_number_tags", "contact_tags",
   "contact_numbers", "contacts", "tags", "phone_numbers", "routes", "prompt_versions",
   "prompts", "agents", "login_failures", "devices", "sessions", "invites", "memberships", "users", "organizations"];
 
 /** The database owner's connection: sees every row (tests set up and inspect with it). */
 export const db = ownerPool();
 
+// The rate card as migration 028 seeded it, read from the migration itself so the tests cannot drift from it.
+const RATE_CARD_SQL = readFileSync(new URL("../src/db/migrations/028_billing_and_admin.sql", import.meta.url), "utf8")
+  .match(/INSERT INTO plans[\s\S]*?;\n/)[0];
+
 let migrated = false;
 export async function freshDb() {
   if (!migrated) { await migrate(); migrated = true; }
   await resetRateLimits();
-  await db.query(`TRUNCATE ${TABLES.join(", ")} RESTART IDENTITY CASCADE`);
+  await db.query(`TRUNCATE ${TABLES.join(", ")}, plans RESTART IDENTITY CASCADE`);
+  await db.query(RATE_CARD_SQL); // a test may edit plans; the next one starts from the real rate card
 }
 
 export const app = createApp();
@@ -38,11 +44,15 @@ export async function owner(fields = {}) {
   return b;
 }
 
-export async function member(ownerBrowser, fields = {}) {
-  const me = await ownerBrowser.get("/api/me");
+/** Someone who joins the organization with an invite code. Their role is the code's: a viewer unless `role` says otherwise. */
+export async function member(ownerBrowser, { role = "viewer", ...fields } = {}) {
+  // Straight into the table, so it works for organizations that have not chosen a plan yet.
+  const code = `t${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+  await db.query("INSERT INTO invites (code, org_id, role, made_by, expires_at) VALUES ($1, $2, $3, 'test', now() + interval '7 days')", [code, ownerBrowser.user.org_id, role]);
+  const made = { body: { code } };
   const b = browser();
   const r = await b.post("/api/auth/signup").send({ name: "Ravi", email: "ravi@acme.in",
-    password: "another pass", invite: me.body.invite_code, ...fields });
+    password: "another pass", invite: made.body.code, ...fields });
   if (r.status !== 200) throw new Error(`member signup failed: ${r.status} ${JSON.stringify(r.body)}`);
   b.user = r.body;
   return b;

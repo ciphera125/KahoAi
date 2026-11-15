@@ -24,7 +24,7 @@ describe("every tool that is made, changed or removed leaves a record", () => {
     await talk(b, { agent_id: a.id, messages: said("ask for the EMI date") });
     const l = await log(b);
     expect(l.entries[0]).toMatchObject({ action: "built", source: "builder", kind: "write_down", tool_label: "EMI date",
-      agent_id: a.id, actor: "Asha Rao", role: "owner", detail: expect.stringMatching(/EMI date/) });
+      agent_id: a.id, actor: "Asha Rao", role: "admin", detail: expect.stringMatching(/EMI date/) });
     const h = (await b.get("/api/assistant/history")).body.entries[0];
     expect(l.entries[0].history_id).toBe(h.id);
   });

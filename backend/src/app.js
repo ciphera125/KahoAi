@@ -8,13 +8,14 @@ import { randomUUID } from "node:crypto";
 import { config } from "./config/env.js";
 import { pool } from "./db/pool.js";
 import { logger } from "./utils/logger.js";
-import { apiHeaders, hostCheck, jsonOnly, originCheck } from "./middleware/security.js";
+import { adminHostCheck, adminOriginCheck, apiHeaders, hostCheck, jsonOnly, originCheck } from "./middleware/security.js";
 import { requireApiKey } from "./middleware/apiKey.js";
 import publicApiRouter from "./routes/publicApi.js";
-import { ipLimiter, sessionLimiter } from "./middleware/rateLimit.js";
+import { adminLimiter, ipLimiter, sessionLimiter } from "./middleware/rateLimit.js";
 import { requireServiceToken } from "./middleware/internal.js";
 import { errorHandler, notFound } from "./middleware/errors.js";
 import apiRouter from "./routes/index.js";
+import adminRouter from "./routes/admin.js";
 import internalRouter from "./routes/internal.js";
 
 export function createApp() {
@@ -40,6 +41,9 @@ export function createApp() {
   // Another system's API, by key. Mounted before /api so it does not go through the
   // browser's checks: a machine client sends no Origin and carries no cookies.
   app.use("/api/v1", apiHeaders, ipLimiter, express.json({ limit: "256kb" }), refuseNulls, requireApiKey, publicApiRouter);
+  // The admin site: its own pages' origin and address, its own cookie, its own limits. Before /api, which would otherwise answer first.
+  app.use("/api/admin", apiHeaders, adminHostCheck, adminOriginCheck, ipLimiter, adminLimiter, jsonOnly,
+    express.json({ limit: "64kb" }), cookieParser(), refuseNulls, adminRouter, notFound, errorHandler);
   app.use("/api", apiHeaders, hostCheck, originCheck, ipLimiter, sessionLimiter, jsonOnly,
     json, cookieParser(), refuseNulls, apiRouter);
 

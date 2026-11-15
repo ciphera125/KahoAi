@@ -3,6 +3,10 @@
 // HttpOnly cookie); a 401 means the session ended, handled by the auth layer.
 let onUnauthorized = () => {};
 export const setUnauthorizedHandler = (fn) => { onUnauthorized = fn; };
+// A 402 with a `subscription_*` code means the organization's plan is not open: the page asks who is signed in
+// again, and the app shows the plan screen instead of an error on whatever was being loaded.
+let onPaymentRequired = () => {};
+export const setPaymentRequiredHandler = (fn) => { onPaymentRequired = fn; };
 
 export class ApiError extends Error {
   constructor(message, status, data) {
@@ -29,6 +33,7 @@ export async function api(method, path, body) {
     onUnauthorized();
     throw new ApiError("Please sign in again.", 401, data);
   }
+  if (res.status === 402 && typeof data.code === "string" && data.code.startsWith("subscription_")) onPaymentRequired();
   if (!res.ok) throw new ApiError(data.error || `Something went wrong (HTTP ${res.status})`, res.status, data);
   return data;
 }

@@ -2,9 +2,10 @@
 // something, and the Settings page prints it, so what the page says a role can do is exactly
 // what the server lets it do.
 //
-// Six roles. The person who creates an organization is its owner. They make admins, and give
-// everyone else one of the four roles below an admin. Someone who joins with an invite code
-// starts as a viewer and is given a role by an admin, so nobody gets more than was meant.
+// Five roles, one of them in charge. The person who creates an organization is an admin, with exactly
+// the powers every admin has. An admin gives everyone else a role, including admin. An invite code is
+// made for one role (never admin) and gives that role and no more; someone who needs more is promoted
+// from the People list afterwards, so nobody gets more than was meant.
 
 export const PERMISSIONS = [
   { id: "view", group: "Looking", label: "See the dashboard, calls, transcripts, contacts, agents and tasks" },
@@ -21,15 +22,14 @@ export const PERMISSIONS = [
   { id: "team.manage", group: "Organization", label: "Invite people and remove them" },
   { id: "team.roles", group: "Organization", label: "Change people's roles" },
   { id: "org.settings", group: "Organization", label: "Change the organization-wide call settings" },
+  { id: "billing.manage", group: "Organization", label: "Choose the plan and top up minutes" },
 ];
 
 const ALL = PERMISSIONS.map((p) => p.id);
 
 export const ROLES = [
-  { id: "owner", label: "Owner", permissions: ALL,
-    summary: "Created the organization. Can do everything, including making other admins." },
   { id: "admin", label: "Admin", permissions: ALL,
-    summary: "Runs the organization: numbers, people, roles, keys and call settings, and everything below. Cannot make another admin." },
+    summary: "In charge of the organization: can do everything, including the plan, numbers, people, roles and keys, and can make others admins." },
   { id: "manager", label: "Manager",
     permissions: ["view", "recordings.listen", "calls.place", "calls.bulk", "contacts.edit", "contacts.delete", "agents.edit"],
     summary: "Runs the daily work: builds agents, places calls and bulk calls, listens to recordings and looks after contacts. Cannot change numbers, people or keys." },
@@ -43,11 +43,10 @@ export const ROLES = [
     summary: "Read only: sees the dashboard, calls and transcripts. Cannot listen to recordings or change anything." },
 ];
 
-/** Roles an admin or the owner may hand out. The owner is only ever the person who made the organization. */
-export const ASSIGNABLE = ROLES.map((r) => r.id).filter((id) => id !== "owner");
-/** Roles an admin (not the owner) may hand out: everyone below an admin. */
-export const BELOW_ADMIN = ASSIGNABLE.filter((id) => id !== "admin");
-export const DEFAULT_ROLE = "viewer";
+/** Roles an admin may give to someone in the organization. */
+export const ASSIGNABLE = ROLES.map((r) => r.id);
+/** Roles an invite code may carry. Never admin: the person joins, and an admin promotes them from the People list. */
+export const INVITABLE = ASSIGNABLE.filter((id) => id !== "admin");
 
 const BY_ROLE = new Map(ROLES.map((r) => [r.id, new Set(r.permissions)]));
 

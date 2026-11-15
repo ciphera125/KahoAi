@@ -10,7 +10,7 @@ export const STEPS = [
   { path: "agents", title: "Agents", text: "An agent is the AI voice that makes your calls: its name, what it says first, which language it speaks and what it is allowed to do. Make one for each job, such as reminders or follow-ups." },
   { path: "prompts", title: "Prompts", text: "A prompt is the written brief you give an agent: who it is, what it knows and how it should behave. Every change is saved as a version, so you can go back." },
   { path: "numbers", title: "Numbers", text: "The phone numbers your calls come from. Add the number you rent from your phone provider here, so calls show a number people recognise." },
-  { path: "team", title: "Team", text: "Everyone who works in your organization and what each person may do. Invite a teammate by sending them your invite code. They enter it when they sign up or sign in." },
+  { path: "team", title: "Team", text: "Everyone who works in your organization and what each person may do. Invite a teammate from Settings, People: you choose the role the code gives." },
   { path: "tasks", title: "Tasks", text: "Things that need doing after calls, such as calling someone back. Add them, tick them off and keep nothing in your head." },
   { path: "your-tools", title: "Your own tools", text: "Teach an agent to do more than talk, such as saving a customer's answer or looking something up. Describe what you need to Kaho Builder in plain words and it builds the tool for you." },
   { path: "tags", title: "Tags", text: "Coloured labels for your contacts, like Priority or Follow up. Use them to find and group people quickly." },

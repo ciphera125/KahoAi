@@ -5,16 +5,15 @@ import { PERMISSIONS, ROLES, can, permissionsOf } from "../src/models/permission
 beforeEach(freshDb);
 
 describe("who can do what", () => {
-  it("has the owner, an admin and four roles for the people who use the platform", () => {
-    expect(ROLES.map((r) => r.id)).toEqual(["owner", "admin", "manager", "builder", "operator", "viewer"]);
+  it("has an admin and four roles for the people who use the platform", () => {
+    expect(ROLES.map((r) => r.id)).toEqual(["admin", "manager", "builder", "operator", "viewer"]);
     for (const r of ROLES) {
       expect(r.label.length).toBeGreaterThan(2);
       expect(r.summary.length).toBeGreaterThan(30);
     }
   });
 
-  it("gives the owner and the admin everything an admin does", () => {
-    for (const p of PERMISSIONS) expect(can("owner", p.id), p.id).toBe(true);
+  it("gives the admin everything", () => {
     for (const p of PERMISSIONS) expect(can("admin", p.id), p.id).toBe(true);
   });
 
@@ -68,22 +67,22 @@ describe("the roles are enforced, not just described", () => {
     expect((await m.get("/api/agents")).status).toBe(200);
   });
 
-  it("the owner can give someone any of the four roles, and the change takes effect at once", async () => {
+  it("an admin can give someone any role, and the change takes effect at once", async () => {
     const b = await owner();
     const m = await member(b);
     for (const role of ["manager", "builder", "operator", "viewer"]) {
       expect((await b.patch(`/api/team/${m.user.id}`).send({ role })).status, role).toBe(200);
     }
-    expect((await b.patch(`/api/team/${m.user.id}`).send({ role: "owner" })).status).toBe(400);
+    expect((await b.patch(`/api/team/${m.user.id}`).send({ role: "admin" })).status).toBe(200);
     expect((await b.patch(`/api/team/${m.user.id}`).send({ role: "wizard" })).status).toBe(400);
   });
 
-  it("an admin can set the four lower roles but not make another admin", async () => {
+  it("a second admin can set any role, including making another admin", async () => {
     const b = await owner();
     const a = await asRole(b, "admin");
     const other = await member(b, { email: "c@acme.in" });
     expect((await a.patch(`/api/team/${other.user.id}`).send({ role: "operator" })).status).toBe(200);
-    expect((await a.patch(`/api/team/${other.user.id}`).send({ role: "admin" })).status).toBe(403);
+    expect((await a.patch(`/api/team/${other.user.id}`).send({ role: "admin" })).status).toBe(200);
   });
 
   it("a builder can make and publish an agent but cannot place a call or play a recording", async () => {
@@ -114,7 +113,7 @@ describe("the roles are enforced, not just described", () => {
     expect((await m.post("/api/contacts/delete").send({ ids: [] })).status).not.toBe(403);
     expect((await m.post("/api/numbers").send({})).status).toBe(403);
     expect((await m.post("/api/api-keys").send({ name: "x" })).status).toBe(403);
-    expect((await m.post("/api/auth/invite").send({})).status).toBe(403);
+    expect((await m.post("/api/invites").send({ role: "viewer" })).status).toBe(403);
   });
 
   it("a viewer cannot change a single thing", async () => {

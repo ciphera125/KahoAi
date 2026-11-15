@@ -24,8 +24,8 @@ export async function create(req, res) {
 /** Make the draft live. Only an admin may publish over the checks. */
 export async function publish(req, res) {
   const { note: why, override } = req.body ?? {};
-  if (override && !["owner", "admin"].includes(req.user.role)) {
-    throw forbidden("Only an owner or admin can publish a draft that has problems.");
+  if (override && req.user.role !== "admin") {
+    throw forbidden("Only an admin can publish a draft that has problems.");
   }
   const agent = await Agent.publish(req.user.org_id, req.params.agentId,
     { user: req.user, note: why, override: Boolean(override) });

@@ -24,8 +24,8 @@ describe("organizations", () => {
   it("lets anyone sign up and create their own organization, as its owner", async () => {
     const a = await owner();
     const b = await owner({ name: "Bilal", email: "bilal@beta.in", organization: "Beta" });
-    expect(a.user).toMatchObject({ role: "owner", org_name: "Acme" });
-    expect(b.user).toMatchObject({ role: "owner", org_name: "Beta" });
+    expect(a.user).toMatchObject({ role: "admin", org_name: "Acme" });
+    expect(b.user).toMatchObject({ role: "admin", org_name: "Beta" });
     expect(a.user.org_id).not.toBe(b.user.org_id);
     const bad = await browser().post("/api/auth/signup").send({ name: "C", email: "c@c.in", password: "12345678" });
     expect(bad.status).toBe(400);
@@ -150,26 +150,24 @@ describe("roles", () => {
     expect((await m.post("/api/contacts/delete").send({ ids: [] })).status).toBe(200);
   });
 
-  it("never lets anyone change the owner, make a second owner, or change their own role", async () => {
+  it("never lets anyone change their own role, and knows no owner role", async () => {
     const o = await owner();
     const m = await member(o);
     await o.patch(`/api/team/${m.user.id}`).send({ role: "admin" });
     expect((await o.patch(`/api/team/${o.user.id}`).send({ role: "viewer" })).body.error).toBe("you cannot change your own role");
-    expect((await m.patch(`/api/team/${o.user.id}`).send({ role: "viewer" })).status).toBe(403);
     expect((await o.patch(`/api/team/${m.user.id}`).send({ role: "owner" })).body.error).toBe("role must be one of: admin, manager, builder, operator, viewer");
   });
 
-  it("removes a member, ending their sessions at once; admins cannot remove admins or the owner", async () => {
+  it("removes a member, ending their sessions at once; nobody removes themselves", async () => {
     const o = await owner();
     const m = await member(o);
-    const m2 = await member(o, { email: "neha@acme.in", name: "Neha", invite: (await o.post("/api/auth/invite")).body.invite_code });
+    const m2 = await member(o, { email: "neha@acme.in", name: "Neha", invite: (await o.post("/api/invites").send({ role: "viewer" })).body.code });
     await o.patch(`/api/team/${m.user.id}`).send({ role: "admin" });
-    expect((await m.delete(`/api/team/${o.user.id}`)).status).toBe(403);
     expect((await m.delete(`/api/team/${m.user.id}`)).body.error).toBe("you cannot remove yourself");
     expect((await m.delete(`/api/team/${m2.user.id}`)).body).toEqual({ removed: m2.user.id });
     expect((await m2.get("/api/me")).status).toBe(401);
     const team = (await o.get("/api/team")).body;
-    expect(team.map((u) => [u.name, u.role])).toEqual([["Asha Rao", "owner"], ["Ravi", "admin"]]);
+    expect(team.map((u) => [u.name, u.role])).toEqual([["Asha Rao", "admin"], ["Ravi", "admin"]]);
   });
 
   it("will not let another team's owner touch your team", async () => {

@@ -8,7 +8,7 @@ router.get("/state", auth.state);
 router.post("/signup", authLimiter, auth.signUp);
 router.post("/login", authLimiter, auth.signIn);
 router.post("/logout", auth.signOut);
+router.post("/support-signin", authLimiter, auth.supportSignIn);
 router.post("/password", authLimiter, requireSession, auth.changePassword);
-router.post("/invite", requireSession, requirePermission("team.manage"), auth.newInvite);
 router.post("/logout-others", requireSession, auth.signOutOthers);
 export default router;

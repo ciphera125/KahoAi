@@ -120,6 +120,12 @@ def _clean_config(raw) -> dict | None:
             return None
         org_id = raw.get("org_id")
         version = raw.get("version")
+        # Why the Studio says this call must not be answered (no minutes, a plan that has ended...),
+        # or None. A short lowercase code and nothing else: anything odd is not a reason, so it is
+        # dropped, not obeyed.
+        blocked = raw.get("blocked")
+        if not (isinstance(blocked, str) and re.fullmatch(r"[a-z_]{1,40}", blocked)):
+            blocked = None
         return {"agent_id": str(raw["agent_id"]), "org_id": str(org_id) if org_id else None,
                 "name": str(raw.get("name") or ""),
                 "prompt": prompt or None, "tools": tools, "opening_line": opening or None,
@@ -129,6 +135,7 @@ def _clean_config(raw) -> dict | None:
                 # Always one of the four modes: it ends up inside the prompt the model reads.
                 "language": language.clean_mode(raw.get("language")),
                 "confirm_answers": raw.get("confirm_answers") is not False,
+                "blocked": blocked,
                 "version": int(version) if version is not None else None}
     except (KeyError, TypeError, ValueError):
         return None
