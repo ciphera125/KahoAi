@@ -62,7 +62,7 @@ built assets.
 ## Where things are
 
 ```
-src/content/        all copy, pricing (pricing.ts) and page titles (seo.ts)
+src/content/        all copy, plans (pricing.ts: minutes and calls only, no prices) and page titles (seo.ts)
 src/components/     Header, Button/Section/Title (ui.tsx), the section blocks, Calculator, Icon
 src/pages/          Home, Features, BookACall, and the simple pages
 src/lib/            calculator maths and booking-form validation

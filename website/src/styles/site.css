@@ -44,7 +44,6 @@
 .k-title-sm { font-size: clamp(26px, 2.6vw, 34px); }
 .k-title .k-serif { font-family: var(--serif); font-style: italic; font-weight: 500; letter-spacing: -.01em; font-size: 1.06em; }
 .k-eyebrow { display: block; font: 500 13px/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--k-pine); margin: 0 0 22px; }
-.k-eyebrow-n { color: var(--k-ink); font-weight: 500; }
 .k-lede { font-size: clamp(18px, 1.45vw, 21px); line-height: 1.5; color: var(--k-text); max-width: 54ch; margin-top: 24px; }
 .k-textlink { display: inline-flex; align-items: center; gap: 8px; margin-top: 32px; font-weight: 600; color: var(--k-ink); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 6px; }
 .k-textlink svg { transition: transform .25s var(--ease); }
@@ -74,7 +73,8 @@
 .k-header { position: sticky; top: 0; z-index: 50; background: var(--k-paper); border-bottom: 1px solid var(--k-border); }
 .k-header-in { max-width: var(--k-max); margin-inline: auto; padding-inline: var(--k-gutter); height: 72px; display: flex; align-items: center; gap: clamp(20px, 3vw, 44px); }
 .k-brand { display: flex; align-items: center; gap: 10px; font: 800 22px/1 var(--k-display); letter-spacing: -.02em; color: var(--k-ink); }
-.k-nav { display: flex; gap: 28px; }
+.k-nav { display: flex; gap: clamp(18px, 2.2vw, 30px); }
+[id] { scroll-margin-top: 88px; }
 .k-nav-link, .k-mobile-link { font-weight: 500; font-size: 16px; color: var(--k-text); padding: 6px 0; text-decoration: none; }
 .k-nav-link:hover { color: var(--k-ink); }
 .k-nav-link.is-active, .k-mobile-link.is-active { color: var(--k-ink); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 8px; }
@@ -127,7 +127,9 @@
 .k-turn p { margin: 4px 0 0; font-size: 18px; line-height: 1.45; color: var(--k-ink); }
 .k-turn-who { font: 500 11px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--k-text); }
 .k-turn-customer { background: var(--k-paper); border-bottom-left-radius: 4px; }
-.k-turn-agent { margin-left: auto; margin-bottom: 0; background: var(--k-sage); border-bottom-right-radius: 4px; }
+.k-turn-agent { margin-left: auto; background: var(--k-sage); border-bottom-right-radius: 4px; }
+.k-turn:last-child { margin-bottom: 0; }
+.k-turn p { font-size: 17px; }
 
 /* ---------- talk to kaho ---------- */
 .k-tel { display: flex; flex-direction: column; gap: 12px; padding: clamp(24px, 3vw, 36px); color: var(--k-ink); transition: transform .25s var(--ease), box-shadow .25s var(--ease); }
@@ -181,7 +183,7 @@
 .k-panel-head { grid-column: 1 / 6; }
 .k-panel .k-title { font-size: clamp(32px, 3.8vw, 54px); }
 .k-panel .k-title { color: var(--k-cream); }
-.k-panel .k-eyebrow, .k-panel .k-eyebrow-n { color: var(--k-cream); opacity: .85; }
+.k-panel .k-eyebrow { color: var(--k-cream); opacity: .85; }
 .k-panel .k-lede { color: var(--k-cream); opacity: .85; }
 .k-dash { grid-column: 6 / 13; margin: 0; background: var(--k-card); color: var(--k-ink); border: var(--k-border-w) solid var(--k-ink); border-radius: var(--k-radius); overflow: hidden; box-shadow: 6px 6px 0 var(--k-marigold); }
 .k-dash-bar { display: flex; align-items: center; gap: 6px; height: 38px; padding: 0 14px; background: var(--k-sage); border-bottom: var(--k-border-w) solid var(--k-ink); }
@@ -214,6 +216,7 @@
 .k-plan-price { margin: 18px 0 20px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px; color: var(--k-ink); }
 .k-plan-price b { font: 800 clamp(30px, 2.8vw, 40px)/1 var(--k-display); letter-spacing: -.02em; overflow-wrap: anywhere; }
 .k-plan-price span { font-size: 16px; color: var(--k-text); }
+.k-plan-price b + span { margin-left: 4px; }
 .k-plan-rows { margin: 0 0 24px; }
 .k-plan-rows div { padding: 10px 0; border-top: 1px solid var(--k-border); }
 .k-plan-rows dt { font: 500 11px/1.2 var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--k-text); }
@@ -282,6 +285,7 @@
 .k-art-list { display: grid; gap: 10px; }
 .k-art-row { display: flex; align-items: center; gap: 12px; padding: 13px 14px; background: var(--k-paper); border: var(--k-border-w) solid var(--k-ink); border-radius: 10px; font-weight: 500; }
 .k-art-row span { flex: 1; }
+.k-art-next { font: 600 12px/1 var(--mono); text-transform: uppercase; letter-spacing: .05em; color: var(--k-ink); background: var(--k-marigold); padding: 6px 9px; border-radius: 99px; }
 .k-art-ok { display: inline-flex; align-items: center; gap: 6px; font: 600 12px/1 var(--mono); text-transform: uppercase; letter-spacing: .05em; background: var(--k-good-bg); color: var(--k-good-ink); padding: 6px 9px; border-radius: 99px; }
 .k-art-cal-head { font: 500 12px/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--k-text); margin-bottom: 12px; }
 .k-art-slots { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -367,9 +371,12 @@
   .k-fblock .k-fblock-copy, .k-fblock .k-fblock-art { grid-column: 1 / -1 !important; order: 0 !important; }
   .k-fblock-art { min-height: 0; }
 }
-@media (max-width: 760px) {
+@media (max-width: 980px) {
   .k-nav { display: none; }
   .k-burger { display: grid; }
+  .k-header-cta { margin-left: auto; }
+}
+@media (max-width: 760px) {
   .k-header-cta { padding: 10px 16px; min-height: 44px; font-size: 16px; }
   .k-header-in { gap: 12px; height: 64px; }
   .k-brand { font-size: 20px; }
@@ -381,7 +388,7 @@
   .k-faq-a p { padding-right: 0; }
   .k-callcard { transform: none; }
 }
-@media (min-width: 761px) { .k-mobile-nav:not([hidden]) { display: none; } }
+@media (min-width: 981px) { .k-mobile-nav:not([hidden]) { display: none; } }
 @media (max-width: 600px) {
   .k-plans { grid-template-columns: 1fr; }
   .k-btn-cta { padding: 18px 26px; font-size: 18px; }
@@ -390,4 +397,22 @@
 @media (max-width: 380px) {
   .k-brand span { font-size: 18px; }
   .k-header-cta { padding: 10px 12px; font-size: 15px; }
+}
+
+/* ---------- motion: CSS transitions only, all off for reduced motion ---------- */
+/* Hero: the copy rises in, then the call card's lines appear one after another. */
+@keyframes k-rise { from { opacity: 0; translate: 0 18px; } to { opacity: 1; translate: 0 0; } }
+.k-hero-copy > * { animation: k-rise .8s var(--ease) both; }
+.k-hero-copy > :nth-child(2) { animation-delay: .08s; }
+.k-hero-copy > :nth-child(3) { animation-delay: .16s; }
+.k-hero-copy > :nth-child(4) { animation-delay: .24s; }
+.k-hero-art { animation: k-rise .9s var(--ease) .2s both; }
+.k-callcard .k-turn { animation: k-rise .6s var(--ease) both; }
+/* Below the fold: sections fade up as they scroll in (set by useReveal in App.tsx).
+   Uses the translate property so it never fights the cards' own transforms. */
+.k-rv-wait { opacity: 0; translate: 0 28px; }
+.k-rv-go { transition: opacity .7s var(--ease), translate .8s var(--ease); }
+@media (prefers-reduced-motion: reduce) {
+  .k-hero-copy > *, .k-hero-art, .k-callcard .k-turn { animation: none; }
+  .k-rv-wait { opacity: 1; translate: none; }
 }

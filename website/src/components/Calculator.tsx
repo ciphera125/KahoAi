@@ -31,10 +31,10 @@ export function Calculator() {
       </form>
       <div className="k-calc-out" aria-live="polite">
         <dl>
-          <div><dt>Customers missed per day</dt><dd>{formatCount(r.perDay, 1)}</dd></div>
-          <div><dt>Customers missed per month</dt><dd>{formatCount(r.perMonth, 0)}</dd></div>
-          <div><dt>Missed per minute of business hours</dt><dd>{formatCount(r.perMinute, 2)}</dd></div>
-          <div className="k-calc-big"><dt>Estimated revenue lost per month</dt><dd>{formatRupees(r.revenuePerMonth)}</dd></div>
+          <div><dt>{copy.outputs.perDay}</dt><dd>{formatCount(r.perDay, 1)}</dd></div>
+          <div><dt>{copy.outputs.perMonth}</dt><dd>{formatCount(r.perMonth, 0)}</dd></div>
+          <div><dt>{copy.outputs.perMinute}</dt><dd>{formatCount(r.perMinute, 2)}</dd></div>
+          <div className="k-calc-big"><dt>{copy.outputs.revenue}</dt><dd>{formatRupees(r.revenuePerMonth)}</dd></div>
         </dl>
         <p className="k-calc-note">{copy.note}</p>
       </div>

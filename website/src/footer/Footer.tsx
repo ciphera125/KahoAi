@@ -2,11 +2,16 @@
 // byte-for-byte from the first landing page and must not be edited; footer.test.ts
 // fails if they change. This file only mounts it and replays the original reveal
 // behaviour (fade-up of the heading, line and buttons; rise of the giant wordmark).
-import { useEffect, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import html from "./footer.html?raw";
 import "./footer.css";
 
-export function Footer() {
+// One constant object, and memo, so React never rewrites the footer's HTML when the page
+// changes. Rewriting it wiped the "in" classes and left the footer text and wordmark
+// invisible after navigating to another page.
+const FOOTER_HTML = { __html: html };
+
+export const Footer = memo(function Footer() {
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -32,5 +37,5 @@ export function Footer() {
     return () => io.disconnect();
   }, []);
 
-  return <div ref={ref} className="k-footer-slot" dangerouslySetInnerHTML={{ __html: html }} />;
-}
+  return <div ref={ref} className="k-footer-slot" dangerouslySetInnerHTML={FOOTER_HTML} />;
+});

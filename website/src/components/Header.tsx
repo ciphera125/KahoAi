@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, NavLink } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { Button } from "./ui";
 import { Icon } from "./Icon";
 
@@ -15,14 +15,25 @@ export function Logo() {
   );
 }
 
+// Home and Features are pages; the rest jump to sections of the home page.
 const LINKS = [
-  { to: "/", label: "Home", end: true },
-  { to: "/features", label: "Features", end: false },
+  { to: "/", label: "Home" },
+  { to: "/features", label: "Features" },
+  { to: "/#how", label: "How it works" },
+  { to: "/#pricing", label: "Pricing" },
+  { to: "/#faq", label: "FAQ" },
 ];
+
+function isActive(to: string, pathname: string, hash: string) {
+  const [path, frag] = to.split("#");
+  if (frag) return pathname === "/" && hash === "#" + frag;
+  return pathname === path && (path !== "/" || !hash || !LINKS.some((l) => l.to === "/" + hash));
+}
 
 export function Header() {
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
+  const { pathname, hash } = useLocation();
 
   // Close the menu on Escape; links close it when followed.
   useEffect(() => {
@@ -32,6 +43,16 @@ export function Header() {
     return () => window.removeEventListener("keydown", onKey);
   }, [open]);
 
+  const links = (cls: string) =>
+    LINKS.map((l) => {
+      const on = isActive(l.to, pathname, hash);
+      return (
+        <Link key={l.to} to={l.to} onClick={close} className={`${cls}${on ? " is-active" : ""}`} aria-current={on ? "page" : undefined}>
+          {l.label}
+        </Link>
+      );
+    });
+
   return (
     <header className="k-header">
       <div className="k-header-in">
@@ -39,26 +60,14 @@ export function Header() {
           <Logo />
           <span>Kaho AI</span>
         </Link>
-        <nav className="k-nav" aria-label="Main">
-          {LINKS.map((l) => (
-            <NavLink key={l.to} to={l.to} end={l.end} className={({ isActive }) => `k-nav-link${isActive ? " is-active" : ""}`}>
-              {l.label}
-            </NavLink>
-          ))}
-        </nav>
+        <nav className="k-nav" aria-label="Main">{links("k-nav-link")}</nav>
         <Button to="/book-a-call" className="k-header-cta" onClick={close}>Book a call</Button>
         <button type="button" className="k-burger" aria-expanded={open} aria-controls="k-mobile-nav"
           aria-label={open ? "Close menu" : "Open menu"} onClick={() => setOpen((o) => !o)}>
           <Icon name={open ? "close" : "menu"} />
         </button>
       </div>
-      <nav id="k-mobile-nav" className="k-mobile-nav" aria-label="Main, mobile" hidden={!open}>
-        {LINKS.map((l) => (
-          <NavLink key={l.to} to={l.to} end={l.end} onClick={close} className={({ isActive }) => `k-mobile-link${isActive ? " is-active" : ""}`}>
-            {l.label}
-          </NavLink>
-        ))}
-      </nav>
+      <nav id="k-mobile-nav" className="k-mobile-nav" aria-label="Main, mobile" hidden={!open}>{links("k-mobile-link")}</nav>
     </header>
   );
 }

@@ -39,12 +39,8 @@ export function Title({ as: Tag = "h2", parts, className = "", id }: { as?: "h1"
   );
 }
 
-export function Eyebrow({ n, children }: { n?: number; children: ReactNode }) {
-  return (
-    <p className="k-eyebrow">
-      {n !== undefined && <span className="k-eyebrow-n">{String(n).padStart(2, "0")} /</span>} {children}
-    </p>
-  );
+export function Eyebrow({ children }: { children: ReactNode }) {
+  return <p className="k-eyebrow">{children}</p>;
 }
 
 export type Tone = "paper" | "sage";

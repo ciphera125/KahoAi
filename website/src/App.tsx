@@ -33,8 +33,38 @@ function useRouteMeta() {
   }, [pathname, hash]);
 }
 
+// Things that fade up when scrolled into view. Only elements below the fold are
+// hidden first, so nothing visible on load ever blinks, and without JS all is shown.
+const REVEAL = ".k-main .k-head, .k-main .k-split-head, .k-main .k-card, .k-main .k-tile, .k-main .k-step, .k-main .k-faq-item, .k-main .k-panel, .k-main .k-fblock-copy, .k-main .k-cta-in, .k-main .k-footnote";
+
+function useReveal() {
+  const { pathname } = useLocation();
+  useEffect(() => {
+    if (!("IntersectionObserver" in window) || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const els = Array.from(document.querySelectorAll<HTMLElement>(REVEAL))
+      .filter((el) => !el.closest(".k-hero") && el.getBoundingClientRect().top > window.innerHeight);
+    els.forEach((el) => el.classList.add("k-rv-wait", "k-rv-go"));
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((e) => {
+        if (!e.isIntersecting) return;
+        const el = e.target as HTMLElement;
+        const sibs = el.parentElement ? Array.from(el.parentElement.children).filter((c) => c.classList.contains("k-rv-wait")) : [];
+        el.style.transitionDelay = Math.min(sibs.indexOf(el), 4) * 70 + "ms";
+        el.classList.remove("k-rv-wait");
+        io.unobserve(el);
+      });
+    }, { rootMargin: "0px 0px -8% 0px" });
+    els.forEach((el) => io.observe(el));
+    return () => {
+      io.disconnect();
+      els.forEach((el) => el.classList.remove("k-rv-wait"));
+    };
+  }, [pathname]);
+}
+
 function Layout() {
   useRouteMeta();
+  useReveal();
   return (
     <>
       <a className="k-skip" href="#main">Skip to content</a>

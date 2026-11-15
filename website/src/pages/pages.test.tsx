@@ -38,14 +38,16 @@ describe("home", () => {
   test("one h1, the agreed headline", () => {
     const html = render("/");
     expect(h1s(html)).toBe(1);
-    expect(html).toMatch(/Never miss a customer call/);
+    expect(html.replace(/<[^>]+>/g, "")).toMatch(/Your follow-up calls, made/);
+    expect(html.replace(/<[^>]+>/g, "")).not.toMatch(/Incoming call|Never miss/);
   });
   test("pricing cards link to the booking page with their plan", () => {
     const html = render("/");
     for (const p of ["Start", "Growth", "Scale", "Enterprise"]) expect(html).toContain(`href="/book-a-call?plan=${p}"`);
     expect(html).toContain("Most chosen");
-    expect(html).toContain("Rs 5,499");
-    expect(html).not.toContain("Grow<"); // the old Grow plan is gone
+    expect(html.replace(/<[^>]+>/g, "")).toContain("1,100 minutes a month");
+    const plans = html.slice(html.indexOf('data-section="pricing"'), html.indexOf('data-section="faq"'));
+    expect(plans).not.toMatch(/Rs [0-9]|\/month|per minute/); // no prices: they book a call for pricing
   });
   test("the footer comes right after the marigold CTA band", () => {
     const html = render("/");
@@ -62,6 +64,8 @@ describe("header", () => {
     const html = render("/features");
     expect(html).toMatch(/<header[^>]*class="k-header/);
     expect(html).toContain('href="/features"');
+    for (const h of ["/#how", "/#pricing", "/#faq"]) expect(html).toContain(`href="${h}"`);
+    expect(html).toMatch(/>Pricing</);
     expect(html).toContain(">Book a call<");
     expect(html).not.toMatch(/For developers|For teams|nav-box|class="seg"/);
   });
@@ -72,10 +76,10 @@ describe("features page", () => {
     const html = render("/features");
     const titles = [...html.matchAll(/<h2 class="k-fblock-title"[^>]*>([^<]+)</g)].map((m) => m[1]);
     expect(titles).toEqual([
-      "Answers every incoming call", "Makes outgoing calls", "Books appointments on the call", "Hindi and English in the same call",
-      "Talks like a person", "Your dashboard", "Works with your own number", "Set up around your business",
+      "Calls your customers for you", "Works through your whole list", "Books appointments on the call", "Hindi and English in the same call",
+      "Talks like a person", "Your dashboard", "Calls from your own number", "Set up around your business",
     ]);
-    expect(html).toContain("Ready to hear it on your own calls?");
+    expect(html).toContain("Ready to hear it call your customers?");
     expect(h1s(html)).toBe(1);
     expect(html).toContain('class="end band"');
   });

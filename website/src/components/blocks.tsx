@@ -5,26 +5,25 @@ import { Icon, type IconName } from "./Icon";
 import { Button, WaveRule } from "./ui";
 import type { Plan } from "../content/pricing";
 
-/* ---------- Hero call card ---------- */
-export function CallCard({ label, customer, agent }: { label: string; customer: string; agent: string }) {
+/* ---------- Hero call card: an outgoing call ---------- */
+type Turn = { who: "agent" | "customer"; text: string; hindi?: boolean };
+export function CallCard({ label, status, turns }: { label: string; status: string; turns: Turn[] }) {
   return (
     <figure className="k-callcard k-card">
       <figcaption className="k-callcard-label">{label}</figcaption>
       <div className="k-callcard-top">
-        <span className="k-callcard-icon"><Icon name="incoming" size={20} /></span>
-        <span className="k-callcard-who"><b>Incoming call</b><small>Kaho is answering</small></span>
+        <span className="k-callcard-icon"><Icon name="outgoing" size={20} /></span>
+        <span className="k-callcard-who"><b>Outgoing call</b><small>{status}</small></span>
         <svg className="k-callcard-bars" viewBox="0 0 60 24" aria-hidden="true" focusable="false">
           {[6, 14, 20, 10, 16, 8, 12].map((h, i) => <rect key={i} x={i * 8 + 2} y={12 - h / 2} width="4" height={h} rx="2" style={{ animationDelay: `${i * 0.12}s` }} />)}
         </svg>
       </div>
-      <div className="k-turn k-turn-customer">
-        <span className="k-turn-who">Customer</span>
-        <p lang="hi">{customer}</p>
-      </div>
-      <div className="k-turn k-turn-agent">
-        <span className="k-turn-who">Kaho agent</span>
-        <p>{agent}</p>
-      </div>
+      {turns.map((t, i) => (
+        <div key={i} className={`k-turn k-turn-${t.who}`} style={{ animationDelay: `${0.5 + i * 0.5}s` }}>
+          <span className="k-turn-who">{t.who === "agent" ? "Kaho agent" : "Customer"}</span>
+          <p lang={t.hindi ? "hi" : undefined}>{t.text}</p>
+        </div>
+      ))}
     </figure>
   );
 }
@@ -40,7 +39,7 @@ export function BeforeAfter({ without, with: withKaho }: { without: Side; with: 
         <span className="k-status k-status-bad"><i aria-hidden="true" />{without.tag}</span>
       </article>
       <article className="k-card k-ba-card k-ba-with">
-        <div className="k-ba-head"><span className="k-ba-icon"><Icon name="incoming" /></span><h3>{withKaho.label}</h3><span className="k-example">Example</span></div>
+        <div className="k-ba-head"><span className="k-ba-icon"><Icon name="outgoing" /></span><h3>{withKaho.label}</h3><span className="k-example">Example</span></div>
         <p>{withKaho.text}</p>
         <span className="k-status k-status-good"><i aria-hidden="true" />{withKaho.tag}</span>
       </article>
@@ -102,7 +101,7 @@ export function DashboardMock({ nav, rows, label }: { nav: string[]; rows: Row[]
           <div className="k-dash-title"><b>Call logs</b><span className="k-dash-sample">{label}</span></div>
           <div className="k-dash-scroll">
             <table>
-              <thead><tr><th scope="col">Caller</th><th scope="col">Time</th><th scope="col">Duration</th><th scope="col">Outcome</th></tr></thead>
+              <thead><tr><th scope="col">Contact</th><th scope="col">Time</th><th scope="col">Duration</th><th scope="col">Outcome</th></tr></thead>
               <tbody>
                 {rows.map((r) => (
                   <tr key={r.name}><td>{r.name}</td><td>{r.time}</td><td>{r.duration}</td><td><span className="k-dash-out">{r.outcome}</span></td></tr>
@@ -121,19 +120,16 @@ export function DashboardMock({ nav, rows, label }: { nav: string[]; rows: Row[]
   );
 }
 
-/* ---------- Pricing ---------- */
+/* ---------- Plans (no prices: pricing is shared on a call) ---------- */
 const inr = (n: number) => n.toLocaleString("en-IN");
-export function PricingCard({ plan }: { plan: Plan }) {
-  const custom = plan.price === null;
+export function PlanCard({ plan, button }: { plan: Plan; button: string }) {
+  const custom = plan.minutes === null;
   const rows: [string, string][] = custom
-    ? [["Rate", plan.perMinute], ["Support", plan.support]]
+    ? [["Minutes and calls", "Sized to your volume"], ["At the same time", "As many as you need"], ["Support", plan.support]]
     : [
-        ["Minutes", `${inr(plan.minutes!)} minutes`],
-        ["Calls", `About ${inr(plan.calls!)} calls*`],
-        ["Rate", plan.perMinute],
-        ["Extra minutes", `${plan.extraMinute} per minute`],
+        ["Calls", `About ${inr(plan.calls!)} calls a month*`],
         ["At the same time", `${plan.concurrent} calls`],
-        ["Call logs", `${plan.logs}`],
+        ["Call logs kept", `${plan.logs}`],
         ["Support", plan.support],
       ];
   return (
@@ -143,12 +139,12 @@ export function PricingCard({ plan }: { plan: Plan }) {
         {plan.highlight && <span className="k-badge">Most chosen</span>}
       </div>
       <p className="k-plan-price">
-        {custom ? <b>Custom</b> : <><b>Rs {inr(plan.price!)}</b><span>/month</span></>}
+        {custom ? <b>Custom</b> : <><b>{inr(plan.minutes!)}</b> <span>minutes a month</span></>}
       </p>
       <dl className="k-plan-rows">
         {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
       </dl>
-      <Button to={`/book-a-call?plan=${plan.name}`} variant={plan.highlight ? "primary" : "outline"} className="k-plan-btn">Book a call</Button>
+      <Button to={`/book-a-call?plan=${plan.name}`} variant={plan.highlight ? "primary" : "outline"} className="k-plan-btn">{button}</Button>
     </article>
   );
 }
@@ -206,15 +202,16 @@ export function FeatureBlock({ title, text, art, flip, size }: { title: string; 
   );
 }
 
-export type ArtName = "incoming" | "outgoing" | "booking" | "language" | "person" | "dashboard" | "number" | "setup";
+export type ArtName = "list" | "outgoing" | "booking" | "language" | "person" | "dashboard" | "number" | "setup";
 
 function FeatureArt({ name }: { name: ArtName }) {
   switch (name) {
-    case "incoming":
+    case "list":
       return (
         <div className="k-art k-art-list">
-          {["Caller A", "Caller B", "Caller C"].map((c) => (
-            <div key={c} className="k-art-row"><Icon name="incoming" size={18} /><span>{c}</span><b className="k-art-ok"><Icon name="check" size={14} />Answered</b></div>
+          {["Contact 1", "Contact 2", "Contact 3", "Contact 4"].map((c, i) => (
+            <div key={c} className="k-art-row"><Icon name="outgoing" size={18} /><span>{c}</span>
+              {i < 3 ? <b className="k-art-ok"><Icon name="check" size={14} />Called</b> : <b className="k-art-next">Next</b>}</div>
           ))}
         </div>
       );
@@ -249,8 +246,8 @@ function FeatureArt({ name }: { name: ArtName }) {
       return (
         <div className="k-art k-art-talk">
           <div className="k-art-track"><span>Agent</span><svg viewBox="0 0 200 30" preserveAspectRatio="none"><path d="M0 15 Q10 3 20 15 T40 15 T60 15 T80 15 L120 15 L200 15" /></svg></div>
-          <div className="k-art-track is-caller"><span>Caller</span><svg viewBox="0 0 200 30" preserveAspectRatio="none"><path d="M0 15 L80 15 Q90 3 100 15 T120 15 T140 15 T160 15 L200 15" /></svg></div>
-          <p className="k-art-note">Agent pauses when the caller speaks</p>
+          <div className="k-art-track is-caller"><span>Customer</span><svg viewBox="0 0 200 30" preserveAspectRatio="none"><path d="M0 15 L80 15 Q90 3 100 15 T120 15 T140 15 T160 15 L200 15" /></svg></div>
+          <p className="k-art-note">Agent pauses when the customer speaks</p>
         </div>
       );
     case "dashboard":

@@ -14,7 +14,7 @@ export function BookACall() {
     <Section name="book" tone="paper" className="k-book" labelledBy="k-h1">
       <div className="k-book-grid">
         <div className="k-book-copy">
-          <Eyebrow n={1}>{p.eyebrow}</Eyebrow>
+          <Eyebrow>{p.eyebrow}</Eyebrow>
           <Title as="h1" id="k-h1" parts={p.title} />
           <ul className="k-points">
             {p.points.map((pt) => <li key={pt}><span><Icon name="check" size={18} /></span>{pt}</li>)}
