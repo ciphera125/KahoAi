@@ -2277,3 +2277,9 @@ Done: owner merged into admin; role invites + Settings People; customer requests
 on every long list; Studio Organization tab (plan card, Write to Kaho), gold plan badge beside the minutes badge; System check
 accuracy; CSV-only storage with new folder names and a separate admin bucket (`archiveAdmin.js`); `move_storage.mjs` and
 `verify_storage.mjs`. Live rollout (migrations 030/031, new env, bucket copy, restarts) is recorded in the last section below if done.
+
+### Live rollout done 2026-11-15
+Migrations 030 and 031 applied to the live database; backend restarted on the new code; phone server restarted (no calls were in progress)
+with `SUPABASE_RECORDINGS_BUCKET=kaho-customer-records` and `SUPABASE_ADMIN_BUCKET=kaho-admin-records` in `backend/.env` (root `.env` has the first).
+`move_storage.mjs` copied the one recording (size checked), wrote 3 transcripts as CSV and filed the records; `verify_storage.mjs` is clean.
+The old bucket `call-recordings` still holds the old .json/.jsonl/.txt files and the original recording: delete it yourself in Supabase when happy.

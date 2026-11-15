@@ -34,6 +34,7 @@ for (const f of top) if (!EXPECT.has(f)) bad(`unexpected item at the top of the 
 for (const f of EXPECT) if (!top.includes(f)) console.log(`  (empty so far: ${f})`);
 
 console.log("\nCalls:");
+const agentWords = new Set((await systemQuery("SELECT name FROM agents")).rows.flatMap((a) => String(a.name).toLowerCase().split(/\s+/))); // an agent saying its own name is not a leak
 const calls = (await systemQuery(`SELECT c.call_id, c.org_id, c.ended_at, c.has_transcript, c.recording_path, c.recording_bytes, c.transcript_path, c.turns,
     (SELECT count(*)::int FROM call_events e WHERE e.call_id = c.call_id AND e.event = 'turn') AS turn_rows,
     (SELECT ct.name FROM contact_numbers cn JOIN contacts ct ON ct.id = cn.contact_id AND ct.org_id = cn.org_id WHERE cn.number = c.peer AND cn.org_id = c.org_id LIMIT 1) AS contact
@@ -46,7 +47,7 @@ for (const c of calls) {
     if (!c.recording_path.startsWith(`${FOLDERS.recordings}/`)) bad(`${id}: recording is not in ${FOLDERS.recordings} (${c.recording_path.split("/")[0]})`);
     const size = await head(MAIN, c.recording_path);
     if (size === null) bad(`${id}: the recording is in the database but NOT in Storage`);
-    else if (c.recording_bytes && size !== c.recording_bytes) bad(`${id}: recording size differs (database ${c.recording_bytes}, Storage ${size})`);
+    else if (c.recording_bytes && size !== Number(c.recording_bytes)) bad(`${id}: recording size differs (database ${c.recording_bytes}, Storage ${size})`);
   }
   if (c.has_transcript) {
     if (!c.transcript_path) bad(`${id}: has a transcript but none is filed in ${FOLDERS.transcripts}`);
@@ -60,7 +61,10 @@ for (const c of calls) {
         if (lines !== c.turn_rows) bad(`${id}: transcript has ${lines} rows, the database has ${c.turn_rows} turns`);
         if (EMAIL.test(text)) bad(`${id}: an e-mail address is in the transcript`);
         if (NUMBER.test(text.replace(/\b\d{4}-\d{2}-\d{2}\b/g, ""))) bad(`${id}: a long number (phone?) is in the transcript`);
-        for (const part of String(c.contact ?? "").split(/\s+/).filter((p) => p.length >= 3)) if (redactPII(text, { names: [part] }) !== text) bad(`${id}: the contact's name appears in the transcript`);
+        // Row by row, as it was filed: what the agent says about itself ("this is Ria") is not private, what a caller says is.
+        const spoken = table(text).filter((r) => r[1] === "Agent" || r[1] === "Caller" || r[1] === "Saved answer");
+        for (const part of String(c.contact ?? "").split(/\s+/).filter((p) => p.length >= 3 && !agentWords.has(p.toLowerCase())))
+          if (spoken.some((r) => redactPII(r[2], { names: [part], selfIntro: r[1] !== "Agent" }) !== r[2])) bad(`${id}: the contact's name appears in the transcript`);
       }
     }
   }
