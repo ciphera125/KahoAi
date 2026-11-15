@@ -25,11 +25,16 @@ export function Button({ to, href, variant = "primary", arrow, children, classNa
   return <a className={cls} href={href} onClick={onClick}>{inner}</a>;
 }
 
+/** "15-minute" must not break at its hyphen on a narrow screen. */
+function keepHyphenated(text: string) {
+  return text.split(/(\S+-\S+)/).map((t, i) => (i % 2 ? <span key={i} className="k-nowrap">{t}</span> : t));
+}
+
 /** A heading whose last part is the one serif-italic word. */
 export function Title({ as: Tag = "h2", parts, className = "", id }: { as?: "h1" | "h2"; parts: readonly [string, string]; className?: string; id?: string }) {
   return (
     <Tag className={`k-title ${Tag === "h1" ? "k-title-xl" : ""} ${className}`.trim()} id={id}>
-      {parts[0]} <em className="k-serif">{parts[1]}</em>
+      {keepHyphenated(parts[0])} <em className="k-serif">{parts[1]}</em>
     </Tag>
   );
 }
