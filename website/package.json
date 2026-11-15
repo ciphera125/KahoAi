@@ -1,0 +1,34 @@
+{
+  "name": "kaho-website",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Kaho AI public website (marketing pages). Separate from the Studio in ../frontend.",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "build": "npm run typecheck && npm run lint && vite build && vite build --ssr src/entry-server.tsx --outDir dist-ssr && node scripts/prerender.mjs",
+    "preview": "vite preview --port 4173"
+  },
+  "dependencies": {
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "react-router-dom": "7.18.5"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.19.1",
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.0.4",
+    "eslint": "10.0.1",
+    "eslint-plugin-react-hooks": "7.1.0",
+    "globals": "17.3.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.2",
+    "vite": "7.3.7",
+    "vitest": "3.2.4"
+  }
+}
