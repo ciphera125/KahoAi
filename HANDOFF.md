@@ -2258,7 +2258,7 @@ server is still one instance (unchanged). Pen-test findings in the report, not f
 rate limit can be dodged by sending fake cookies (the per-address limit still holds, same as the Studio); an admin can open
 any account (recorded, but powerful: keep the two addresses to the two people).
 
-## Session 2026-11-15 (late): owner merged into admin, role-specific invites (IN PROGRESS, suite red on purpose)
+## Session 2026-11-15 (late): owner merged into admin, role-specific invites (was in progress; finished, see the entry after it)
 
 Done, uncommitted, new tests green:
 - System check made honest (`backend/src/services/health.js`, tests in `tests/health.test.js`): a 404/502 from the phone-server address is no longer "reachable" (dead tunnel), Plivo with zero credit fails, the model check looks for `GROQ_MODEL_ID` in the Studio key's model list.
@@ -2283,3 +2283,12 @@ Migrations 030 and 031 applied to the live database; backend restarted on the ne
 with `SUPABASE_RECORDINGS_BUCKET=kaho-customer-records` and `SUPABASE_ADMIN_BUCKET=kaho-admin-records` in `backend/.env` (root `.env` has the first).
 `move_storage.mjs` copied the one recording (size checked), wrote 3 transcripts as CSV and filed the records; `verify_storage.mjs` is clean.
 The old bucket `call-recordings` still holds the old .json/.jsonl/.txt files and the original recording: delete it yourself in Supabase when happy.
+
+
+## Before real customers: what is still open (written 2026-11-15, end of session)
+Verdict: fine for a small closed pilot once the "must do" list is done; not for the public yet.
+**Must do:** (1) click through the newest screens in a browser (People, Organization, Write to Kaho, admin bell and Requests, plan badge): built and tested, never looked at. (2) Host in ap-south-1 (Mumbai); everything still runs on the laptop. (3) Production settings: https `ALLOWED_ORIGINS` and `ADMIN_ORIGINS`, `NODE_ENV=production`, `DATABASE_SSL=verify`, `TRANSFER_NUMBER`, `REDIS_URL` if more than one worker, a stable address instead of the tunnel. (4) Admin accounts: create both through the sign-up form with strong passwords, then rotate `ADMIN_SIGNUP_CODE`; the owner's first choice of password was too weak for an account that can open any customer's Studio. (5) Payment is manual: write `BILLING_PAYMENT_INSTRUCTIONS` and a routine for confirming payment. (6) The owner's own organization is on Scale with 500 minutes and no end date: use Start Scale with "Add the plan's monthly minutes" ticked. (7) Confirm Supabase backups.
+**Still unproven:** two simultaneous real Plivo calls; a full Hindi call; the DPDP / Aadhaar question with the owner's CA; TRAI/DND consent is the operator's job.
+**Smaller:** delete the old `call-recordings` bucket after checking; no e-mail or WhatsApp alert to staff for a new request (bell only); every admin sees full invite codes; the first archive pass after the last restart logged "storage answered 400" because the buckets did not exist yet (the timer retries; `verify_storage.mjs` is clean); contacts, leads and tasks stay database-only by design; run a real pen-test on the deployed copy.
+**Pen-test of this session's surface** (run locally in tests): role tampering at sign-up, non-admins making codes, cross-organization invite/request access, junk roles/messages/ids, concurrent demotion (real bug found and fixed: could leave zero admins), unauthenticated admin routes, spreadsheet formula injection, secrets in filed files: all held after the fix. Reasoned only: script text in a request message (React escapes it). Not checked: the new buckets' settings in the Supabase dashboard.
+**API key (Settings, API keys):** gives other programs access to one organization's tasks, contacts, agents, calls and call summaries through `/api/v1`; limited to that organization, stored hashed, rate-limited.
