@@ -18,7 +18,7 @@ export function Home() {
       key: "hero", eyebrow: c.hero.eyebrow,
       render: (n, tone) => (
         <Section name="hero" tone={tone} className="k-hero" labelledBy="k-h1">
-          <span className="k-deva-mark k-hero-mark" aria-hidden="true" lang="hi">कहो</span>
+          <span className="k-deva-mark k-hero-mark" aria-hidden="true" lang="hi" data-mark="कहो" />
           <div className="k-hero-grid">
             <div className="k-hero-copy">
               <Eyebrow n={n}>{c.hero.eyebrow}</Eyebrow>

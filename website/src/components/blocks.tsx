@@ -184,7 +184,7 @@ export function Faq({ items }: { items: { q: string; a: string }[] }) {
 export function CtaBand({ title }: { title: string }) {
   return (
     <section className="k-cta" data-section="cta" aria-labelledby="k-cta-title">
-      <span className="k-deva-mark" aria-hidden="true" lang="hi">कहो</span>
+      <span className="k-deva-mark" aria-hidden="true" lang="hi" data-mark="कहो" />
       <div className="k-container k-cta-in">
         <h2 id="k-cta-title" className="k-title">{title}</h2>
         <Button to="/book-a-call" variant="cta" arrow>Book a call</Button>

@@ -101,11 +101,12 @@
 .k-split > :last-child:not(.k-split-head) { grid-column: 7 / 13; }
 
 /* the faint कहो mark */
+.k-deva-mark::before { content: attr(data-mark); }
 .k-deva-mark { position: absolute; pointer-events: none; user-select: none; font-weight: 700; line-height: 1; color: var(--k-ink); opacity: .05; }
 
 /* ---------- hero ---------- */
 .k-hero { overflow: hidden; padding-top: clamp(48px, 7vw, 104px); }
-.k-hero-mark { right: 2vw; bottom: -.12em; font-size: clamp(150px, 24vw, 360px); }
+.k-hero-mark { left: max(0px, calc((100vw - var(--k-max)) / 2 - 24px)); bottom: -.2em; font-size: clamp(140px, 26vw, 400px); opacity: .045; }
 .k-hero-grid { position: relative; display: grid; grid-template-columns: repeat(12, 1fr); gap: 24px; align-items: center; }
 .k-hero-copy { grid-column: 1 / 8; position: relative; }
 .k-hero-copy-wide { max-width: 980px; }
