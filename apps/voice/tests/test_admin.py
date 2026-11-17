@@ -7,9 +7,10 @@ refuses requests that look forwarded or come from another site.
 
 import json
 
-import admin
 import pytest
 from fastapi.testclient import TestClient
+
+import admin
 
 NUMBER = "+918065520552"
 LOCAL = "http://127.0.0.1:8001"
