@@ -184,7 +184,9 @@ export async function listUsers({ q, page, perPage }) {
        coalesce((SELECT json_agg(json_build_object('id', o.id, 'name', o.name, 'role', m.role) ORDER BY m.created_at)
          FROM memberships m JOIN organizations o ON o.id = m.org_id WHERE m.user_id = u.id), '[]'::json) AS orgs
      FROM users u WHERE ${where} ORDER BY u.created_at DESC, u.id LIMIT ${size} OFFSET ${(n - 1) * size}`, params);
-  return { total, page: n, per_page: size, users: rows.map((u) => ({ id: u.id, name: u.name, email: u.email, created_at: iso(u.created_at),
+  const staff = (await systemQuery("SELECT id, name, email, created_at, last_login_at, disabled_at FROM admins ORDER BY created_at, id")).rows
+    .map((a) => ({ id: a.id, name: a.name, email: a.email, created_at: iso(a.created_at), last_login_at: iso(a.last_login_at), disabled: Boolean(a.disabled_at) }));
+  return { total, page: n, per_page: size, staff, users: rows.map((u) => ({ id: u.id, name: u.name, email: u.email, created_at: iso(u.created_at),
     last_login_at: iso(u.last_login_at), disabled: Boolean(u.disabled_at), orgs: u.orgs })) };
 }
 
