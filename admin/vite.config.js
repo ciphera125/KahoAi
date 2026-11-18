@@ -12,6 +12,7 @@ export default defineConfig({
   resolve: { dedupe: ["react", "react-dom", "react-router-dom", "motion", "@radix-ui/react-dialog", "@radix-ui/react-tooltip"] },
   server: {
     port: 5174,
+    allowedHosts: [".ngrok-free.dev"],
     fs: { allow: [".."] },
     proxy: { "/api": { target: process.env.VITE_API_TARGET || "http://127.0.0.1:8020", changeOrigin: false } },
   },
