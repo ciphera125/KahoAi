@@ -31,6 +31,16 @@ export default function People() {
   return (
     <section>
       <Head title="People" sub="Everyone with a Studio account. To change someone's role in a team, open the organization." />
+      {d?.staff?.length > 0 && (
+        <div className="card list">
+          <div className="list-bar"><b>Kaho staff</b><span className="grow" /><span className="muted">{d.staff.length} admin{d.staff.length === 1 ? "" : "s"}</span></div>
+          <div className="table-wrap"><table className="rows"><thead><tr><th>Person</th><th>Last signed in</th><th>Account</th></tr></thead>
+            <tbody>{d.staff.map((a) => (
+              <tr key={a.id}><td><b>{a.name}</b><div className="hint">{a.email}</div></td>
+                <td>{a.last_login_at ? ago(a.last_login_at) : "never"}</td>
+                <td><span className={`pill ${a.disabled ? "failed" : "active"}`}>{a.disabled ? "Switched off" : "On"}</span></td></tr>))}</tbody></table></div>
+        </div>
+      )}
       <div className="card list">
         <div className="list-bar"><input type="search" value={q} placeholder="Search by name or e-mail" aria-label="Search people" onChange={(e) => setQ(e.target.value)} />
           <span className="grow" /><span className="muted">{d ? `${d.total.toLocaleString("en-IN")} found` : ""}</span></div>

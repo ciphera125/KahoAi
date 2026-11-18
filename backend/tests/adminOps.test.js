@@ -245,6 +245,14 @@ describe("people", () => {
     expect((await admin.get("/users")).body.total).toBe(2);
   });
 
+  it("lists the Kaho staff (admin accounts) beside the customers' people, without any secret", async () => {
+    const admin = await signedInAdmin();
+    const body = (await admin.get("/users")).body;
+    expect(body.staff.length).toBeGreaterThanOrEqual(1);
+    expect(body.staff[0]).toMatchObject({ email: expect.any(String), name: expect.any(String), disabled: false });
+    expect(JSON.stringify(body.staff)).not.toMatch(/"hash"|"salt"/);
+  });
+
   it("switches an account off: its sessions die at once, even the right password is refused, and back on restores it", async () => {
     const admin = await signedInAdmin();
     const a = await team("Alpha");
