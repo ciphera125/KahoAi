@@ -2369,6 +2369,10 @@ Knowledge: no documents exist for any agent yet; search is keyword matching. Tes
    wrap. Checked by build only, not on a real device.
 6. **website-redesign** was 4 commits behind `main` with nothing of its own; fast-forwarded to `main` so Aayushi builds
    on today's code (it carried the old space-in-path test bug and an em dash).
-**Open.** Push this handoff commit; publish the agent; try the silence follow-up and the end-call backstop on a real
+7. **Prompt editor** (`AgentDetail.jsx` PromptTab) follows a prompt changed elsewhere (Kaho Builder, another tab) while
+   nothing is unsaved; before, it kept the old words and the new Save button offered to put them back. The other 8
+   Studio lint warnings are deliberate run-once effects.
+All of this is pushed: `main` and `website-redesign` are both at the commit after this handoff line.
+**Open.** Publish the agent; try the silence follow-up and the end-call backstop on a real
 call; look at the Studio on a real phone; `gh` is not installed here, so GitHub CI was not checked after these pushes;
 Knowledge has no documents for any agent yet; a bulk call's ledger line has no person to name.
