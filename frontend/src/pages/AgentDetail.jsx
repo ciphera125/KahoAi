@@ -348,7 +348,17 @@ function PromptTab({ agent, prompts, onChanged }) {
   const [groups, setGroups] = useState([]);
   const [picking, setPicking] = useState(false);
   const boxRef = useRef(null);
-  useEffect(() => { setName(current?.name || ""); setText(current?.prompt || ""); }, [sel]);
+  // Follow the saved prompt when it changes underneath (another prompt picked, or Kaho Builder rewrote it), but
+  // only while nothing here is unsaved: otherwise the editor showed old words and Save offered to put them back.
+  const savedName = current?.name || "";
+  const savedText = current?.prompt || "";
+  const synced = useRef({ sel, name: savedName, text: savedText });
+  useEffect(() => {
+    const was = synced.current;
+    const untouched = name === was.name && text === was.text;
+    if (sel !== was.sel || untouched) { setName(savedName); setText(savedText); }
+    synced.current = { sel, name: savedName, text: savedText };
+  }, [sel, savedName, savedText]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { get(`/api/agents/${agent.id}/variables`).then(setGroups).catch(() => setGroups([])); }, [agent.id]);
 
   // "{{" anywhere opens the picker; what it inserts replaces those two characters.
