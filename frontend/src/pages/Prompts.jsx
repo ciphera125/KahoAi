@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
-import { Info, Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
+import { Info, Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast, whenShort, SaveButton } from "../ui.jsx";
 
 export default function Prompts() {
   const me = useMe();
@@ -65,7 +65,7 @@ function EditPrompt({ prompt, onClose, onSaved }) {
     <Modal title={isNew ? "New prompt" : "Edit prompt"} onClose={onClose} wide>
       <div className="field"><label className="f">Name</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="EMI reminder, Hindi" /></div>
       <div className="field"><label className="f">Prompt</label><textarea value={text} onChange={(e) => setText(e.target.value)} /></div>
-      <div className="actions" style={{ justifyContent: "flex-end" }}><button className="ghost" onClick={onClose}>Cancel</button><button className="primary" onClick={save}>Save prompt</button></div>
+      <div className="actions" style={{ justifyContent: "flex-end" }}><button className="ghost" onClick={onClose}>Cancel</button><SaveButton dirty={isNew ? Boolean(name.trim() && text.trim()) : name !== (prompt.name || "") || text !== (prompt.prompt || "")} onClick={save} label="Save prompt" /></div>
     </Modal>
   );
 }

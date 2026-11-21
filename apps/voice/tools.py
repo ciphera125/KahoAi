@@ -386,7 +386,9 @@ def _caller_said(name: str, heard: list[str]) -> bool:
     "Save a caller's details so a person can follow up. Use it whenever the caller "
     "wants to leave contact information, asks for a callback, or shows interest in "
     "something, as soon as you have their name and what they want, not only at the "
-    "end of the call. Read the details back and save only after the caller confirms.",
+    "end of the call. Read the details back and save only after the caller confirms. "
+    "Never call it with an empty or guessed name or request: if either is missing, ask the "
+    "caller for it first. For a reminder or a to-do, use add_task when you have it.",
     properties={
         # Nothing is required and null is allowed: Groq fails the whole turn on
         # a missing or null argument ("missing properties: 'reason'", 892bf848,

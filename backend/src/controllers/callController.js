@@ -32,9 +32,9 @@ export async function place(req, res) {
     throw err;
   }
   const { to, from, request_uuid: requestUuid, agent } = placed;
-  const who = (await Contact.namesFor(org, [to]))[to] ?? to;
-  await note(req, "call", `Called ${who}${agent ? ` with ${agent.name}` : ""}`, "calls", requestUuid);
-  res.json({ to, from, request_uuid: requestUuid, agent_name: agent?.name ?? null });
+  const name = (await Contact.namesFor(org, [to]))[to] ?? null;
+  await note(req, "call", `Called ${name ?? to}${agent ? ` with ${agent.name}` : ""}`, "calls", requestUuid);
+  res.json({ to, from, request_uuid: requestUuid, agent_name: agent?.name ?? null, contact_name: name });
 }
 
 export async function list(req, res) {

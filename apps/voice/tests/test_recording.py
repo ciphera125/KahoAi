@@ -508,3 +508,21 @@ def test_the_phone_server_refuses_to_start_with_an_invalid_retention(monkeypatch
     with pytest.raises(SystemExit):
         server.main()
     assert reached == []
+
+
+# --- a call ended by a guard still keeps its recording (2026-11-22) -------------
+# Call c8f8d8ab was cancelled by the idle and ten-minute guards; the recording was
+# closed only when the pipeline finished normally, so it was never saved or uploaded
+# and the Studio had no Listen button.
+
+
+def test_a_call_handler_that_exits_any_way_closes_its_recording():
+    import server
+
+    closed = []
+    recorder = type("R", (), {"close": lambda self: closed.append(1)})()
+    worker = type("W", (), {"recorder": recorder})()
+    server.finish_recording(worker)
+    server.finish_recording(worker)  # safe to repeat: the recorder itself closes once
+    assert closed == [1, 1]
+    server.finish_recording(object())  # a worker with no recorder (recording switched off)

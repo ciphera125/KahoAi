@@ -440,3 +440,49 @@ def test_a_stream_with_an_unknown_agent_is_closed_and_the_server_survives(client
         with client.websocket_connect(stream_url(agent="nope")) as ws:
             ws.receive_text()
     assert client.post("/answer?token=s3cret").status_code == 200
+
+
+# --- after end_call: the call must really end (2026-11-22) ---------------------
+# On call c8f8d8ab the agent said goodbye, end_call returned "ending", and the line
+# stayed open six more minutes until the ten-minute ceiling hung it up: the graceful
+# end was stuck behind the pipeline and nothing told Plivo. A backstop now ends it
+# by the same steps the ceiling uses.
+
+
+async def test_after_a_goodbye_the_backstop_ends_the_call_by_every_step(logs):
+    s, events = Steps(), []
+    await duration_limit.end_after_goodbye(
+        0.05, [s.make("hang up"), s.make("cancel"), s.make("close")],
+        record=lambda name, **f: events.append((name, f)))
+    assert s.ran == ["hang up", "cancel", "close"]
+    assert events == [("end_call_backstop", {"after_secs": 0.05})]
+
+
+async def test_the_backstop_waits_for_the_goodbye_to_be_heard_first():
+    s = Steps()
+    task = asyncio.create_task(duration_limit.end_after_goodbye(5, [s.make("hang up")]))
+    await asyncio.sleep(0.05)
+    assert s.ran == []
+    task.cancel()
+
+
+async def test_a_failing_step_does_not_stop_the_next():
+    s = Steps()
+    await duration_limit.end_after_goodbye(
+        0.01, [s.make("hang up", "raise"), s.make("close")], step_timeout=0.1)
+    assert s.ran == ["hang up", "close"]
+
+
+async def test_end_call_ends_gracefully_and_starts_the_backstop():
+    import main
+
+    seen = []
+
+    async def graceful():
+        seen.append("graceful")
+
+    hang_up = main.hang_up_with_backstop(graceful, lambda: seen.append("backstop"))
+    await hang_up()
+    assert seen == ["graceful", "backstop"]
+    # on a local run there is no backstop to start
+    await main.hang_up_with_backstop(graceful, None)()

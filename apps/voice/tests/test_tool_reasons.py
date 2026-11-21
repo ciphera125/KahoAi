@@ -1,9 +1,10 @@
-"""Every message a tool can send back to the agent must have a reading on the Studio's Tool calls page.
+"""Every message a tool can send back to the agent needs a reading on the Tool calls page.
 
-The page tells a business owner whether a tool call worked, needed more from the caller, was stopped by
-a safety check, or broke; it decides from the message (backend/src/models/toolReasons.json). A new
-message written here without a line there would be shown as "Failed" with the model's own words, so
-this test makes adding a message and deciding what it means one change.
+The page tells a business owner whether a tool call worked, needed more from the
+caller, was stopped by a safety check, or broke; it decides from the message
+(backend/src/models/toolReasons.json). A new message written here without a line
+there would be shown as "Failed" with the model's own words, so this test makes
+adding a message and deciding what it means one change.
 """
 
 import ast
@@ -39,7 +40,8 @@ def _messages() -> list[str]:
             continue
         keys = {k.value for k in node.keys if isinstance(k, ast.Constant)}
         if "found" in keys:
-            continue  # a lookup that ran: its advice rides along with the answer and is not a failure
+            # a lookup that ran: its advice rides along with the answer, not a failure
+            continue
         for key, value in zip(node.keys, node.values, strict=True):
             if isinstance(key, ast.Constant) and key.value in KEYS:
                 found += [s for s in _strings(value) if len(s.strip()) > 3]

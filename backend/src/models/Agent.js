@@ -34,8 +34,33 @@ export const RING_SECS = [15, 60];
 // switched on, the hours TRAI allows for commercial calls.
 export const DEFAULT_WINDOW = { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
 export const MAX_CAPTURE_FIELDS = 20;
+// When the caller goes quiet: after `after_secs` the agent asks if they are there (its own words, or
+// "Are you still there?"), up to `times` times, then says goodbye and hangs up if `hang_up`.
+export const DEFAULT_SILENCE = { enabled: true, after_secs: 10, times: 2, message: "", hang_up: true };
+export const SILENCE_SECS = [5, 60];
+export const SILENCE_TIMES = [1, 5];
 export const DEFAULT_SETTINGS = { opening_line: "", max_minutes: 10, ring_secs: 40, call_window: DEFAULT_WINDOW,
-  capture_fields: [], confirm_answers: true, language: DEFAULT_LANGUAGE };
+  capture_fields: [], confirm_answers: true, language: DEFAULT_LANGUAGE, silence: DEFAULT_SILENCE };
+
+function checkSilence(current, value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ValidationError("silence must be an object");
+  const out = { ...DEFAULT_SILENCE, ...current };
+  const whole = (v, label, [low, high]) => {
+    const n = typeof v === "boolean" ? NaN : Number(v);
+    if (!Number.isInteger(n) || String(v).trim() === "" || n < low || n > high) {
+      throw new ValidationError(`${label} must be a whole number from ${low} to ${high}`);
+    }
+    return n;
+  };
+  for (const [key, v] of Object.entries(value)) {
+    if (key === "enabled" || key === "hang_up") out[key] = Boolean(v);
+    else if (key === "after_secs") out.after_secs = whole(v, "Seconds of silence", SILENCE_SECS);
+    else if (key === "times") out.times = whole(v, "How many times to ask", SILENCE_TIMES);
+    else if (key === "message") out.message = cleanText(v ?? "", 200, "what to say when it is quiet", false);
+    else throw new ValidationError(`unknown silence setting '${String(key).slice(0, 40)}'`);
+  }
+  return out;
+}
 
 /** "Payment date" -> "payment_date". A field needs a short machine name: it is what the
  * model names when it saves an answer, and what a prompt reads as {{answer.payment_date}}. */
@@ -123,6 +148,8 @@ function checkSettings(current, changes) {
   for (const [key, value] of Object.entries(changes)) {
     if (key === "call_window") {
       out.call_window = checkWindow(current?.call_window, value);
+    } else if (key === "silence") {
+      out.silence = checkSilence(current?.silence, value);
     } else if (key === "capture_fields") {
       out.capture_fields = checkCaptureFields(value);
     } else if (key === "confirm_answers") {
@@ -158,6 +185,7 @@ const SHOW = `SELECT a.*,
   FROM agents a LEFT JOIN agent_versions lv ON lv.id = a.live_version_id`;
 const settingsOf = (stored) => ({ ...DEFAULT_SETTINGS, ...stored,
   call_window: { ...DEFAULT_WINDOW, ...stored?.call_window },
+  silence: { ...DEFAULT_SILENCE, ...stored?.silence },
   capture_fields: Array.isArray(stored?.capture_fields) ? stored.capture_fields : [],
   confirm_answers: stored?.confirm_answers !== false,
   language: LANGUAGE_VALUES.includes(stored?.language) ? stored.language : DEFAULT_LANGUAGE });
@@ -457,6 +485,7 @@ export async function callConfig(agentId, { caller = null } = {}) {
       max_secs: Math.min(s.max_minutes, orgCap ?? Infinity) * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
       capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, language: s.language,
       voicemail: s.voicemail === "hang_up" ? "hang_up" : "talk",
+      silence: s.silence,
       version: a.version };
   } catch (err) {
     logger.error({ err: err.message }, "agent unreadable, the call uses the default persona");

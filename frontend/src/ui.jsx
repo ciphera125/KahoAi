@@ -59,6 +59,17 @@ export function Info({ text, label = "What is this?" }) {
   );
 }
 
+/** A Save button that rests at "Saved" until something is edited, so it is plain whether there is
+ * anything new to keep. `dirty` is whether the screen differs from what was last saved. */
+export function SaveButton({ dirty, busy = false, onClick, label = "Save", className = "primary" }) {
+  return (
+    <button type="button" className={`${className} save-btn${dirty ? "" : " saved"}`} onClick={onClick} disabled={!dirty || busy}
+      title={dirty ? "Save your changes" : "Nothing new to save: everything here is saved"}>
+      {busy ? "Saving…" : dirty ? label : <><Icon name="check" />Saved</>}
+    </button>
+  );
+}
+
 /* ---------- formatters ---------- */
 export const initials = (name) => (name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";
 export const plural = (n, w) => `${(n ?? 0).toLocaleString()} ${w}${n === 1 ? "" : "s"}`;

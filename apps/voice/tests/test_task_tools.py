@@ -63,12 +63,16 @@ async def test_the_agent_hears_back_the_day_it_saved_in_words_it_can_say():
     # The Studio reads the date on India's clock and says it in words (2026-11-22); dropping "when"
     # here left the model to turn "2026-11-20T09:00:00+05:30" into speech itself.
     added = await tools.REGISTRY["add_task"].handler({"title": "Pay", "due": "Friday"}, context(
-        {"ok": True, "task_id": "tk_2", "due": "2026-11-20T09:00:00+05:30", "when": "Friday 20 November at 9:00 am"}))
+        {"ok": True, "task_id": "tk_2", "due": "2026-11-20T09:00:00+05:30",
+         "when": "Friday 20 November at 9:00 am"}))
     assert added == {"added": True, "task_id": "tk_2", "due": "2026-11-20T09:00:00+05:30",
                      "when": "Friday 20 November at 9:00 am"}
-    moved = await tools.REGISTRY["reschedule_task"].handler({"task_id": "tk_1", "due": "Friday"}, context(
-        {"ok": True, "task_id": "tk_1", "due": "2026-11-20T18:00:00+05:30", "when": "Friday 20 November at 6:00 pm"}))
-    assert moved == {"moved": True, "due": "2026-11-20T18:00:00+05:30", "when": "Friday 20 November at 6:00 pm"}
+    moved = await tools.REGISTRY["reschedule_task"].handler(
+        {"task_id": "tk_1", "due": "Friday"},
+        context({"ok": True, "task_id": "tk_1", "due": "2026-11-20T18:00:00+05:30",
+                 "when": "Friday 20 November at 6:00 pm"}))
+    assert moved == {"moved": True, "due": "2026-11-20T18:00:00+05:30",
+                     "when": "Friday 20 November at 6:00 pm"}
 
 
 async def test_a_refusal_is_handed_to_the_agent_as_what_to_say_next():

@@ -45,7 +45,13 @@ import studio_link
 import uvicorn
 import uvicorn.config
 from dotenv import load_dotenv
-from duration_limit import configured_ceiling, enforce_max_duration, resolve_max_duration
+from duration_limit import (
+    configured_ceiling,
+    end_after_goodbye,
+    enforce_max_duration,
+    goodbye_grace,
+    resolve_max_duration,
+)
 from fastapi import FastAPI, Query, Request, Response, WebSocket
 from groq_usage import log_groq_call
 from loguru import logger
@@ -668,8 +674,20 @@ async def _run_call(
         await recording_upload.upload_recording(
             path, recording_upload.object_name(call_id or path.stem), report=report_recording)
 
+    # end_call's backstop (duration_limit.end_after_goodbye): started once, when the agent hangs up,
+    # and given the same steps as the ceiling once those exist below.
+    ending: dict = {}
+
+    def on_end_call() -> None:
+        if "task" not in ending and "steps" in ending:
+            ending["task"] = asyncio.create_task(end_after_goodbye(
+                goodbye_grace(), ending["steps"],
+                record=lambda name, **f: worker.transcript.event(name, **f)))
+
     worker = build_worker(
         transport, PipelineParams(audio_in_sample_rate=PIPELINE_INPUT_RATE), call_id=call_id,
+        on_end_call=on_end_call,
+        silence=(agent_config.get("silence") if agent_config else None),
         caller_number=clean_caller(caller),
         on_abort=abort,
         persona_path=persona_path,
@@ -707,17 +725,13 @@ async def _run_call(
         cutoff_fired.set()  # first, so a failing transcript cannot hide that it fired
         worker.transcript.event(name, **fields)
 
-    guard = asyncio.create_task(
-        enforce_max_duration(
-            limit,
-            [
-                ("hang up via Plivo", serializer.hang_up),
-                ("cancel the pipeline", cancel_pipeline),
-                ("close the stream", websocket.close),
-            ],
-            record=on_cutoff,
-        )
-    )
+    steps = [
+        ("hang up via Plivo", serializer.hang_up),
+        ("cancel the pipeline", cancel_pipeline),
+        ("close the stream", websocket.close),
+    ]
+    ending["steps"] = steps
+    guard = asyncio.create_task(enforce_max_duration(limit, steps, record=on_cutoff))
     logger.info(f"Call {call_id} will be ended after at most {limit:g}s")
 
     @transport.event_handler("on_client_disconnected")
@@ -740,10 +754,27 @@ async def _run_call(
                 logger.error("The maximum-duration cutoff did not finish; leaving it")
         else:
             guard.cancel()
+        finish_recording(worker)
+        if "task" in ending and not ending["task"].done():
+            # the call ended by itself after its goodbye; nothing left to do
+            ending["task"].cancel()
         # Normally closed after the summary (main.py); this catches a call whose
         # teardown never got that far, so its sender does not run on forever.
         asyncio.create_task(_close_sink_later(sink))
     logger.info(f"Call {call_id} finished")
+
+
+def finish_recording(worker) -> None:
+    """Close the call's recording, which saves and uploads it.
+
+    Normally done when the pipeline finishes; a call cancelled by a guard never
+    gets there (c8f8d8ab), so the handler does it too."""
+    recorder = getattr(worker, "recorder", None)
+    if recorder is not None:
+        try:
+            recorder.close()
+        except Exception as e:  # noqa: BLE001 - never let the recording break the teardown
+            logger.error(f"Could not close the recording: {e!r}")
 
 
 SINK_GRACE_SECS = 90.0  # longer than any summary's own deadline

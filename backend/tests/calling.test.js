@@ -31,11 +31,18 @@ describe("Plivo signatures", () => {
 });
 
 describe("placing a call", () => {
+  it("says who is being called by their saved name, so the live view can show it (2026-11-22)", async () => {
+    const { b, n } = await setup();
+    await b.post("/api/contacts").send({ name: "Adi", numbers: ["+919876543210"] });
+    const r = await b.post("/api/calls").send({ from_id: n.id, to: "98765 43210", consent: true });
+    expect(r.body).toMatchObject({ to: "+919876543210", contact_name: "Adi" });
+  });
+
   it("checks the voice server, then dials Plivo once with this number's credentials", async () => {
     const { b, n } = await setup();
     const r = await b.post("/api/calls").send({ from_id: n.id, to: "98765 43210", consent: true });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual({ to: "+919876543210", from: "+918065520552", request_uuid: "req-0001-abcd", agent_name: null });
+    expect(r.body).toEqual({ to: "+919876543210", from: "+918065520552", request_uuid: "req-0001-abcd", agent_name: null, contact_name: null });
     expect(fakes.voice.requests).toHaveLength(1);
     expect(fakes.voice.requests[0].headers["x-plivo-signature-v3"]).toBeTruthy();
     const dials = fakes.plivo.requests.filter((q) => q.method === "POST");

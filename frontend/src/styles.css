@@ -834,9 +834,10 @@ table.rows td.num, table.rows th.num { font-family: var(--mono); font-variant-nu
 .req-list li { display: grid; grid-template-columns: auto 1fr; gap: 4px 10px; align-items: start; }
 .req-list .hint { grid-column: 2; }
 button, .chip, .card { transition: transform .12s ease, box-shadow .15s ease, border-color .15s ease, background-color .15s ease; }
-button.primary:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99,102,241,.3); }
+/* No lift on hover: a button that moves out from under the pointer flickers (owner, 2026-11-22). */
+button.primary:not(:disabled):hover { box-shadow: 0 6px 16px rgba(99,102,241,.3); }
 button:not(:disabled):active { transform: translateY(0) scale(.98); }
-.chip:not(.on):hover { transform: translateY(-1px); }
+.chip:not(.on):hover { border-color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { button, .chip, .card, .plan-badge { transition: none; } }
 @media (max-width: 700px) { .plan-badge { padding: 0 8px; } .plan-badge svg { display: none; } }
 
@@ -869,3 +870,21 @@ button:not(:disabled):active { transform: translateY(0) scale(.98); }
 .info-i { display: inline-grid; place-items: center; width: 16px; height: 16px; margin-left: 6px; padding: 0; border-radius: 50%; border: 1px solid var(--border-strong); background: var(--surface-2); color: var(--text-2); font: italic 700 10px/1 Georgia, serif; cursor: help; vertical-align: middle; }
 .info-i:hover, .info-i:focus-visible { color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
 .info-tip { max-width: 280px; white-space: normal; text-align: left; line-height: 1.45; font-size: 12.5px; z-index: 1000; }
+
+/* Save buttons that say when there is nothing new (2026-11-22). */
+.save-btn.saved, .save-btn.saved:disabled { opacity: 1; background: var(--ok-soft); color: var(--ok); border-color: transparent; box-shadow: none; cursor: default; }
+.save-btn svg.i { width: 15px; height: 15px; }
+/* Questions to save: one numbered card each. */
+.q-card { border: 1px solid var(--border); border-radius: var(--r-lg); padding: var(--s4); margin-bottom: var(--s4); background: var(--surface); display: grid; gap: var(--s3); }
+.q-card-head { display: flex; align-items: center; gap: var(--s3); flex-wrap: wrap; }
+.q-num { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; }
+.q-card-head .grow { flex: 1; }
+.q-card .field { margin: 0; }
+.q-card .switch-inline { padding-bottom: 0; }
+/* Tool calls: each fact of a call in its own badge. */
+.call-badges { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.badge { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 999px; font-size: 12px; background: var(--surface-2); color: var(--text-2); border: 1px solid var(--border); }
+.badge svg.i { width: 13px; height: 13px; }
+.badge.person { background: var(--accent-soft); color: var(--accent); border-color: transparent; font-weight: 600; }
+.badge.bad { background: var(--bad-soft); color: var(--bad); border-color: transparent; font-weight: 600; }
+.quiet-box { border-top: 1px solid var(--border); margin-top: var(--s4); padding-top: var(--s3); }

@@ -4,7 +4,8 @@ import { del, get, patch, post } from "../api.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
 import AgentCalls from "../components/AgentCalls.jsx";
 import Assistant, { AssistantButton } from "../components/Assistant.jsx";
-import { Icon, Info, Menu, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
+import { changed, sameQuestions, sameSet } from "../dirty.js";
+import { Icon, Info, Menu, SaveButton, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 const TOOL_LABELS = {
   end_call: "End the call", capture_lead: "Save details", transfer_to_human: "Transfer to a person", call_webhook: "Your system (webhook)",
@@ -202,22 +203,30 @@ const KINDS = [
  * kind of answer it is, and optionally the words to ask it in. */
 function QuestionsTab({ agent, onChanged }) {
   const toast = useToast();
-  const [fields, setFields] = useState(agent.settings.capture_fields ?? []);
-  const [confirmAnswers, setConfirmAnswers] = useState(agent.settings.confirm_answers !== false);
+  const saved = agent.settings.capture_fields ?? [];
+  const savedConfirm = agent.settings.confirm_answers !== false;
+  const [fields, setFields] = useState(saved);
+  const [confirmAnswers, setConfirmAnswers] = useState(savedConfirm);
+  const [busy, setBusy] = useState(false);
+  // After a save the agent reloads; the screen takes what the server kept, so it reads as saved.
+  const savedKey = JSON.stringify([saved, savedConfirm]);
+  useEffect(() => { setFields(saved); setConfirmAnswers(savedConfirm); }, [savedKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dirty = !sameQuestions(saved, fields) || confirmAnswers !== savedConfirm;
 
   const set = (i, patch) => setFields((list) => list.map((f, j) => (j === i ? { ...f, ...patch } : f)));
   const add = () => setFields((list) => [...list, { label: "", kind: "text", required: false, ask: "", choices: [] }]);
   const remove = (i) => setFields((list) => list.filter((_, j) => j !== i));
   const save = async () => {
+    setBusy(true);
     try {
       await patch(`/api/agents/${agent.id}`, { settings: { capture_fields: fields, confirm_answers: confirmAnswers } });
       toast("Saved as a draft. Publish it when you are ready."); onChanged();
-    } catch (e) { toast(e.message, true); }
+    } catch (e) { toast(e.message, true); } finally { setBusy(false); }
   };
 
   return (
     <div className="card" style={{ maxWidth: 860 }}>
-      <div className="card-head"><span className="card-title">What the agent should write down</span></div>
+      <div className="card-head"><span className="card-title">What the agent should write down<Info text="Each question is something the agent saves when the caller answers it, like a payment date. Saved answers show on the call (Open call) and on the Tool calls page." /></span></div>
       <p className="hint" style={{ marginBottom: "var(--s4)" }}>
         Each question here becomes something the agent can save when the caller answers it, like a payment date.
         You still have to tell the agent to ask it, in the prompt. Switch on <b>Save what the caller says</b> on
@@ -225,19 +234,25 @@ function QuestionsTab({ agent, onChanged }) {
       </p>
       {fields.length === 0 && <p className="hint">No questions yet.</p>}
       {fields.map((f, i) => (
-        <div key={i} className="q-row">
-          <div className="field"><label className="f">Question</label>
+        <div key={i} className="q-card">
+          <div className="q-card-head">
+            <span className="q-num">{i + 1}</span>
+            <b>{f.label || "New question"}</b>
+            <span className="grow" />
+            <label className="switch-inline"><input type="checkbox" checked={!!f.required} onChange={(e) => set(i, { required: e.target.checked })} />
+              Must have<Info text="The agent keeps asking until it has this answer before the call ends." /></label>
+            <button type="button" className="ghost small-btn" onClick={() => remove(i)} aria-label={`Remove question ${i + 1}`}><Icon name="trash" />Remove</button>
+          </div>
+          <div className="field"><label className="f">1. Question<Info text="A short name for what is saved, like Payment date. It is how the answer is labelled everywhere." /></label>
             <input value={f.label} maxLength={60} placeholder="Payment date" onChange={(e) => set(i, { label: e.target.value })} /></div>
-          <div className="field"><label className="f">Kind of answer</label>
+          <div className="field"><label className="f">2. Kind of answer<Info text="What the answer must be. A date, an amount or a phone number is checked and read back before it is saved, so a mishearing is not stored." /></label>
             <select value={f.kind} onChange={(e) => set(i, { kind: e.target.value })}>
               {KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
             </select></div>
-          <label className="switch-inline"><input type="checkbox" checked={!!f.required} onChange={(e) => set(i, { required: e.target.checked })} /> Must have</label>
-          <button className="ghost" onClick={() => remove(i)} aria-label="Remove this question"><Icon name="trash" /></button>
-          <div className="field" style={{ gridColumn: "1 / -1" }}><label className="f">How to ask it (optional)</label>
+          <div className="field"><label className="f">3. How to ask it (optional)<Info text="The words the agent uses to ask. Leave it empty and the agent asks in its own words." /></label>
             <input value={f.ask || ""} maxLength={200} placeholder="On what exact date will you pay?" onChange={(e) => set(i, { ask: e.target.value })} /></div>
           {f.kind === "choice" && (
-            <div className="field" style={{ gridColumn: "1 / -1" }}><label className="f">The options, separated by commas</label>
+            <div className="field"><label className="f">4. The options, separated by commas</label>
               <input value={(f.choices || []).join(", ")} placeholder="UPI, Bank transfer, Cash"
                 onChange={(e) => set(i, { choices: e.target.value.split(",").map((c) => c.trim()).filter(Boolean) })} /></div>
           )}
@@ -248,7 +263,7 @@ function QuestionsTab({ agent, onChanged }) {
         <div><b>Read it back before saving</b><div className="hint">For dates, amounts and phone numbers, the agent repeats what it heard and waits for a yes. Strongly recommended.</div></div>
         <label className="switch"><input type="checkbox" checked={confirmAnswers} onChange={(e) => setConfirmAnswers(e.target.checked)} /><span /></label>
       </div>
-      <div className="actions"><button className="primary" onClick={save}>Save questions</button></div>
+      <div className="actions"><SaveButton dirty={dirty} busy={busy} onClick={save} label="Save questions" /></div>
     </div>
   );
 }
@@ -379,7 +394,7 @@ function PromptTab({ agent, prompts, onChanged }) {
           <span className="hint">Type <code>{"{{"}</code> to drop in something you already know, like their name.</span>
           {picking && <VariablePicker groups={groups} onPick={insert} onClose={() => setPicking(false)} />}
         </div>
-        <div className="actions"><button className="primary" onClick={save}>Save prompt</button>{current.id !== agent.active_prompt_id && <button className="ghost" onClick={use}>Use on calls</button>}</div>
+        <div className="actions"><SaveButton dirty={name !== (current.name || "") || text !== (current.prompt || "")} onClick={save} label="Save prompt" />{current.id !== agent.active_prompt_id && <button className="ghost" onClick={use}>Use on calls</button>}</div>
       </div>
       <div className="card"><div className="card-head"><span className="card-title">How it works</span></div>
         <p className="hint">Calls use the prompt marked <b>in use</b>. Saving keeps your work as a draft; calls carry on with the published version until you press <b>Publish</b> at the top. Every save is kept, and you can go back to any published version on the Versions tab.</p>
@@ -457,7 +472,7 @@ function ToolsTab({ agent, tools, onChanged, shown = null, onShown }) {
           {own.map(row)}
         </>
       )}
-      <div className="actions"><button className="primary" onClick={save}>Save tools</button></div>
+      <div className="actions"><SaveButton dirty={!sameSet(picked, agent.tools)} onClick={save} label="Save tools" /></div>
     </div>
   );
 }
@@ -472,9 +487,17 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
   const [voicemail, setVoicemail] = useState(s.voicemail || "talk");
   const w = s.call_window || { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
   const [cw, setCw] = useState(w);
+  const quiet0 = { enabled: true, after_secs: 10, times: 2, message: "", hang_up: true, ...s.silence };
+  const [quiet, setQuiet] = useState(quiet0);
+  const setQ = (patch) => setQuiet((q) => ({ ...q, ...patch }));
+  const savedLang = languages.some((l) => l.value === s.language) ? s.language : "auto";
+  const mainDirty = changed({ opening: s.opening_line || "", maxMin: s.max_minutes, ring: s.ring_secs, lang: savedLang, voicemail: s.voicemail || "talk", quiet: quiet0 },
+    { opening, maxMin, ring, lang, voicemail, quiet });
+  const windowDirty = changed(w, cw);
   const save = async () => {
     try {
-      await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw, language: lang, voicemail } });
+      await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw, language: lang, voicemail,
+        silence: { ...quiet, after_secs: Number(quiet.after_secs), times: Number(quiet.times) } } });
       toast("Saved as a draft. Publish it when you are ready."); onChanged();
     } catch (e) { toast(e.message, true); }
   };
@@ -498,7 +521,26 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
         <div className="field"><label className="f">Opening line</label><input value={opening} onChange={(e) => setOpening(e.target.value)} maxLength={200} placeholder="Leave empty to let the agent introduce itself" /></div>
         <div className="field"><label className="f">Longest call (minutes)</label><input type="number" value={maxMin} min={1} max={limits.max_minutes} onChange={(e) => setMaxMin(e.target.value)} /><span className="hint">Up to {limits.max_minutes} minutes on this server.</span></div>
         <div className="field"><label className="f">Ring for (seconds)</label><input type="number" value={ring} min={limits.ring_secs[0]} max={limits.ring_secs[1]} onChange={(e) => setRing(e.target.value)} /></div>
-        <div className="actions"><button className="primary" onClick={save}>Save settings</button></div>
+        <div className="quiet-box">
+          <div className="toggle-line">
+            <div><b>If the caller goes quiet<Info text="When nobody speaks for this many seconds after the agent, it asks if they are still there. After the last try it says goodbye and hangs up, so a call is never left hanging in silence." /></b>
+              <div className="hint">Ask “Are you still there?” when the line goes silent.</div></div>
+            <label className="switch"><input type="checkbox" checked={quiet.enabled} onChange={(e) => setQ({ enabled: e.target.checked })} /><span /></label>
+          </div>
+          {quiet.enabled && (
+            <div className="grid-2">
+              <div className="field"><label className="f">After how many seconds of silence</label>
+                <input type="number" min={5} max={60} value={quiet.after_secs} onChange={(e) => setQ({ after_secs: e.target.value })} /><span className="hint">5 to 60 seconds.</span></div>
+              <div className="field"><label className="f">How many times to ask</label>
+                <input type="number" min={1} max={5} value={quiet.times} onChange={(e) => setQ({ times: e.target.value })} /><span className="hint">1 to 5 times.</span></div>
+              <div className="field" style={{ gridColumn: "1 / -1" }}><label className="f">What to say (optional)<Info text="Your own words. Leave it empty to use “Are you still there?”, or the Hindi for it on a Hindi call." /></label>
+                <input value={quiet.message} maxLength={200} placeholder="Are you still there?" onChange={(e) => setQ({ message: e.target.value })} /></div>
+              <label className="check" style={{ gridColumn: "1 / -1" }}><input type="checkbox" checked={quiet.hang_up} onChange={(e) => setQ({ hang_up: e.target.checked })} />
+                <span>After the last try, say goodbye and hang up</span></label>
+            </div>
+          )}
+        </div>
+        <div className="actions"><SaveButton dirty={mainDirty} onClick={save} label="Save settings" /></div>
       </div>
       <div className="card">
         <div className="card-head"><span className="card-title">Calling window</span><label className="switch"><input type="checkbox" checked={cw.enabled} onChange={(e) => setCw({ ...cw, enabled: e.target.checked })} /><span /></label></div>
@@ -508,7 +550,7 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
           <div className="field"><label className="f">To</label><input type="time" value={cw.end} disabled={!cw.enabled} onChange={(e) => setCw({ ...cw, end: e.target.value })} /></div>
         </div>
         <div className="field"><label className="f">Time zone</label><input value={cw.timezone} disabled={!cw.enabled} onChange={(e) => setCw({ ...cw, timezone: e.target.value })} placeholder="Asia/Kolkata" /></div>
-        <div className="actions"><button className="primary" onClick={save}>Save calling window</button></div>
+        <div className="actions"><SaveButton dirty={windowDirty} onClick={save} label="Save calling window" /></div>
       </div>
     </div>
   );

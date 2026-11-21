@@ -30,8 +30,9 @@ export default function Calls() {
     try {
       const r = await post("/api/calls", { from_id: fromId, to, consent: true, agent_id: agentId || undefined,
         language: language || undefined });
-      toast(`Ringing ${r.to}.`);
-      if (r.request_uuid) setWatch({ uuid: r.request_uuid, label: r.to, sub: [r.to, r.agent_name].filter(Boolean).join(" · ") });
+      toast(`Ringing ${r.contact_name || r.to}.`);
+      // A saved contact is shown by name on top, with the number and agent beneath it.
+      if (r.request_uuid) setWatch({ uuid: r.request_uuid, label: r.contact_name || r.to, sub: [r.to, r.agent_name].filter(Boolean).join(" · ") });
       setReload((n) => n + 1);
     } catch (e) {
       if (e instanceof ApiError && e.data.code === "outside_call_window") { setWindowWarn({ message: e.message, window: e.data.call_window }); return; }
@@ -155,7 +156,7 @@ function History({ reload, onWatch }) {
       {data?.calls.length === 0 && <div className="hint">{q.trim() ? "No calls match" : "No calls yet."}</div>}
       {data?.calls.map((c) => (
         <button key={c.call_id} type="button" className="call-row"
-          onClick={() => (c.has_transcript ? setView(c) : c.status === "ringing" ? onWatch({ uuid: c.call_id, label: c.contact_name || c.peer || "Call", sub: c.peer }) : null)}>
+          onClick={() => (c.has_transcript ? setView(c) : c.status === "ringing" ? onWatch({ uuid: c.call_id, label: c.contact_name || c.peer || "Call", sub: [c.peer, c.agent_name].filter(Boolean).join(" · ") }) : null)}>
           <div style={{ minWidth: 0, textAlign: "left" }}>
             <b className="ellip">{c.contact_name || c.peer || "Unknown number"}</b>
             <div className="muted ellip">{[whenShort(c.started_at), c.agent_name, c.status === "answered" ? fmtDur(c.duration_secs) : null].filter(Boolean).join(" · ")}</div>

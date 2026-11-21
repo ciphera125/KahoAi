@@ -14,7 +14,14 @@ export default defineConfig({
     port: 5174,
     allowedHosts: [".ngrok-free.dev"],
     fs: { allow: [".."] },
-    proxy: { "/api": { target: process.env.VITE_API_TARGET || "http://127.0.0.1:8020", changeOrigin: false } },
+    proxy: {
+      "/api": { target: process.env.VITE_API_TARGET || "http://127.0.0.1:8020", changeOrigin: false },
+      // One public address (the tunnel) serves both the admin site and the phone server: Plivo reaches
+      // /answer, /hangup, /transfer and the /ws audio stream here. Each is still guarded by WEBHOOK_SECRET,
+      // Plivo's signature and, for /ws, a single-use token. Dev only; a real deploy uses a proper router.
+      ...Object.fromEntries(["/answer", "/hangup", "/transfer"].map((p) => [p, { target: process.env.VITE_VOICE_TARGET || "http://127.0.0.1:8765", changeOrigin: false }])),
+      "/ws": { target: process.env.VITE_VOICE_TARGET || "http://127.0.0.1:8765", ws: true, changeOrigin: false },
+    },
   },
   preview: { port: 4175, headers: securityHeaders },
   build: { outDir: "dist", sourcemap: false },

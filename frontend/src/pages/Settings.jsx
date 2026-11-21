@@ -7,7 +7,8 @@ import People from "./People.jsx";
 import { del, get, patch, post } from "../api.js";
 import { serverView } from "../paginate.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
-import { Info, Icon, Pager, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { Info, Icon, Pager, Spinner, useConfirm, useToast, SaveButton } from "../ui.jsx";
+import { changed } from "../dirty.js";
 
 const TABS = [["organization", "Organization"], ["people", "People"], ["billing", "Billing"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
   ["webhook", "Send calls to your system"], ["usage", "Usage"], ["system", "Is everything working?"], ["audit", "Audit log"]];
@@ -131,8 +132,9 @@ function CallRules() {
   const toast = useToast();
   const editable = can(me, "org.settings");
   const [s, setS] = useState(null);
+  const [kept, setKept] = useState(null); // what the server last saved, to tell whether there is anything new
   const [busy, setBusy] = useState(false);
-  useEffect(() => { get("/api/org/settings").then(setS).catch((e) => toast(e.message, true)); }, [toast]);
+  useEffect(() => { get("/api/org/settings").then((x) => { setS(x); setKept(x); }).catch((e) => toast(e.message, true)); }, [toast]);
   if (!s) return <Spinner />;
   const w = s.call_window;
   const setWindow = (patchIn) => setS((x) => ({ ...x, call_window: { ...x.call_window, ...patchIn } }));
@@ -141,7 +143,7 @@ function CallRules() {
     try {
       const next = await patch("/api/org/settings", { max_minutes: s.max_minutes === "" || s.max_minutes === null ? null : Number(s.max_minutes),
         call_window: w });
-      setS(next); toast("Saved. It applies to the next call.");
+      setS(next); setKept(next); toast("Saved. It applies to the next call.");
     } catch (e) { toast(e.message, true); } finally { setBusy(false); }
   };
   return (
@@ -168,7 +170,7 @@ function CallRules() {
           onChange={(e) => setS((x) => ({ ...x, max_minutes: e.target.value }))} />
         <span className="hint">A call is ended at this length even if an agent allows longer. Leave empty for no extra limit.</span></div>
 
-      {editable && <div className="actions"><button className="primary" onClick={save} disabled={busy}>Save call rules</button></div>}
+      {editable && <div className="actions"><SaveButton dirty={changed({ m: kept?.max_minutes ?? "", w: kept?.call_window }, { m: s.max_minutes ?? "", w })} busy={busy} onClick={save} label="Save call rules" /></div>}
     </div>
   );
 }

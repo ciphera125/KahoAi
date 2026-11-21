@@ -2333,3 +2333,13 @@ Latest pushed commit at this point: 19afd81 (the handoff commit follows it).
 4. **"i" help buttons** (`Info` in `ui.jsx`) on every page title, every filter and tile on Tool calls and Tasks, the task form, and each tool on the agent's Tools tab.
 5. **Tests**: backend 985 passed, voice 946 passed + 1 failing, frontend 70, both sites build. Attacks run for real (`tests/toolCallsAttacks.test.js`): SQL in every filter, array-valued params, cross-organization ids, unauthenticated, markup in spoken words, another person's task id, hostile dates: all held.
 **Open / report only.** `test_no_em_dashes` fails on `marketing-site/src/content/content.test.ts` (Aayushi's file; the owner's no-em-dash rule). 8 old backend lint errors in files not touched here (`import-legacy.js`, `verify_storage.mjs`, `adminController.js`, `Requests.js`, `User.js`, `routes/auth.js`, `storageFiles.test.js`). The person filter scans every call's number (fine now, add an index on digits at large scale). The Studio has no browser-level test; the pages were checked by lint, build and the API, not clicked through.
+
+## 2026-11-22 (later): calls end when they should, silence follow-up, Save buttons
+1. **end_call really ends the call**: call c8f8d8ab said goodbye at 01:24:34 and stayed open until the 10-minute ceiling (01:30:45); now a backstop hangs up 8s after end_call (`END_CALL_GRACE_SECS`).
+2. **Recording kept when a guard ends a call**; c8f8d8ab's audio was recovered and uploaded by hand (Listen works now).
+3. **If the caller goes quiet** (agent Call settings): seconds, times, own words, hang up after. On by default (10s, twice). Needs Publish to reach calls.
+4. **One question at a time**: a second question before the caller answers is not spoken.
+5. **Live header** shows the contact's name, number and agent beneath; **Save buttons** rest at "Saved" until an edit (prompt, tools, questions, settings, calling window, call rules, prompts page); hover no longer lifts buttons (the flicker); **Questions to save** are numbered cards; **Tool calls** headers are badges.
+6. **Why c8f8d8ab showed "needed more info" twice**: it ran version 2 (only End the call and Save details); the task tools are in the unpublished draft. The tool checks were right; the agent had the wrong tools live. capture_lead's description now forbids empty or guessed values and points reminders to add_task.
+7. **Phone and admin share the tunnel**: `admin/vite.config.js` proxies /answer, /hangup, /transfer, /ws to :8765 (the pre-call check had been getting the admin page).
+Knowledge: no documents exist for any agent yet; search is keyword matching. Tests: backend 996, voice 962, frontend 74, ruff and both builds clean.

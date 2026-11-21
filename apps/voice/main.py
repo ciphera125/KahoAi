@@ -100,6 +100,7 @@ from resilience import (
     CallHealth,
     safe_reason,
 )
+from silence import SilenceFollowUp
 from summary import DEFAULT_ATTEMPTS, DEFAULT_DEADLINE_SECS, summarise_call
 from tools import DEFAULT_TIMEOUT_SECS, CallContext, build_tool_schemas, enabled_names
 from transcript import CallTranscript
@@ -1110,6 +1111,46 @@ class RepeatedSentenceFilter(BaseTextFilter):
         self._last = None
 
 
+class OneQuestionAtATime(BaseTextFilter):
+    """Ask one question, then let the caller answer (call c8f8d8ab: two tool results each led to a
+    reply, and the caller heard "Could you tell me your name?" then "May I have your name?").
+    Until the caller speaks again, a second question is not said. allow_next() lets the
+    silence follow-up through. Only meaningful when text arrives a sentence at a time."""
+
+    def __init__(self, caller_turns):
+        self._caller_turns = caller_turns
+        self._asked_at: int | None = None
+        self._allow = False
+
+    def allow_next(self) -> None:
+        self._allow = True
+
+    async def filter(self, text: str) -> str:
+        if not text.rstrip().endswith("?"):
+            return text
+        now = self._caller_turns()
+        if self._allow:
+            self._allow = False
+        elif self._asked_at == now:
+            logger.info("Dropped a second question before the caller answered the first")
+            return ""
+        self._asked_at = now
+        return text
+
+    async def handle_interruption(self):
+        self._asked_at = None
+
+
+def attach_one_question(services, caller_turns) -> OneQuestionAtATime:
+    """One shared OneQuestionAtATime on every voice of the call, so a switch to the backup voice
+    keeps the count. Pipecat 1.12 keeps a TTS service's filters in `_text_filters` (pinned)."""
+    one = OneQuestionAtATime(caller_turns)
+    for service in services:
+        if hasattr(service, "_text_filters"):  # a voice with no text filters has nothing to add to
+            service._text_filters = [*service._text_filters, one]
+    return one
+
+
 def speech_text_filters() -> list[BaseTextFilter]:
     """Strip markdown, then fix punctuation, before any text reaches the voice;
     when text goes by sentence, also drop a sentence repeated back to back."""
@@ -1326,6 +1367,18 @@ def build_tts(
     )
 
 
+def hang_up_with_backstop(end_gracefully, on_end_call):
+    """end_call's hang-up: the graceful end (goodbye spoken, then the pipeline finishes), and, on a
+    phone call, a backstop that ends the call for certain if that gets stuck (duration_limit)."""
+
+    async def hang_up() -> None:
+        await end_gracefully()
+        if on_end_call is not None:
+            on_end_call()
+
+    return hang_up
+
+
 def build_worker(
     transport,
     params: PipelineParams | None = None,
@@ -1349,6 +1402,8 @@ def build_worker(
     report_error=None,
     report_lead=None,
     recording_upload=None,
+    on_end_call=None,
+    silence=None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -1465,7 +1520,10 @@ def build_worker(
     call.custom_tools = list(custom_tools or [])
     call.run_custom_tool = run_custom_tool
     call.turn_number = lambda: transcript.caller_turns
-    call.hang_up = lambda: llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
+    async def end_gracefully():
+        await llm.push_frame(EndTaskFrame(), FrameDirection.UPSTREAM)
+
+    call.hang_up = hang_up_with_backstop(end_gracefully, on_end_call)
     try:
         from_studio = tool_names is not None
         tool_schemas = build_tool_schemas(
@@ -1480,6 +1538,8 @@ def build_worker(
         logger.error(str(e))
         sys.exit(1)
 
+    # When the caller goes quiet (silence.py): off unless the agent says how long to wait.
+    quiet = SilenceFollowUp.from_config(silence)
     context = LLMContext(tools=tool_schemas or NOT_GIVEN)
     user_aggregator, assistant_aggregator = LLMContextAggregatorPair(
         context,
@@ -1489,6 +1549,7 @@ def build_worker(
             # The caller can neither talk over the notice and greeting nor, with an
             # early "hello?", cancel them. Released once the greeting has played.
             user_mute_strategies=opening_mute_strategies(bool(prespoken), notice_ends_at),
+            user_idle_timeout=quiet.timeout,
         ),
     )
 
@@ -1547,6 +1608,26 @@ def build_worker(
 
     call.say = say  # the goodbye end_call speaks when the model forgot to
 
+    one_question = (attach_one_question(tts_services, lambda: transcript.caller_turns)
+                    if text_aggregation_mode() == TextAggregationMode.SENTENCE else None)
+
+    @user_aggregator.event_handler("on_user_turn_started")
+    async def caller_spoke(aggregator, strategy):
+        quiet.caller_spoke()
+
+    @user_aggregator.event_handler("on_user_turn_idle")
+    async def caller_quiet(aggregator):
+        step = quiet.next_step(language_mode)
+        if step is None:
+            return
+        kind, words = step
+        transcript.event("silence_followup" if kind == "ask" else "silence_goodbye")
+        if one_question is not None:
+            one_question.allow_next()  # asking again after a silence is the point
+        await say(words)
+        if kind == "end":
+            await call.hang_up()
+
     async def switch_to(service) -> None:
         await llm.push_frame(ManuallySwitchServiceFrame(service=service))
 
@@ -1584,6 +1665,7 @@ def build_worker(
             await health.on_switched(service)
 
     worker.transcript = transcript
+    worker.recorder = recorder  # closed by the phone server however the call ends
     worker.recorder = recorder
     logger.info(f"Per-turn timings -> {timings} (summarise: scripts/latency_summary.py)")
 

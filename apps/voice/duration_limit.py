@@ -83,3 +83,41 @@ async def enforce_max_duration(
             logger.error(f"Could not record the max-duration event: {e!r}")
     for name, step in steps:
         await _run_step(name, step, step_timeout)
+
+
+# How long after end_call the goodbye is given to be heard before the call is ended for certain.
+DEFAULT_GOODBYE_GRACE_SECS = 8.0
+
+
+def goodbye_grace() -> float:
+    """END_CALL_GRACE_SECS, or the default; anything unusable falls back to the default."""
+    try:
+        value = float(os.getenv("END_CALL_GRACE_SECS") or DEFAULT_GOODBYE_GRACE_SECS)
+    except ValueError:
+        return DEFAULT_GOODBYE_GRACE_SECS
+    return value if math.isfinite(value) and 1 <= value <= 60 else DEFAULT_GOODBYE_GRACE_SECS
+
+
+async def end_after_goodbye(
+    grace_secs: float,
+    steps: list[Step],
+    *,
+    record: Callable[..., None] | None = None,
+    step_timeout: float = STEP_TIMEOUT_SECS,
+) -> None:
+    """After end_call: wait for the goodbye to be heard, then end the call by every step.
+
+    end_call asks the pipeline to finish gracefully, and that request can be stuck
+    behind whatever the pipeline is doing (call c8f8d8ab stayed open six minutes
+    after its goodbye). This runs beside the pipeline, like the ceiling, so it
+    cannot be stuck with it. Cancel it when the call ends first.
+    """
+    await asyncio.sleep(grace_secs)
+    logger.warning(f"The call was still open {grace_secs:g}s after end_call; ending it")
+    if record is not None:
+        try:
+            record("end_call_backstop", after_secs=grace_secs)
+        except Exception as e:
+            logger.error(f"Could not record the end-call backstop: {e!r}")
+    for name, step in steps:
+        await _run_step(name, step, step_timeout)

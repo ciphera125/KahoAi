@@ -152,12 +152,14 @@ function CallNode({ call, technical, onOpen }) {
         <button type="button" className="tree-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
           <span className={`twist${open ? " open" : ""}`}><Icon name="chevron" /></span>
           <div style={{ flex: 1, minWidth: 0, textAlign: "left" }}>
-            <b>{call.contact_name || call.peer || "Unknown caller"}</b>
-            <div className="hint">
-              {[call.agent_name && `${call.agent_name}${call.agent_version ? ` v${call.agent_version}` : ""}`,
-                call.started_at && whenShort(call.started_at),
-                `${all.length} tool call${all.length === 1 ? "" : "s"}`].filter(Boolean).join(" · ")}
-              {attention > 0 && <> · <span className="needs-you">{attention} need{attention === 1 ? "s" : ""} your attention</span></>}
+            <div className="call-badges">
+              <span className="badge person" title="Who the call was with"><Icon name="contacts" />{call.contact_name || "Not in your contacts"}</span>
+              {call.peer && <span className="badge" title="Their number"><Icon name="call" />{call.peer}</span>}
+              {call.agent_name && <span className="badge" title="The agent that took the call"><Icon name="agent" />{call.agent_name}</span>}
+              {call.agent_version && <span className="badge" title="Which published version of the agent answered">Version {call.agent_version}</span>}
+              {call.started_at && <span className="badge" title="When the call started (India time)"><Icon name="clock" />{whenShort(call.started_at)}</span>}
+              <span className="badge" title="How many times the agent used a tool on this call"><Icon name="tool" />{all.length} tool call{all.length === 1 ? "" : "s"}</span>
+              {attention > 0 && <span className="badge bad" title="Tool calls on this call that need you to look"><Icon name="warn" />{attention} need{attention === 1 ? "s" : ""} your attention</span>}
             </div>
           </div>
         </button>
