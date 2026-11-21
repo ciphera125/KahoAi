@@ -12,7 +12,16 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-11-12. **Current state, read this first:** `main` is 3 commits ahead of the 2026-11-08 work and pushed
+Last updated: 2026-11-22. **Current state, read this first:** `main` is at `ec2a269` on GitHub plus this handoff
+commit (local until pushed), and `website-redesign` was fast-forwarded to `ec2a269` (it had no work of its own, only a
+stale copy). Tests: backend 999, voice 962, frontend 74, marketing-site 69; ruff and eslint clean; both sites build.
+Migration 032 (`call_events.outcome`) is applied to the live database. Running locally: backend :8020/:8021, Studio
+:5173, admin :5174 (also serves the phone server's /answer /hangup /transfer /ws through its Vite proxy), marketing
+:4000, phone server :8765, one ngrok tunnel `open-buckskin-wolverine.ngrok-free.dev` -> :5174. **The agent
+`ag_ec797f807341` has unpublished changes** (task tools, questions, silence follow-up): live calls use version 2 until
+someone tests and publishes. Newest work is in the last three session-log entries (2026-11-22). Older header follows.
+
+Last updated (older): 2026-11-12. **State then:** `main` is 3 commits ahead of the 2026-11-08 work and pushed
 through `6d38dc7`; the redaction-gap fix (`redact.js`, `archive.js`, `verify_storage.mjs`, `redact.test.js`, docs) is
 **uncommitted** until the owner says "commit and push". Backend 626 tests pass, lint clean. The newest entries of the session
 log (bottom) cover 2026-11-09 to 2026-11-11: Kaho Builder accuracy and history, tool log, Supabase Storage in numbered folders,
@@ -2343,3 +2352,23 @@ Latest pushed commit at this point: 19afd81 (the handoff commit follows it).
 6. **Why c8f8d8ab showed "needed more info" twice**: it ran version 2 (only End the call and Save details); the task tools are in the unpublished draft. The tool checks were right; the agent had the wrong tools live. capture_lead's description now forbids empty or guessed values and points reminders to add_task.
 7. **Phone and admin share the tunnel**: `admin/vite.config.js` proxies /answer, /hangup, /transfer, /ws to :8765 (the pre-call check had been getting the admin page).
 Knowledge: no documents exist for any agent yet; search is keyword matching. Tests: backend 996, voice 962, frontend 74, ruff and both builds clean.
+
+## 2026-11-22 (end): who asked for each minute, plain words for customers, roles, paging, phones
+1. **Billing ledger** says who asked for each line (`requested_by`: the top-up's requester from `topups`, the person who
+   placed an outbound call from the `activity` row whose `ref` is the call's `request_uuid`; inbound = the caller) and
+   `confirmed_by: "Kaho AI"` for payments. A bulk or automatic call has no person (shown as such).
+2. **No Kaho internals on the client side**: the Studio's system check (`forCustomer` in `services/health.js`) shows
+   "Working." / "Not working right now ... tell Kaho support" for the database, model, storage and phone server, keeps
+   the Plivo advice (the customer's own account), and no warnings; the full detail goes to the server log and the admin
+   site (which now also checks the phone server). Backup card is "Your records, backed up" with friendly folder names;
+   the button is "Back up now". Tools that need a server setting say "Ask Kaho support".
+3. **People**: role choice shows Can / Cannot / Good for; an admin-only menu per person changes the role or removes
+   them (the old dropdown is gone); proper card heading and table.
+4. **Paging 10/25/50** added to Live, API keys, requests to Kaho, top-ups, usage by agent, invite codes.
+5. **Phones and tablets**: every `table.rows` stacks into cards under 860px, tab bars scroll sideways, tiles and filters
+   wrap. Checked by build only, not on a real device.
+6. **website-redesign** was 4 commits behind `main` with nothing of its own; fast-forwarded to `main` so Aayushi builds
+   on today's code (it carried the old space-in-path test bug and an em dash).
+**Open.** Push this handoff commit; publish the agent; try the silence follow-up and the end-call backstop on a real
+call; look at the Studio on a real phone; `gh` is not installed here, so GitHub CI was not checked after these pushes;
+Knowledge has no documents for any agent yet; a bulk call's ledger line has no person to name.
