@@ -1,3 +1,4 @@
+import { logger } from "../utils/logger.js";
 import * as Assistant from "../models/Assistant.js";
 import * as BuilderHistory from "../models/BuilderHistory.js";
 import * as ToolLog from "../models/ToolLog.js";
@@ -48,6 +49,9 @@ export async function archiveStatus(req, res) {
 }
 
 export async function health(req, res) {
-  const { systemHealth } = await import("../services/health.js");
-  res.json(await systemHealth(req.user.org_id));
+  const { forCustomer, systemHealth } = await import("../services/health.js");
+  const result = await systemHealth(req.user.org_id);
+  // The full answer, with what failed and why, goes to the server's log; the customer gets plain words.
+  if (!result.ok) logger.warn({ org: req.user.org_id, failed: result.checks.filter((c) => !c.ok).map((c) => `${c.id}: ${c.detail}`) }, "system check failed");
+  res.json(forCustomer(result));
 }

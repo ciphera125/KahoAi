@@ -99,6 +99,27 @@ describe("asking for a top-up", () => {
   });
 });
 
+describe("the minutes ledger says who", () => {
+  it("names the person who asked for a top-up (owner, 2026-11-22)", async () => {
+    const b = await subscribed();
+    const t = (await b.post("/api/billing/topups").send({ minutes: 100 })).body;
+    await Billing.decideTopup(t.id, { approve: true, adminEmail: "a@kaho.in" });
+    const [line] = (await b.get("/api/billing/ledger?page=1&per_page=10")).body.entries;
+    expect(line).toMatchObject({ kind: "topup", requested_by: "Asha Rao", confirmed_by: "Kaho AI" });
+  });
+
+  it("names who placed a call that used minutes, or says the call came in", async () => {
+    const b = await subscribed();
+    const org = b.user.org_id;
+    await db.query("INSERT INTO calls (call_id, org_id, request_uuid, direction, peer) VALUES ('call-out-0001', $1, 'req-out-0001', 'outbound', '+919800000001'), ('call-in-00001', $1, NULL, 'inbound', '+919800000002')", [org]);
+    await db.query("INSERT INTO activity (id, org_id, kind, text, view, ref, actor) VALUES ('ac_t1', $1, 'call', 'Called', 'calls', 'req-out-0001', 'Asha Rao')", [org]);
+    await db.query("INSERT INTO minute_ledger (org_id, kind, minutes, call_id) VALUES ($1, 'usage', -2, 'call-out-0001'), ($1, 'usage', -1, 'call-in-00001')", [org]);
+    const lines = (await b.get("/api/billing/ledger?page=1&per_page=10")).body.entries.filter((e) => e.kind === "usage");
+    expect(lines.find((l) => l.call_id === "call-out-0001")).toMatchObject({ requested_by: "Asha Rao", direction: "outbound", peer: "+919800000001" });
+    expect(lines.find((l) => l.call_id === "call-in-00001")).toMatchObject({ requested_by: null, direction: "inbound" });
+  });
+});
+
 describe("Kaho confirming a payment", () => {
   it("credits the minutes once, tells the team, and shows the new balance", async () => {
     const b = await subscribed();

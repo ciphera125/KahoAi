@@ -111,5 +111,17 @@ async function runChecks(list, orgId) {
 
 export const systemHealth = (orgId) => runChecks(CHECKS, orgId);
 
+// What a customer is shown. The detail of Kaho's own parts (the database, the model, storage, the phone
+// server) is for Kaho's staff (the admin site) and the server's logs; a customer needs to know whether it
+// works and who to tell. Their own Plivo account keeps its advice: that is theirs to fix.
+const CUSTOMER_LABELS = { database: "Saving your work", connections: "Handling many calls at once",
+  model: "The AI that builds and tests agents", storage: "Recordings and backups",
+  plivo: "Your Plivo account", phone_server: "Taking and placing calls" };
+const NOT_WORKING = "Not working right now. If it stays like this, tell Kaho support.";
+export function forCustomer(result) {
+  return { ok: result.ok, warnings: [], checks: result.checks.map((c) => ({ id: c.id, label: CUSTOMER_LABELS[c.id] ?? c.label,
+    ok: c.ok, ms: c.ms, detail: c.id === "plivo" ? c.detail : c.ok ? "Working." : NOT_WORKING })) };
+}
+
 /** The parts of the platform that are not one organization's: for the admin site. */
-export const platformHealth = () => runChecks(CHECKS.filter(([id]) => ["database", "connections", "model", "storage"].includes(id)), null);
+export const platformHealth = () => runChecks(CHECKS.filter(([id]) => ["database", "connections", "model", "storage", "phone_server"].includes(id)), null);

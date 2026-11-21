@@ -8,7 +8,7 @@ import { logsText, minutesText, perMinute, planFacts, rupees, STATUS_WORDS, TOPU
 import { serverView } from "../paginate.js";
 import { startPolling } from "../poll.js";
 const bellAgain = () => window.dispatchEvent(new Event("kaho:notifications-changed"));
-import { Icon, Pager, Spinner, useConfirm, useToast, whenShort } from "../ui.jsx";
+import { Icon, Pager, Spinner, useConfirm, useToast, whenShort, Info, usePaged } from "../ui.jsx";
 
 const KIND_WORDS = { plan: "Plan minutes", topup: "Top-up", usage: "Call", adjust: "Adjustment by Kaho" };
 const PILL = { active: "active", pending: "warn", expired: "failed", suspended: "failed", cancelled: "muted" };
@@ -37,6 +37,7 @@ export default function Billing() {
   // A confirmation from Kaho shows up here by itself.
   useEffect(() => startPolling(load, 20000), [load]);
 
+  const [shownTopups, topupPager] = usePaged(topups ?? []);
   if (!o) return <Spinner />;
   const rate = o.terms?.extra_paise ?? null;
   const quote = topupQuote(minutes, rate);
@@ -121,11 +122,13 @@ export default function Billing() {
         <div className="card-head"><span className="card-title">Your top-up requests</span></div>
         {!topups ? <Spinner /> : topups.length === 0 ? <p className="hint">No top-ups yet.</p> : (
           <table className="rows"><thead><tr><th>When</th><th>Minutes</th><th>Amount</th><th>Reference</th><th>Status</th><th /></tr></thead>
-            <tbody>{topups.map((t) => (
+            <tbody>{shownTopups.map((t) => (
               <tr key={t.id}><td>{whenShort(t.created_at)}</td><td>{minutesText(t.minutes)}</td><td>{rupees(t.amount_paise)}</td><td className="code">{t.reference}</td>
                 <td><span className={`pill ${t.status === "paid" ? "active" : t.status === "pending" ? "warn" : "muted"}`}>{TOPUP_WORDS[t.status]}</span>
                   {t.note && <div className="hint">{t.note}</div>}</td>
                 <td>{t.status === "pending" && manage && <button type="button" className="ghost small-btn" onClick={() => withdraw(t)}>Withdraw</button>}</td></tr>))}</tbody></table>
+        )}
+        {topups && topups.length > 0 && (topupPager
         )}
       </div>
 
@@ -171,11 +174,14 @@ function Ledger() {
       <div className="card">
         <div className="card-head"><span className="card-title">Where your minutes went</span></div>
         {!d ? <Spinner /> : d.entries.length === 0 ? <p className="hint">Nothing yet.</p> : (
-          <table className="rows"><thead><tr><th>When</th><th>What</th><th>Minutes</th></tr></thead>
+          <div className="table-wrap"><table className="rows"><thead><tr><th>When</th><th>What</th><th>Who asked for it<Info text="The person in your team who requested the top-up or placed the call. An incoming call was started by the caller. Kaho AI confirms payments." /></th><th>Minutes</th></tr></thead>
             <tbody>{d.entries.map((e) => (
               <tr key={e.id}><td>{whenShort(e.at)}</td>
-                <td>{KIND_WORDS[e.kind] ?? e.kind}{e.note && <div className="hint">{e.note}</div>}</td>
-                <td className={`num ${e.minutes < 0 ? "minus" : "plus"}`}>{e.minutes > 0 ? "+" : ""}{e.minutes}</td></tr>))}</tbody></table>
+                <td>{KIND_WORDS[e.kind] ?? e.kind}{e.kind === "usage" && e.peer && <div className="hint">{e.direction === "inbound" ? "From" : "To"} {e.peer}</div>}{e.note && <div className="hint">{e.note}</div>}</td>
+                <td>{e.requested_by ? <b>{e.requested_by}</b> : e.kind === "usage" && e.direction === "inbound" ? <span className="muted">The caller (incoming call)</span>
+                  : e.kind === "usage" ? <span className="muted">An automatic or bulk call</span> : <span className="muted">-</span>}
+                  {e.confirmed_by && <div className="hint">Confirmed by {e.confirmed_by}</div>}</td>
+                <td className={`num ${e.minutes < 0 ? "minus" : "plus"}`}>{e.minutes > 0 ? "+" : ""}{e.minutes}</td></tr>))}</tbody></table></div>
         )}
       </div>
       {d && <Pager view={serverView({ page: d.page, total: d.total, size: d.per_page })} size={d.per_page} onPage={setPage} onSize={(n) => { setSize(n); setPage(1); }} />}

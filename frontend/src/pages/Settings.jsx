@@ -7,7 +7,7 @@ import People from "./People.jsx";
 import { del, get, patch, post } from "../api.js";
 import { serverView } from "../paginate.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
-import { Info, Icon, Pager, Spinner, useConfirm, useToast, SaveButton } from "../ui.jsx";
+import { Info, Icon, Pager, Spinner, useConfirm, useToast, SaveButton, usePaged } from "../ui.jsx";
 import { changed } from "../dirty.js";
 
 const TABS = [["organization", "Organization"], ["people", "People"], ["billing", "Billing"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
@@ -102,6 +102,7 @@ function WriteToKaho() {
   const toast = useToast();
   const [text, setText] = useState("");
   const [list, setList] = useState(null);
+  const [shownList, listPager] = usePaged(list ?? []);
   const [busy, setBusy] = useState(false);
   const load = useCallback(() => get("/api/requests").then(setList).catch(() => {}), []);
   useEffect(() => { load(); }, [load]);
@@ -117,10 +118,12 @@ function WriteToKaho() {
       <textarea value={text} maxLength={1000} rows={3} placeholder="What do you need?" onChange={(e) => setText(e.target.value)} aria-label="Your request to Kaho" />
       <div className="actions"><span className="hint">{text.length}/1000</span><button type="button" className="primary" disabled={busy || !text.trim()} onClick={send}>Send to Kaho</button></div>
       {list && list.length > 0 && (
-        <ul className="req-list">{list.map((r) => (
+        <ul className="req-list">{shownList.map((r) => (
           <li key={r.id}><span className={`pill ${r.status === "open" ? "warn" : r.status === "done" ? "active" : "muted"}`}>{r.status === "open" ? "Waiting" : r.status === "done" ? "Answered" : "Closed"}</span>
             <span>{r.kind === "plan_change" ? `Plan change${r.plan_id ? `: ${r.plan_id}` : ""}` : r.message}</span>
             {r.response && <div className="hint">Kaho: {r.response}</div>}</li>))}</ul>
+      )}
+      {list && list.length > 0 && (listPager
       )}
     </div>
   );
@@ -236,6 +239,7 @@ function ApiKeys() {
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
   const [keys, setKeys] = useState(null);
+  const [shownKeys, keysPager] = usePaged(keys ?? []);
   const [name, setName] = useState("");
   const [fresh, setFresh] = useState(null);
 
@@ -268,7 +272,7 @@ function ApiKeys() {
       )}
       {!keys && <Spinner />}
       {keys?.length === 0 && <p className="hint">No keys yet.</p>}
-      {keys?.map((k) => (
+      {shownKeys.map((k) => (
         <div key={k.id} className="toggle-line">
           <div><b>{k.name || "Unnamed key"}</b>
             <div className="hint"><code>{k.prefix}…</code> · made {new Date(k.created_at).toLocaleDateString()}
@@ -277,6 +281,7 @@ function ApiKeys() {
           <button className="ghost" onClick={() => revoke(k)}>Revoke</button>
         </div>
       ))}
+      {keys?.length > 0 && keysPager}
       <div className="field" style={{ marginTop: "var(--s3)" }}><label className="f">Name a new key</label>
         <input value={name} maxLength={60} placeholder="Our CRM" onChange={(e) => setName(e.target.value)} /></div>
       <div className="actions"><button className="primary" onClick={make}><Icon name="plus" />Make a key</button></div>
@@ -393,24 +398,31 @@ function Records() {
     setBusy(true);
     try {
       const r = await post("/api/archive/run", { days: 3650 });
-      toast(r.failed ? `Filed ${r.filed}; ${r.failed} could not be filed and will be tried again.` : `Filed ${r.filed} records.`, r.failed > 0);
+      toast(r.failed ? `Backed up ${r.filed}; ${r.failed} could not be and will be tried again.` : `Backed up ${r.filed} files.`, r.failed > 0);
       load();
     } catch (e) { toast(e.message, true); } finally { setBusy(false); }
   };
   if (!s) return null;
   return (
     <div className="card explain">
-      <b>Saved in Supabase Storage</b>
+      <b>Your records, backed up<Info text="Kaho keeps a second copy of your call records as spreadsheet files you can open in Excel, in your organization's own secure storage. If anything is ever lost here, these copies remain." /></b>
       <p className="hint">{s.configured
-        ? "Audit logs, tool logs, what you asked Kaho Builder and every finished call are filed every few minutes, each in its own folder next to the call recordings:"
-        : "Storage is not set up, so these are only in the database. Add the Supabase settings to backend/.env."}</p>
-      {s.configured && <div className="archive-folders">{s.folders.map((f) => <code key={f}>{f}/</code>)}</div>}
-      {s.configured && <p className="hint">{s.last_run ? `Last filed ${new Date(s.last_run).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} (${s.last_filed} files).` : "Not filed yet since the server started."}
-        {s.last_error && <b style={{ color: "var(--bad, #a31919)" }}> {s.last_error}.</b>}</p>}
-      {s.configured && <div className="actions"><button className="ghost" disabled={busy} onClick={run}>{busy ? "Filing…" : "File everything now"}</button></div>}
+        ? "Every few minutes a copy of your calls, recordings, written conversations and change history is saved as spreadsheet files, kept apart from the Studio:"
+        : "Backups are not switched on for your organization yet. Ask Kaho support to switch them on."}</p>
+      {s.configured && <div className="archive-folders">{s.folders.map((f) => <span key={f} className="badge">{FOLDER_WORDS[f] ?? f.replace(/[-_]/g, " ")}</span>)}</div>}
+      {s.configured && <p className="hint">{s.last_run ? `Last backed up ${new Date(s.last_run).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })} (${s.last_filed} files).` : "Not backed up yet since the system last started."}
+        {s.last_error && <b style={{ color: "var(--bad, #a31919)" }}> The last backup did not finish; it is tried again automatically.</b>}</p>}
+      {s.configured && <div className="actions"><button className="ghost" disabled={busy} onClick={run}>{busy ? "Backing up…" : "Back up now"}</button>
+        <Info text="Saves a fresh copy of everything right away, instead of waiting a few minutes. Nothing in the Studio changes." /></div>}
     </div>
   );
 }
+
+const FOLDER_WORDS = {
+  "call-recordings": "Call recordings", "call-transcripts": "Written conversations", "who-changed-what": "Who changed what",
+  "agent-tool-activity": "What the agents did", "kaho-builder-requests": "Kaho Builder requests", "call-log": "Call list",
+  "call-answers": "Answers saved on calls", "topups-and-minutes": "Top-ups and minutes",
+};
 
 function Audit() {
   const toast = useToast();

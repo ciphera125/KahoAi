@@ -25,6 +25,13 @@ beforeEach(async () => {
 afterEach(() => Object.assign(config, saved));
 
 const by = (r, id) => r.body.checks.find((c) => c.id === id);
+// The full check, with every detail, as Kaho's own staff read it; customers see plain words (below).
+async function full(b) {
+  const res = await b.get("/api/system/health");
+  if (res.status !== 200) return res;
+  const { systemHealth } = await import("../src/services/health.js");
+  return { status: 200, body: await systemHealth(b.user.org_id) };
+}
 async function withPlivo(b) {
   await b.post("/api/numbers").send({ provider: "plivo", number: "+918065520552", label: "Main", credentials: { auth_id: "MAXXXXXXXXXXXXXXXXXX", auth_token: "plivo_token_never_real" } });
 }
@@ -33,7 +40,7 @@ describe("the system check says what is really working", () => {
   it("checks the database, the model, Storage, Plivo and the phone server, each for real", async () => {
     const b = await owner();
     await withPlivo(b);
-    const r = await b.get("/api/system/health");
+    const r = await full(b);
     expect(r.status).toBe(200);
     expect(r.body.checks.map((c) => c.id)).toEqual(["database", "connections", "model", "storage", "plivo", "phone_server"]);
     expect(r.body.checks.every((c) => c.ok)).toBe(true);
@@ -44,7 +51,7 @@ describe("the system check says what is really working", () => {
 
   it("says how many database connections are in use and whether they fit what the database allows", async () => {
     const b = await owner();
-    const r = await b.get("/api/system/health");
+    const r = await full(b);
     const c = r.body.checks.find((x) => x.id === "connections");
     expect(c.ok).toBe(true);
     expect(c.detail).toMatch(/of \d+ .*in use|connections/i);
@@ -56,7 +63,7 @@ describe("the system check says what is really working", () => {
     const b = await owner();
     await withPlivo(b);
     groqStatus = 401;
-    const r = await b.get("/api/system/health");
+    const r = await full(b);
     expect(r.status).toBe(200);
     expect(by(r, "model")).toMatchObject({ ok: false, detail: expect.stringMatching(/refused.*401/i) });
     expect(by(r, "database").ok).toBe(true);
@@ -66,14 +73,14 @@ describe("the system check says what is really working", () => {
   it("says Storage cannot be written to when it refuses", async () => {
     const b = await owner();
     storageStatus = 403;
-    expect(by(await b.get("/api/system/health"), "storage")).toMatchObject({ ok: false, detail: expect.stringMatching(/storage/i) });
+    expect(by(await full(b), "storage")).toMatchObject({ ok: false, detail: expect.stringMatching(/storage/i) });
   });
 
   it("says when something is not set up at all, instead of leaving it out", async () => {
     const b = await owner();
     config.GROQ_API_KEY = undefined;
     config.SUPABASE_SECRET_KEY = undefined;
-    const r = await b.get("/api/system/health");
+    const r = await full(b);
     expect(by(r, "model")).toMatchObject({ ok: false, detail: expect.stringMatching(/not set up/i) });
     expect(by(r, "storage")).toMatchObject({ ok: false, detail: expect.stringMatching(/not set up/i) });
     expect(by(r, "plivo")).toMatchObject({ ok: false, detail: expect.stringMatching(/no plivo number/i) });
@@ -84,7 +91,7 @@ describe("the system check says what is really working", () => {
     await withPlivo(b);
     fakes.plivo.reply = { hang: true };
     const t = Date.now();
-    const r = await b.get("/api/system/health");
+    const r = await full(b);
     expect(Date.now() - t).toBeLessThan(4000);
     expect(by(r, "plivo")).toMatchObject({ ok: false, detail: expect.stringMatching(/did not answer|could not reach/i) });
   });
@@ -93,7 +100,7 @@ describe("the system check says what is really working", () => {
     const b = await owner();
     config.NODE_ENV = "development";
     config.REQUIRE_AGENT_TEST = false;
-    const r = await b.get("/api/system/health");
+    const r = await full(b);
     expect(r.body.warnings.join(" ")).toMatch(/NODE_ENV/);
     expect(r.body.warnings.join(" ")).toMatch(/publish.*without.*test/i);
   });
@@ -102,7 +109,7 @@ describe("the system check says what is really working", () => {
     const b = await owner();
     await withPlivo(b);
     groqStatus = 500;
-    const text = JSON.stringify((await b.get("/api/system/health")).body);
+    const text = JSON.stringify((await full(b)).body);
     for (const secret of ["gsk_test_key_never_real", "plivo_token_never_real", "sb_secret_test_key_never_real", "hook-secret"]) expect(text).not.toContain(secret);
   });
 
@@ -111,6 +118,25 @@ describe("the system check says what is really working", () => {
     const v = await member(b, { email: "v@acme.in", name: "V" });
     expect((await v.get("/api/system/health")).status).toBe(403);
     expect((await db.query("SELECT 1")).rowCount).toBe(1);
+  });
+});
+
+describe("what a customer is shown (owner, 2026-11-22: no Kaho internals on the client side)", () => {
+  it("says working or not in plain words for Kaho's own parts, and keeps the advice about their own Plivo account", async () => {
+    const b = await owner();
+    await withPlivo(b);
+    config.GROQ_API_KEY = "";
+    const r = await b.get("/api/system/health");
+    expect(r.status).toBe(200);
+    const text = JSON.stringify(r.body.checks.map((c) => [c.label, c.detail])); // the words on screen
+    for (const word of ["Supabase", "PUBLIC_HOST", "GROQ", "tunnel", "PGPOOL", "database", "NODE_ENV", "REDIS", "BILLING_ENFORCED"]) {
+      expect(text.toLowerCase(), word).not.toContain(word.toLowerCase());
+    }
+    expect(r.body.warnings).toEqual([]);
+    expect(by(r, "model")).toMatchObject({ ok: false, label: "The AI that builds and tests agents" });
+    expect(by(r, "model").detail).toMatch(/Kaho support/);
+    expect(by(r, "storage")).toMatchObject({ ok: true, detail: "Working." });
+    expect(by(r, "plivo").detail).toMatch(/Credentials accepted|Plivo/);
   });
 });
 
@@ -153,7 +179,7 @@ describe("the system check does not say 'working' when it is not (audited 2026-1
     "the phone server is not 'reachable' just because something answered %i (%s)", async (status) => {
       const b = await owner();
       fakes.voice.reply = { status, body: "ERR_NGROK_3200 The endpoint is offline" };
-      const c = by(await b.get("/api/system/health"), "phone_server");
+      const c = by(await full(b), "phone_server");
       expect(c.ok).toBe(false);
       expect(c.detail).toMatch(/phone server|tunnel/i);
     });
@@ -162,14 +188,14 @@ describe("the system check does not say 'working' when it is not (audited 2026-1
     "the phone server is working when it answers %i (%s)", async (status) => {
       const b = await owner();
       fakes.voice.reply = { status, body: "<Response/>" };
-      expect(by(await b.get("/api/system/health"), "phone_server").ok).toBe(true);
+      expect(by(await full(b), "phone_server").ok).toBe(true);
     });
 
   it("Plivo with no credit is not 'working': the credentials are fine and calls would still fail", async () => {
     const b = await owner();
     await withPlivo(b);
     fakes.plivo.reply = { status: 200, body: { cash_credits: "0.00000" } };
-    const c = by(await b.get("/api/system/health"), "plivo");
+    const c = by(await full(b), "plivo");
     expect(c.ok).toBe(false);
     expect(c.detail).toMatch(/no credit|balance/i);
   });
@@ -178,11 +204,11 @@ describe("the system check does not say 'working' when it is not (audited 2026-1
     const b = await owner();
     await withPlivo(b);
     fakes.plivo.reply = { status: 200, body: { cash_credits: "12.50000" } };
-    const withCredit = by(await b.get("/api/system/health"), "plivo");
+    const withCredit = by(await full(b), "plivo");
     expect(withCredit.ok).toBe(true);
     expect(withCredit.detail).toMatch(/\$12\.50/);
     fakes.plivo.reply = { status: 200, body: {} };
-    const silent = by(await b.get("/api/system/health"), "plivo");
+    const silent = by(await full(b), "plivo");
     expect(silent.ok).toBe(true);
     expect(silent.detail).toMatch(/not reported|could not read/i);
   });
@@ -190,16 +216,16 @@ describe("the system check does not say 'working' when it is not (audited 2026-1
   it("the model check looks for the model the Studio actually uses, not only for a key that is accepted", async () => {
     const b = await owner();
     groqBody = JSON.stringify({ data: [{ id: "llama-3.3-70b" }, { id: "some-other-model" }] });
-    const missing = by(await b.get("/api/system/health"), "model");
+    const missing = by(await full(b), "model");
     expect(missing.ok).toBe(false);
     expect(missing.detail).toContain(config.GROQ_MODEL_ID);
     groqBody = JSON.stringify({ data: [{ id: config.GROQ_MODEL_ID }] });
-    expect(by(await b.get("/api/system/health"), "model").ok).toBe(true);
+    expect(by(await full(b), "model").ok).toBe(true);
   });
 
   it("and says whose key it tried: the Studio's own, not the phone server's", async () => {
     const b = await owner();
-    expect(by(await b.get("/api/system/health"), "model").detail).toMatch(/Studio's/);
+    expect(by(await full(b), "model").detail).toMatch(/Studio's/);
   });
 
   it("never puts a key, a token or a database address in an answer, whatever failed", async () => {
@@ -207,7 +233,7 @@ describe("the system check does not say 'working' when it is not (audited 2026-1
     await withPlivo(b);
     groqStatus = 401;
     fakes.plivo.reply = { status: 401, body: { error: "bad token plivo_token_never_real" } };
-    const text = JSON.stringify((await b.get("/api/system/health")).body);
+    const text = JSON.stringify((await full(b)).body);
     expect(text).not.toMatch(/gsk_test_key_never_real|plivo_token_never_real|postgres:\/\//);
   });
 });

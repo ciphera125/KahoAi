@@ -456,7 +456,7 @@ function ToolsTab({ agent, tools, onChanged, shown = null, onShown }) {
               </ul>
             )
         )}
-        {!t.ready && <div className="hint" style={{ color: "var(--warn)" }}>Needs {t.needs} to be set on the server first.</div>}
+        {!t.ready && <div className="hint" style={{ color: "var(--warn)" }}>Not set up for your organization yet. Ask Kaho support to switch it on before you use it.</div>}
       </div>
       <label className="switch"><input type="checkbox" checked={picked.includes(t.name)} onChange={() => toggle(t.name)} /><span /></label>
     </div>

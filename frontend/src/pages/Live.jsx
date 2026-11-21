@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { get } from "../api.js";
-import { Info, Spinner, useToast, whenShort } from "../ui.jsx";
+import { Info, Spinner, usePaged, useToast, whenShort } from "../ui.jsx";
 import { startPolling } from "../poll.js";
 
 export default function Live() {
@@ -8,6 +8,7 @@ export default function Live() {
   const [calls, setCalls] = useState(null);
   const load = useCallback(() => get("/api/calls/active").then(setCalls).catch((e) => toast(e.message, true)), []);
   useEffect(() => { load(); return startPolling(load, 5000); }, [load]);
+  const [shownCalls, callPager] = usePaged(calls ?? []);
   if (!calls) return <Spinner />;
   return (
     <section>
@@ -21,7 +22,7 @@ export default function Live() {
           <div className="row head" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) 80px minmax(0,1fr) 120px" }}>
             <span>Contact</span><span>Agent</span><span>Status</span><span>Call ID</span><span>Started</span>
           </div>
-          {calls.map((c) => (
+          {shownCalls.map((c) => (
             <div key={c.call_id} className="row" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1fr) 80px minmax(0,1fr) 120px" }}>
               <span className="ellip">{c.contact_name || c.peer || "Unknown"}</span>
               <span className="ellip">{c.agent_name || c.agent_id || "-"}</span>
@@ -32,6 +33,7 @@ export default function Live() {
           ))}
         </div>
       )}
+      {calls.length > 0 && callPager}
     </section>
   );
 }

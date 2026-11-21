@@ -404,10 +404,19 @@ export async function ledgerPage(orgId, { page = 1, perPage = 10 } = {}) {
   const p = Math.max(1, Math.min(100000, Number.parseInt(page, 10) || 1));
   return inOrg(orgId, async (db) => {
     const total = (await db.query("SELECT count(*)::int AS n FROM minute_ledger WHERE org_id = $1", [orgId])).rows[0].n;
-    const { rows } = await db.query(`SELECT id, at, kind, minutes, call_id, actor, note FROM minute_ledger WHERE org_id = $1
-      ORDER BY at DESC, id DESC LIMIT $2 OFFSET $3`, [orgId, size, (p - 1) * size]);
+    // Who is behind each line (owner, 2026-11-22): the person who asked for a top-up, or who pressed Call. Kaho's
+    // own staff are "Kaho AI" to a customer, never an address. An incoming call was asked for by the caller.
+    const { rows } = await db.query(`SELECT l.id, l.at, l.kind, l.minutes, l.call_id, l.actor, l.note,
+        c.direction, c.peer,
+        CASE WHEN l.kind = 'topup' THEN (SELECT u.name FROM topups t JOIN users u ON u.id = t.requested_by WHERE t.id = l.topup_id AND t.org_id = l.org_id)
+             WHEN l.kind = 'usage' THEN (SELECT a.actor FROM activity a WHERE a.org_id = l.org_id AND a.kind = 'call' AND a.ref = c.request_uuid
+               ORDER BY a.at LIMIT 1) END AS requested_by
+      FROM minute_ledger l LEFT JOIN calls c ON c.call_id = l.call_id AND c.org_id = l.org_id
+      WHERE l.org_id = $1 ORDER BY l.at DESC, l.id DESC LIMIT $2 OFFSET $3`, [orgId, size, (p - 1) * size]);
     return { total, page: p, per_page: size, entries: rows.map((r) => ({ id: Number(r.id), at: r.at.toISOString(), kind: r.kind, minutes: r.minutes,
-      call_id: r.call_id, actor: r.actor, note: r.note })) };
+      call_id: r.call_id, actor: r.actor, note: r.note, requested_by: r.requested_by ?? null,
+      confirmed_by: r.kind === "topup" || r.kind === "plan" || r.kind === "adjust" ? "Kaho AI" : null,
+      direction: r.direction ?? null, peer: r.peer ?? null })) };
   });
 }
 

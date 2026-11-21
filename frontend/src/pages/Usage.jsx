@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { get } from "../api.js";
-import { Spinner, useToast } from "../ui.jsx";
+import { Spinner, useToast, usePaged } from "../ui.jsx";
 
 const RANGES = [[7, "Last 7 days"], [30, "Last 30 days"], [90, "Last 90 days"]];
 const n = (v) => Number(v ?? 0).toLocaleString("en-IN");
@@ -10,6 +10,7 @@ export default function Usage() {
   const toast = useToast();
   const [days, setDays] = useState(30);
   const [d, setD] = useState(null);
+  const [shownAgents, agentPager] = usePaged(d?.by_agent ?? []);
   useEffect(() => {
     setD(null);
     get(`/api/usage?days=${days}`).then(setD).catch((e) => toast(e.message, true));
@@ -44,7 +45,8 @@ export default function Usage() {
               <div className="card">
                 <div className="card-head"><span className="card-title">By agent</span></div>
                 <table className="rows"><thead><tr><th>Agent</th><th>Calls</th><th>Minutes</th></tr></thead>
-                  <tbody>{d.by_agent.map((a) => <tr key={a.agent_id ?? a.name}><td>{a.name}</td><td>{n(a.calls)}</td><td>{n(a.minutes)}</td></tr>)}</tbody></table>
+                  <tbody>{shownAgents.map((a) => <tr key={a.agent_id ?? a.name}><td>{a.name}</td><td>{n(a.calls)}</td><td>{n(a.minutes)}</td></tr>)}</tbody></table>
+                {agentPager}
               </div>
             </>
           )}
