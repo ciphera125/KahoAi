@@ -4,7 +4,7 @@
     "per_call": false,
     "properties": {
       "due": {
-        "description": "When it is due, as they said it: \"next Friday\", \"the 15th\".",
+        "description": "When it is due, as they said it, with the time if they said one: \"next Friday\", \"the 15th\", \"tomorrow at 5 pm\".",
         "type": "string"
       },
       "title": {
@@ -118,7 +118,7 @@
     "per_call": false,
     "properties": {
       "due": {
-        "description": "The new date, as they said it.",
+        "description": "The new date, as they said it, with the time if they said one.",
         "type": "string"
       },
       "task_id": {

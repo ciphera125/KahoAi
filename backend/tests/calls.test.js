@@ -112,8 +112,9 @@ describe("calls in the Studio", () => {
     await events("call-0005", [{ event: "call_start" }, { event: "turn", role: "assistant", text: "Hello", at: "2026-10-23T22:01:40Z" },
       { event: "turn", role: "user", text: "=HYPERLINK(\"http://evil\",\"x\"), \"quoted\"" }]);
     const t = (await b.get("/api/calls/call-0005/transcript")).body;
-    expect(t).toEqual([{ at: "2026-10-23T22:01:40.000Z", role: "agent", text: "Hello" },
-      { at: expect.any(String), role: "caller", text: "=HYPERLINK(\"http://evil\",\"x\"), \"quoted\"" }]);
+    // `seq` is each line's place in the call, so tool calls can be shown where they happened (2026-11-22)
+    expect(t).toEqual([{ seq: expect.any(Number), at: "2026-10-23T22:01:40.000Z", role: "agent", text: "Hello" },
+      { seq: expect.any(Number), at: expect.any(String), role: "caller", text: "=HYPERLINK(\"http://evil\",\"x\"), \"quoted\"" }]);
     const csv = await b.get("/api/calls/call-0005/transcript.csv");
     expect(csv.headers["content-type"]).toMatch(/text\/csv/);
     expect(csv.headers["content-disposition"]).toBe('attachment; filename="call-call-0005.csv"');
@@ -176,7 +177,8 @@ describe("the live transcript", () => {
     expect(r.type).toMatch(/text\/event-stream/);
     expect(r.events).toEqual([{ event: "call_start" }, { event: "live", role: "caller", text: "Hel" },
       { event: "turn", role: "caller", text: "Hello" }, { event: "turn", role: "agent", text: "Hi!" },
-      { event: "tool", name: "end_call" }, { event: "call_end" }]);
+      // a tool line now says which tool, in words, and how it went; this one came with no result, so it is not recorded
+      { event: "tool", name: "end_call", label: "End the call", outcome: "unknown" }, { event: "call_end" }]);
   });
 
   it("says no answer when the call never starts", async () => {

@@ -1,12 +1,11 @@
-import { useNavigate, useSearchParams } from "react-router-dom";
-import ToolCalls from "./ToolCalls.jsx";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { useCallback, useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
 import { dayWord } from "../time.js";
 import Assistant, { AssistantButton } from "../components/Assistant.jsx";
 import { serverView } from "../paginate.js";
-import { Icon, Modal, Pager, Spinner, usePaged, useConfirm, useToast } from "../ui.jsx";
+import { Info, Icon, Modal, Pager, Spinner, usePaged, useConfirm, useToast } from "../ui.jsx";
 
 const TYPES = [["text", "Words"], ["number", "A number"], ["yes_no", "Yes or no"]];
 const METHODS = [["POST", "Send information (POST)"], ["GET", "Just ask (GET)"], ["PUT", "Replace (PUT)"], ["PATCH", "Update (PATCH)"]];
@@ -20,7 +19,7 @@ const BLANK = {
 export default function CustomTools() {
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const [view, setView] = useState(["history", "changes"].includes(params.get("tab")) ? params.get("tab") : "tools");
+  const [view, setView] = useState(params.get("tab") === "changes" ? "changes" : "tools");
   const me = useMe();
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
@@ -41,29 +40,24 @@ export default function CustomTools() {
   const switcher = (
     <div className="seg" style={{ marginBottom: "var(--s4)" }}>
       <button className={view === "tools" ? "on" : ""} onClick={() => setView("tools")}>Your tools</button>
-      <button className={view === "history" ? "on" : ""} onClick={() => setView("history")}>History</button>
       <button className={view === "changes" ? "on" : ""} onClick={() => setView("changes")}>Tool log</button>
+      <Link className="seg-link" to="/tool-calls">What they did on calls <Icon name="chevron" /></Link>
     </div>
   );
+  // What the tools did on calls has its own page now, Tool calls; an old link to the History tab goes there.
+  if (params.get("tab") === "history") return <Navigate to="/tool-calls" replace />;
   if (view === "changes") return (
     <section>
-      <header className="page"><div><h1>Your own tools</h1></div></header>
+      <header className="page"><div><h1>Your own tools<Info text="A tool you build yourself so the agent can ask your own system something during a call, like where an order is. Switch it on per agent under Agents, then Tools." /></h1></div></header>
       {switcher}
       <ToolLog />
-    </section>
-  );
-  if (view === "history") return (
-    <section>
-      <header className="page"><div><h1>Your own tools</h1></div></header>
-      {switcher}
-      <ToolCalls embedded />
     </section>
   );
 
   return (
     <section>
       <header className="page">
-        <div><h1>Your own tools</h1>
+        <div><h1>Your own tools<Info text="A tool you build yourself so the agent can ask your own system something during a call, like where an order is. Switch it on per agent under Agents, then Tools." /></h1>
           <div className="sub">Let an agent ask your own system something during a call, like “where is my order?”.</div></div>
         {can(me, "tools.custom") && <div className="head-actions">
           <AssistantButton onClick={() => setChatting(true)} />

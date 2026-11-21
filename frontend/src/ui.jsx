@@ -2,6 +2,7 @@
 // formatters. Kept together so the pages stay about their own screen.
 import { Component, createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
+import * as Tooltip from "@radix-ui/react-tooltip";
 import { motion } from "motion/react";
 import { pageNumbers, paginate, SIZES } from "./paginate.js";
 
@@ -41,6 +42,22 @@ export const Icon = ({ name, ...rest }) => (
     {PATHS[name].split("M").filter(Boolean).map((d, i) => <path key={i} d={"M" + d} />)}
   </svg>
 );
+
+/** A small "i": hover, focus or tap it to read what the thing next to it does, in plain words. */
+export function Info({ text, label = "What is this?" }) {
+  return (
+    <Tooltip.Provider delayDuration={80}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <button type="button" className="info-i" aria-label={`${label} ${text}`}>i</button>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content side="top" sideOffset={6} collisionPadding={12} className="tip info-tip">{text}<Tooltip.Arrow className="tip-arrow" /></Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
+    </Tooltip.Provider>
+  );
+}
 
 /* ---------- formatters ---------- */
 export const initials = (name) => (name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0].toUpperCase()).join("") || "?";

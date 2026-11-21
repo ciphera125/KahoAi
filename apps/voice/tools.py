@@ -682,7 +682,8 @@ async def get_tasks(args: dict, call: CallContext) -> dict:
     properties={
         "title": {"type": "string", "description": "The task, in the caller's own words."},
         "due": {"type": "string",
-                "description": "When it is due, as they said it: \"next Friday\", \"the 15th\"."},
+                "description": "When it is due, as they said it, with the time if they said one: "
+                "\"next Friday\", \"the 15th\", \"tomorrow at 5 pm\"."},
     },
     required=["title"],
 )
@@ -693,7 +694,9 @@ async def add_task(args: dict, call: CallContext) -> dict:
         return dict(_NO_LIST)
     if not reply.get("ok"):
         return {"added": False, "what_to_do": reply.get("message") or "I could not add it."}
-    return {"added": True, "task_id": reply.get("task_id"), "due": reply.get("due")}
+    # "when" is the day and time in words, on India's clock: say that, not the raw date.
+    return {"added": True, "task_id": reply.get("task_id"), "due": reply.get("due"),
+            "when": reply.get("when")}
 
 
 @tool(
@@ -704,7 +707,8 @@ async def add_task(args: dict, call: CallContext) -> dict:
     ),
     properties={
         "task_id": {"type": "string", "description": "The id from the task list."},
-        "due": {"type": "string", "description": "The new date, as they said it."},
+        "due": {"type": "string",
+                "description": "The new date, as they said it, with the time if they said one."},
     },
     required=["task_id", "due"],
 )
@@ -715,7 +719,7 @@ async def reschedule_task(args: dict, call: CallContext) -> dict:
         return dict(_NO_LIST)
     if not reply.get("ok"):
         return {"moved": False, "what_to_do": reply.get("message") or "I could not move it."}
-    return {"moved": True, "due": reply.get("due")}
+    return {"moved": True, "due": reply.get("due"), "when": reply.get("when")}
 
 
 @tool(

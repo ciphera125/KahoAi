@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { get } from "../api.js";
 import { can, useMe } from "../auth.jsx";
 import { recordingMessage } from "../recording.js";
+import { weave } from "../toolCalls.js";
 import { fmtDur, Icon, Modal, whenShort } from "../ui.jsx";
 
 /** What the agent wrote down on this call, as a plain list. */
@@ -74,9 +75,12 @@ export default function CallDetail({ call, onClose }) {
   const me = useMe();
   const listen = call.has_recording && can(me, "recordings.listen");
   const [turns, setTurns] = useState(null);
+  const [tools, setTools] = useState(null);
   const [playing, setPlaying] = useState(false);
   const id = encodeURIComponent(call.call_id);
   useEffect(() => { get(`/api/calls/${id}/transcript`).then(setTurns).catch(() => setTurns([])); }, [id]);
+  // What the agent did, shown where it happened: the transcript alone hid every tool call.
+  useEffect(() => { get(`/api/calls/${id}/tools`).then(setTools).catch(() => setTools(null)); }, [id]);
 
   return (
     <Modal title={call.contact_name || call.peer || "Call"} onClose={onClose} wide>
@@ -100,8 +104,9 @@ export default function CallDetail({ call, onClose }) {
       <div className="chat" style={{ maxHeight: "50vh", border: "1px solid var(--border)", borderRadius: "var(--r-md)" }}>
         {!turns && <div className="hint">Loading…</div>}
         {turns && turns.length === 0 && <div className="hint">Nothing was said on this call.</div>}
-        {turns?.map((t, i) => (
-          <div key={i} className={`msg ${t.role}`}>{t.text}
+        {turns && weave(turns, tools).map((t, i) => (t.kind === "tool"
+          ? <div key={`t${t.id}`} className={`sys tool-line${t.attention ? " attention" : ""}`}><b>{t.label}</b>: {t.summary}</div>
+          : <div key={i} className={`msg ${t.role}`}>{t.text}
             <time>{t.at ? new Date(t.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</time></div>
         ))}
       </div>

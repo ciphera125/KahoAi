@@ -1,12 +1,13 @@
 import { can, useMe } from "../auth.jsx";
 import { messages } from "../transcript.js";
+import { liveToolLine } from "../toolCalls.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ApiError, get, post } from "../api.js";
 import { debounce } from "../debounce.js";
 import { callsUrl } from "../recording.js";
 import { serverView } from "../paginate.js";
 import CallDetail from "../components/CallDetail.jsx";
-import { fmtDur, Icon, initials, Modal, OutcomePill, Pager, plural, useToast, whenShort } from "../ui.jsx";
+import { Info, fmtDur, Icon, initials, Modal, OutcomePill, Pager, plural, useToast, whenShort } from "../ui.jsx";
 
 export default function Calls() {
   const toast = useToast();
@@ -40,7 +41,7 @@ export default function Calls() {
 
   return (
     <section>
-      <header className="page"><div><h1>Calls</h1><div className="sub">Call anyone with one of your agents, and follow the conversation live.</div></div></header>
+      <header className="page"><div><h1>Calls<Info text="Place a call with one of your agents and watch it live. Every past call is listed with its recording and written conversation." /></h1><div className="sub">Call anyone with one of your agents, and follow the conversation live.</div></div></header>
       <div className="grid-side" style={{ gridTemplateColumns: "minmax(0,1fr) minmax(0,1.15fr)" }}>
         <div className="stack">
           {can(me, "calls.place")
@@ -192,7 +193,6 @@ function LiveTranscript({ watch, onEnded }) {
 
   useEffect(() => { if (boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight; }, [events]);
 
-  const TOOL = { capture_lead: "Details saved", end_call: "The agent ended the call", transfer_to_human: "Transferred to a person", call_webhook: "Checked your system" };
   return (
     <div className="card chat-card">
       <div className="chat-head">
@@ -205,8 +205,11 @@ function LiveTranscript({ watch, onEnded }) {
         {events.length === 0 && <div className="center" style={{ margin: "auto", color: "var(--text-3)" }}><Icon name="chat" /><span style={{ marginLeft: 8 }}>The agent on the left, the person on the right.</span></div>}
         {messages(events).map((e, i) => {
           if (e.event === "turn" || e.event === "live") return <div key={i} className={`msg ${e.role === "agent" ? "agent" : "caller"}`}>{e.text}</div>;
-          if (e.event === "tool") return <div key={i} className="sys">{TOOL[e.name] || e.name}</div>;
-          if (e.event === "tool_rejected") return <div key={i} className="sys warn-line">The agent tried to use a tool it does not have{e.name && e.name !== "unknown" ? ` (${e.name})` : ""}; it answered in words instead</div>;
+          // Which tool, in words, and how it went: "Details saved" used to show even when nothing was saved.
+          if (e.event === "tool" || e.event === "tool_rejected") {
+            const bad = ["failed", "not_attached"].includes(e.outcome);
+            return <div key={i} className={`sys${bad ? " warn-line" : ""}`}>{liveToolLine(e)}</div>;
+          }
           if (e.event === "recording_notice_played") return <div key={i} className="sys">Recording notice played</div>;
           if (e.event === "call_failed") return <div key={i} className="sys">A provider failed during the call</div>;
           if (e.event === "no_answer") return <div key={i} className="sys">Not picked up</div>;

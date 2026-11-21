@@ -9,7 +9,8 @@
 import { createHash } from "node:crypto";
 import { asSystem } from "../db/pool.js";
 import { logger } from "../utils/logger.js";
-import { parseAnswer } from "./answerValue.js";
+import { parseTaskDue } from "./answerValue.js";
+import { indiaIso, spokenWhen } from "../utils/indiaTime.js";
 import * as Knowledge from "./Knowledge.js";
 import * as Task from "./Task.js";
 import * as Contact from "./Contact.js";
@@ -22,23 +23,26 @@ const no = (message) => ({ ok: false, message });
 /** "Buy  MILK." and "buy milk" are the same words. */
 const sameWords = (text) => createHash("sha1").update(String(text).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()).digest("hex").slice(0, 12);
 
-/** The organization the call belongs to, and the contact on the other end. */
+/** The organization the call belongs to, and the contact on the other end. A number saved on two
+ * contacts is the first one saved, as everywhere in the Studio: without an order the database could
+ * hand back either, and a task read out on one turn was "not on their list" on the next. */
 async function callSubject(callId) {
   const { rows } = await asSystem((db) => db.query(
     `SELECT c.org_id, c.agent_id, (SELECT cn.contact_id FROM contact_numbers cn
-       WHERE cn.number = c.peer AND cn.org_id = c.org_id LIMIT 1) AS contact_id
+       JOIN contacts ct ON ct.id = cn.contact_id AND ct.org_id = cn.org_id
+       WHERE cn.number = c.peer AND cn.org_id = c.org_id ORDER BY ct.created_at, ct.id LIMIT 1) AS contact_id
      FROM calls c WHERE c.call_id = $1`, [callId]));
   return rows[0] ?? null;
 }
 
-/** A date the caller said out loud, as an instant. Dates are read in India's day, from
- * the day of the call, by the same code that reads a saved answer. */
-function dueFrom(said) {
-  const read = parseAnswer("date", said, { now: new Date() });
-  if (!read.ok) return read;
-  // Morning of that day: a reminder is about the day, and no one says a time.
-  return { ok: true, value: new Date(`${read.value}T09:00:00+05:30`) };
-}
+/** When the caller said it is due, as an instant: their day, and their time of day when they said one,
+ * read by answerValue.parseTaskDue from the moment of the call. */
+const dueFrom = (said) => parseTaskDue(said, { now: new Date() });
+
+/** A due date as the agent should say it: on India's clock, and in words. A UTC instant made the model
+ * work the time zone out for itself, and 1 a.m. on the 15th came out as the 14th. */
+const spoken = (when) => ({ due: when ? indiaIso(when) : null, when: when ? spokenWhen(when) : null });
+const NOT_THEIRS = "I could not find that task on their list. Read their list again and use the id from it, or check with them.";
 
 const HANDLERS = {
   /** Passages of the agent's own documents. When nothing matches it says so, so the agent says it
@@ -89,21 +93,21 @@ const HANDLERS = {
     const task = await Task.create(subject.org_id,
       { title, due_at: due, contact_id: subject.contact_id, external_id: `${idem}:${sameWords(title)}` },
       { source: "call", keepExisting: true });
-    return { ok: true, task_id: task.id, title: task.title, due: task.due_at };
+    return { ok: true, task_id: task.id, title: task.title, ...spoken(task.due_at) };
   },
 
   async reschedule_task(subject, args) {
     const id = await Task.ownedByContact(subject.org_id, subject.contact_id, args.task_id);
-    if (!id) return no("I could not find that task on their list. Please check with them.");
+    if (!id) return no(NOT_THEIRS);
     const read = dueFrom(args.due);
     if (!read.ok) return no(read.message);
     const task = await Task.update(subject.org_id, id, { due_at: read.value });
-    return { ok: true, task_id: task.id, due: task.due_at };
+    return { ok: true, task_id: task.id, ...spoken(task.due_at) };
   },
 
   async mark_task_done(subject, args) {
     const id = await Task.ownedByContact(subject.org_id, subject.contact_id, args.task_id);
-    if (!id) return no("I could not find that task on their list. Please check with them.");
+    if (!id) return no(NOT_THEIRS);
     const task = await Task.update(subject.org_id, id, { status: "done" });
     return { ok: true, task_id: task.id, title: task.title };
   },

@@ -35,7 +35,9 @@ describe("the history of what the tools did", () => {
     expect(r.status).toBe(200);
     const [call] = r.body.calls;
     expect(call).toMatchObject({ call_id: CALL, contact_name: "Ravi", agent_name: "Ria", agent_version: 1 });
-    expect(call.turns.map((t) => t.turn)).toEqual([1, 2, null]);
+    // the refused attempt came after "Move it to Friday", so it sits with that turn, not apart from every turn (2026-11-22)
+    expect(call.turns.map((t) => t.turn)).toEqual([1, 2]);
+    expect(call.turns[1].calls.map((c) => c.tool)).toEqual(["reschedule_task", "get_balance"]);
     expect(call.turns[0].calls[0]).toMatchObject({ tool: "get_tasks", label: "Read out their tasks",
       status: "worked", secs: 0.42 });
     expect(call.turns[0].said).toBe("When is my EMI due?");
@@ -46,12 +48,15 @@ describe("the history of what the tools did", () => {
     await aCallWithTools(b);
     const [call] = (await b.get("/api/calls/tools")).body.calls;
     const failed = call.turns[1].calls[0];
-    expect(failed).toMatchObject({ tool: "reschedule_task", status: "failed" });
-    expect(failed.why).toBe("I could not find that task.");
+    // a task that is not on their list needs the caller, not the owner: it is held back, not broken (2026-11-22)
+    expect(failed).toMatchObject({ tool: "reschedule_task", status: "failed", outcome: "needs_info", attention: false });
+    expect(failed.why).toBe("That task was not on this caller's list, so the agent checked with them.");
+    expect(failed.answer).toEqual({ what_to_do: "I could not find that task." }); // the tool's own words stay in the detail
 
-    const refused = call.turns[2].calls[0];
-    expect(refused).toMatchObject({ tool: "get_balance", status: "refused" });
-    expect(refused.why).toMatch(/not one of this agent's tools|refused/i);
+    const refused = call.turns[1].calls[1];
+    expect(refused).toMatchObject({ tool: "get_balance", status: "refused", outcome: "not_attached", attention: true });
+    expect(refused.summary).toMatch(/which this agent does not have/i);
+    expect(refused.fix).toMatch(/Agents, then Tools/);
   });
 
   it("keeps the technical detail apart from the plain summary", async () => {

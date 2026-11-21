@@ -2,7 +2,7 @@ import { can, useMe } from "../auth.jsx";
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { get, post } from "../api.js";
-import { Icon, Modal, plural, Spinner, usePaged, useToast } from "../ui.jsx";
+import { Info, Icon, Modal, plural, Spinner, usePaged, useToast } from "../ui.jsx";
 
 export default function Agents() {
   const toast = useToast();
@@ -16,7 +16,7 @@ export default function Agents() {
   return (
     <section>
       <header className="page">
-        <div><h1>Agents</h1><div className="sub">Each agent has its own prompts, tools and call settings. Make one per job, like EMI reminders.</div></div>
+        <div><h1>Agents<Info text="An agent is the AI voice that makes and answers your calls. It has a written brief (prompt), tools it may use, a voice and a language. Make one per job." /></h1><div className="sub">Each agent has its own prompts, tools and call settings. Make one per job, like EMI reminders.</div></div>
         {can(me, "agents.edit") && <div className="head-actions"><button className="primary" onClick={() => setCreating(true)}><Icon name="plus" />New agent</button></div>}
       </header>
       {agents.length === 0 ? (

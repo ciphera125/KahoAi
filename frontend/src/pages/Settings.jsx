@@ -7,7 +7,7 @@ import People from "./People.jsx";
 import { del, get, patch, post } from "../api.js";
 import { serverView } from "../paginate.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
-import { Icon, Pager, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { Info, Icon, Pager, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 const TABS = [["organization", "Organization"], ["people", "People"], ["billing", "Billing"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
   ["webhook", "Send calls to your system"], ["usage", "Usage"], ["system", "Is everything working?"], ["audit", "Audit log"]];
@@ -19,7 +19,7 @@ export default function Settings() {
   return (
     <section>
       <header className="page">
-        <div><h1>Settings</h1>
+        <div><h1>Settings<Info text="Rules for your whole organization: calling hours, who can do what, keys for other systems and your plan." /></h1>
           <div className="sub">The rules for your whole organization: who can do what, when calls may be made, and how other systems connect.</div></div>
       </header>
       <div className="seg" style={{ marginBottom: "var(--s4)" }}>

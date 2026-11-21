@@ -272,7 +272,9 @@ export async function upsertByNumber(orgId, { phone, name, details }) {
 /** The contact in this organization with that number, or null. */
 export async function idForNumber(orgId, number) {
   const { rows } = await inOrg(orgId, (db) => db.query(
-    `SELECT cn.contact_id FROM contact_numbers cn WHERE cn.number = $1 AND cn.org_id = $2 LIMIT 1`,
+    // the first contact saved with this number, as the rest of the Studio reads it
+    `SELECT cn.contact_id FROM contact_numbers cn JOIN contacts c ON c.id = cn.contact_id AND c.org_id = cn.org_id
+      WHERE cn.number = $1 AND cn.org_id = $2 ORDER BY c.created_at, c.id LIMIT 1`,
     [String(number), orgId]));
   return rows[0]?.contact_id ?? null;
 }

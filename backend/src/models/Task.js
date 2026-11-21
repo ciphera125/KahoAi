@@ -9,6 +9,9 @@ import { hexId } from "../utils/crypto.js";
 import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { cleanText } from "../utils/text.js";
 import { todayIn, isoDay, asDay } from "./answerValue.js";
+import { indiaIso, spokenWhen } from "../utils/indiaTime.js";
+import { pageNumber } from "../utils/paging.js";
+import { CALL_ID } from "../utils/phone.js";
 
 export const MAX_TITLE = 200;
 export const RANGES = ["today", "yesterday", "this_week", "overdue", "all"];
@@ -58,8 +61,16 @@ function dueAt(raw) {
   return when;
 }
 
+/** The call a task was added on: an agent's task is keyed by that call ("<call id>:add_task:<turn>:..."). */
+const callOf = (t) => {
+  if (t.source !== "call" || typeof t.external_id !== "string") return null;
+  const id = t.external_id.split(":")[0];
+  return CALL_ID.test(id) ? id : null;
+};
+
 const shape = (t) => ({ id: t.id, title: t.title, status: t.status, source: t.source,
   contact_id: t.contact_id, contact_name: t.contact_name ?? null, external_id: t.external_id,
+  call_id: callOf(t),
   due_at: t.due_at ? t.due_at.toISOString() : null,
   created_at: t.created_at.toISOString(),
   completed_at: t.completed_at ? t.completed_at.toISOString() : null });
@@ -119,6 +130,45 @@ export async function list(orgId, { range = "all", status = "all", contactId = n
   return { items: rows.map(shape) };
 }
 
+export const PAGE_SIZES = [10, 25, 50];
+const like = (q) => `%${String(q).replace(/[\\%_]/g, "\\$&")}%`;
+
+/**
+ * One page of tasks for the Studio, with how many are overdue, due today and due this week (still to do,
+ * whatever is on screen), so the page can say so on its buttons. Found by what a task says or whose it is.
+ */
+export async function page(orgId, { range = "all", status = "all", q = null, page: p, perPage = 25, now = new Date() } = {}) {
+  if (!STATUSES.includes(status)) throw new ValidationError(`status must be one of: ${STATUSES.join(", ")}`);
+  const size = Number(perPage);
+  if (!PAGE_SIZES.includes(size)) throw new ValidationError(`per_page must be one of ${PAGE_SIZES.join(", ")}`);
+  if (q !== null && q !== undefined && typeof q !== "string") throw new ValidationError("q must be text");
+  const n = pageNumber(p);
+  const window = rangeOf(range, now);
+  const where = ["t.org_id = $1"];
+  const params = [orgId];
+  const add = (v) => { params.push(v); return `$${params.length}`; };
+  if (window) where.push(`t.due_at >= ${add(window.from)} AND t.due_at < ${add(window.to)}`);
+  if (status !== "all") where.push(`t.status = ${add(status)}`);
+  const term = (q ?? "").trim().slice(0, 100);
+  if (term) { const k = add(like(term)); where.push(`(t.title ILIKE ${k} OR c.name ILIKE ${k})`); }
+  const today = rangeOf("today", now);
+  const week = rangeOf("this_week", now);
+  return inOrg(orgId, async (db) => {
+    const list = await db.query(`${SHOW} WHERE ${where.join(" AND ")} ORDER BY t.due_at NULLS LAST, t.created_at, t.id
+      LIMIT ${size} OFFSET ${(n - 1) * size}`, params);
+    const total = await db.query(`SELECT count(*)::int AS n FROM tasks t LEFT JOIN contacts c ON c.id = t.contact_id AND c.org_id = t.org_id
+      WHERE ${where.join(" AND ")}`, params);
+    const { rows: [k] } = await db.query(`SELECT
+        count(*) FILTER (WHERE status = 'pending' AND due_at < $2)::int AS overdue,
+        count(*) FILTER (WHERE status = 'pending' AND due_at >= $2 AND due_at < $3)::int AS today,
+        count(*) FILTER (WHERE status = 'pending' AND due_at >= $4 AND due_at < $5)::int AS this_week,
+        count(*) FILTER (WHERE status = 'pending')::int AS pending,
+        count(*) FILTER (WHERE status = 'done')::int AS done
+      FROM tasks WHERE org_id = $1`, [orgId, today.from, today.to, week.from, week.to]);
+    return { items: list.rows.map(shape), total: total.rows[0].n, page: n, per_page: size, counts: k };
+  });
+}
+
 export async function update(orgId, id, { title, due_at: due, status, contact_id: contactId } = {}) {
   return inOrg(orgId, async (db) => {
     const { rows } = await db.query("SELECT * FROM tasks WHERE id = $1 AND org_id = $2 FOR UPDATE", [String(id), orgId]);
@@ -152,8 +202,10 @@ export async function remove(orgId, id) {
 // task id, and a task that is not this contact's is simply not found, so nothing said on
 // a call can reach another person's list.
 
+// The due date on India's clock and in words: handed a UTC instant, the model had to work the time zone
+// out itself, and 1 a.m. on the 15th was read out as the 14th.
 const forSpeaking = (t) => ({ id: t.id, title: t.title, status: t.status,
-  due: t.due_at ? t.due_at.toISOString() : null });
+  due: t.due_at ? indiaIso(t.due_at) : null, when: t.due_at ? spokenWhen(t.due_at) : null });
 
 export async function forContactOnCall(orgId, contactId, { range = "all", status = "pending", now = new Date() } = {}) {
   if (!contactId) return [];

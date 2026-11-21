@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { get, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
-import { Icon, Spinner, usePaged, useToast, whenShort } from "../ui.jsx";
+import { Info, Icon, Spinner, usePaged, useToast, whenShort } from "../ui.jsx";
 
 const BADGE = { error: "bad", warn: "warn" };
 const COLS = "32px 70px minmax(0,0.8fr) minmax(0,2fr) 90px 120px 130px";
@@ -39,7 +39,7 @@ export default function ErrorLogs() {
   return (
     <section>
       <header className="page">
-        <div><h1>Error Logs</h1><div className="sub">Problems the phone system ran into during calls, such as a voice or the AI not answering. When you have looked at one, press Acknowledge and it moves to the Acknowledged tab.</div></div>
+        <div><h1>Error Logs<Info text="Problems with the phone system itself, such as a voice provider being down. Tool problems are on the Tool calls page." /></h1><div className="sub">Problems the phone system ran into during calls, such as a voice or the AI not answering. When you have looked at one, press Acknowledge and it moves to the Acknowledged tab.</div></div>
         <div className="head-actions"><button className="ghost" onClick={load}><Icon name="refresh" />Refresh</button></div>
       </header>
       <div className="seg" role="tablist">

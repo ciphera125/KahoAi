@@ -10,6 +10,8 @@ router.get("/calls", calls.list);
 router.get("/calls/tools", calls.toolCallsList);
 router.get("/calls/active", calls.activeCalls);
 router.post("/calls", requirePermission("calls.place"), calls.place);
+router.get("/calls/:callId", calls.one);
+router.get("/calls/:callId/tools", calls.toolsOfCall);
 router.get("/calls/:callId/recording", requirePermission("recordings.listen"), calls.recording);
 router.get("/calls/:callId/answers", calls.answers);
 router.get("/calls/:callId/transcript", calls.transcript);

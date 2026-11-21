@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { get } from "../api.js";
-import { Spinner, useToast, whenShort } from "../ui.jsx";
+import { Info, Spinner, useToast, whenShort } from "../ui.jsx";
 import { startPolling } from "../poll.js";
 
 export default function Live() {
@@ -12,7 +12,7 @@ export default function Live() {
   return (
     <section>
       <header className="page">
-        <div><h1>Live</h1><div className="sub">Calls currently in progress. Refreshes every 5 seconds.</div></div>
+        <div><h1>Live<Info text="Calls happening right now. Open one to read the conversation as it is spoken." /></h1><div className="sub">Calls currently in progress. Refreshes every 5 seconds.</div></div>
       </header>
       {calls.length === 0 ? (
         <div className="card"><div className="empty">No active calls right now.</div></div>

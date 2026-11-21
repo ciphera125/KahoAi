@@ -2,7 +2,7 @@ import { useState } from "react";
 import { del, patch, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
 import { useTags } from "../tags.jsx";
-import { Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
+import { Info, Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 export default function Tags() {
   const me = useMe();
@@ -22,7 +22,7 @@ export default function Tags() {
   return (
     <section>
       <header className="page">
-        <div><h1>Tags</h1><div className="sub">Short labels, like “VIP”, that you put on contacts so you can find and group them.</div></div>
+        <div><h1>Tags<Info text="Coloured labels you put on contacts, like VIP, so you can find and group people." /></h1><div className="sub">Short labels, like “VIP”, that you put on contacts so you can find and group them.</div></div>
         {can(me, "contacts.edit") && <div className="head-actions"><button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New tag</button></div>}
       </header>
       <div className="card list">

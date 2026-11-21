@@ -125,7 +125,7 @@ describe("what the history says about each tool call", () => {
     }
   });
 
-  it("says how many there are and whether the list was cut, and lists every tool whatever is filtered", async () => {
+  it("says how many there are, pages whole calls, and lists every tool whatever is filtered", async () => {
     const b = await owner();
     await aCall(b);
     await internal("post", `/internal/v1/calls/${CALL}/events`).send({ events: [
@@ -133,10 +133,10 @@ describe("what the history says about each tool call", () => {
       tool("get_tasks", 1, '{"args":{},"result":{"count":0}}', { at: T(2) }),
       tool("add_task", 1, '{"args":{},"result":{"ok":true}}', { at: T(3) }),
       tool("end_call", 1, '{"args":{},"result":{"status":"ending"}}', { at: T(4) })] });
-    const cut = await history(b, "?limit=2");
-    expect(cut).toMatchObject({ total: 3, shown: 2, truncated: true });
+    // Cutting at a number of tool calls split a call in two (2026-11-22): pages are whole calls now.
     const all = await history(b);
-    expect(all).toMatchObject({ total: 3, shown: 3, truncated: false });
+    expect(all).toMatchObject({ total: 3, shown: 3, truncated: false, calls_total: 1, page: 1, per_page: 10 });
+    expect(all.calls[0].turns[0].calls).toHaveLength(3);
     const onlyOne = await history(b, "?tool=get_tasks");
     expect(onlyOne.calls[0].turns[0].calls).toHaveLength(1);
     expect(onlyOne.tools.map((t) => t.name)).toEqual(["add_task", "end_call", "get_tasks"]); // still every tool

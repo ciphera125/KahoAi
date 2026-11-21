@@ -23,6 +23,11 @@ async function primary() {
     const { changed } = await maskOldBuilderHistory();
     if (changed) logger.info({ changed }, "masked old Builder history rows");
   } catch (err) { logger.warn({ err: String(err?.message ?? err).slice(0, 200) }, "could not mask old Builder history; will try again on the next start"); }
+  try {
+    const { backfillToolOutcomes } = await import("./services/toolOutcomes.js");
+    const { changed } = await backfillToolOutcomes();
+    if (changed) logger.info({ changed }, "read what older tool calls came to");
+  } catch (err) { logger.warn({ err: String(err?.message ?? err).slice(0, 200) }, "could not read older tool calls; will try again on the next start"); }
   await pool.end();
   for (let i = 0; i < config.WEB_CONCURRENCY; i++) cluster.fork();
   let stopping = false;

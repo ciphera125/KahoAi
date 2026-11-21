@@ -96,8 +96,20 @@ export async function transcriptTxt(req, res) {
 }
 
 export async function toolCallsList(req, res) {
-  const { tool, status, agent_id: agentId, contact, from, to, limit } = req.query;
-  res.json(await Call.toolCalls(req.user.org_id, { tool, status, agentId, contact, from, to, limit }));
+  const { tool, status, outcome, agent_id: agentId, contact, from, to, page, per_page: perPage } = req.query;
+  const page_ = await Call.toolCalls(req.user.org_id, { tool, status, outcome, agentId, contact, from, to, page, perPage });
+  res.json(page_);
+}
+
+/** One call, opened from anywhere (a task it added, a tool it used), shaped like a row of the call list. */
+export async function one(req, res) {
+  const call = await Call.one(req.user.org_id, req.params.callId);
+  res.json((await named(req.user.org_id, [call]))[0]);
+}
+
+/** That call's own tool calls, to show where they happened in its transcript. */
+export async function toolsOfCall(req, res) {
+  res.json(await Call.toolCallsForCall(req.user.org_id, req.params.callId));
 }
 
 export async function activeCalls(req, res) {

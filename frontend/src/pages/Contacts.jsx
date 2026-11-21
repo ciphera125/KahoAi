@@ -7,7 +7,7 @@ import { useTags } from "../tags.jsx";
 import { serverView } from "../paginate.js";
 import { dayWord } from "../time.js";
 import CallContact from "../components/CallContact.jsx";
-import { Icon, initials, Menu, Modal, OutcomePill, Pager, plural, Spinner, useConfirm, useToast } from "../ui.jsx";
+import { Info, Icon, initials, Menu, Modal, OutcomePill, Pager, plural, Spinner, useConfirm, useToast } from "../ui.jsx";
 
 const TABS = [
   { key: "all", label: "All" },
@@ -85,7 +85,7 @@ export default function Contacts() {
   return (
     <section>
       <header className="page">
-        <div><h1>Contacts</h1><div className="sub">The people your agents call. Mark anyone Do not call to stop dialling them.</div></div>
+        <div><h1>Contacts<Info text="Your address book: names, numbers and tags. An agent recognises a caller by their number, and tasks and saved answers are kept per person." /></h1><div className="sub">The people your agents call. Mark anyone Do not call to stop dialling them.</div></div>
         <div className="head-actions">
           {can(me, "calls.bulk") && <Link className="btn ghost" to="/bulk"><Icon name="upload" />Bulk call from a file</Link>}
           {can(me, "contacts.edit") && <button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New contact</button>}

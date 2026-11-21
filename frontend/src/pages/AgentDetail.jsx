@@ -4,7 +4,7 @@ import { del, get, patch, post } from "../api.js";
 import { can, isAdmin, useMe } from "../auth.jsx";
 import AgentCalls from "../components/AgentCalls.jsx";
 import Assistant, { AssistantButton } from "../components/Assistant.jsx";
-import { Icon, Menu, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
+import { Icon, Info, Menu, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 const TOOL_LABELS = {
   end_call: "End the call", capture_lead: "Save details", transfer_to_human: "Transfer to a person", call_webhook: "Your system (webhook)",
@@ -423,7 +423,7 @@ function ToolsTab({ agent, tools, onChanged, shown = null, onShown }) {
   const row = (t) => (
     <div key={t.name} className={`toggle-line${lit(t.name) ? " flash" : ""}`} data-flash={lit(t.name)}>
       <div>
-        <b>{t.label || TOOL_LABELS[t.name]}</b>
+        <b>{t.label || TOOL_LABELS[t.name]}</b><Info text={`${t.description} Every use shows up on the Tool calls page, so you can check it worked.`} />
         {t.made_by === "builder" && <span className="made-by" title="Set up for you by Kaho Builder"><Icon name="spark" />Kaho Builder</span>}
         <div className="hint">{t.description}</div>
         {t.name === "save_answer" && picked.includes("save_answer") && (

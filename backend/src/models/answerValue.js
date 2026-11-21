@@ -50,25 +50,29 @@ const fromDate = (date) => ({ y: date.getUTCFullYear(), m: date.getUTCMonth() + 
 const addDays = (parts, n) => fromDate(new Date(asDate(parts).getTime() + n * 86400000));
 const isReal = ({ y, m, d }) => { const t = asDate({ y, m, d }); return t.getUTCMonth() + 1 === m && t.getUTCDate() === d; };
 
+// Words that only frame a day ("on Friday", "by tomorrow", "this coming Monday"). "next" is not one of
+// them: it moves a weekday a week on.
+const FRAMING = /^(?:(?:by|on|for|till|until|before|this|coming|upcoming)\s+)+/;
+const MAX_DAYS_AHEAD = 366;
+
 function parseDate(said, now, timezone) {
   const text = said.toLowerCase().replace(/[.,]/g, " ").replace(/\s+/g, " ").trim();
+  const core = text.replace(FRAMING, "");
   const today = todayIn(now, timezone);
 
-  if (/^(today|aaj)\b/.test(text)) return accept(isoDay(today));
-  if (/^(day after tomorrow|parso|parson)\b/.test(text)) return accept(isoDay(addDays(today, 2)));
-  if (/^(tomorrow|kal)\b/.test(text)) return accept(isoDay(addDays(today, 1)));
+  if (/^(today|aaj)\b/.test(core)) return accept(isoDay(today));
+  if (/^(day after tomorrow|parso|parson)\b/.test(core)) return accept(isoDay(addDays(today, 2)));
+  if (/^(tomorrow|kal)\b/.test(core)) return accept(isoDay(addDays(today, 1)));
 
-  // A weekday, with or without "next": the next one that has not gone. The same weekday
-  // as today means a week away, because nobody says "Monday" on Monday meaning today.
-  const weekday = text.match(/\b(next|agle|agla)?\s*([a-z]+)\b/);
-  if (weekday && DAYS[weekday[2]] !== undefined) {
-    const want = DAYS[weekday[2]];
-    let ahead = (want - asDate(today).getUTCDay() + 7) % 7;
-    if (ahead === 0) ahead = 7;
-    if (weekday[1] && ahead < 7) ahead += 7;
-    return accept(isoDay(addDays(today, ahead)));
+  // "in 3 days", "after 2 days", "10 din baad": counted from today.
+  const ahead = core.match(/^(?:in|after)\s+(\d{1,4})\s+days?\b/) ?? core.match(/^(\d{1,4})\s+(?:din|days?)\s+(?:baad|bad|later|mein|me|from now)\b/);
+  if (ahead) {
+    const n = Number(ahead[1]);
+    if (n < 1 || n > MAX_DAYS_AHEAD) return refuse("I did not catch the date. Please ask for the exact date, like the fifteenth of December.");
+    return accept(isoDay(addDays(today, n)));
   }
 
+  // An exact date first, so "Tuesday 15 December" is the 15th whatever day the weekday names.
   // 2026-12-15
   const ymd = text.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
   if (ymd) return checked({ y: +ymd[1], m: +ymd[2], d: +ymd[3] }, today);
@@ -93,6 +97,17 @@ function parseDate(said, now, timezone) {
     }
   }
 
+  // A weekday, with or without "next": the next one that has not gone. The same weekday
+  // as today means a week away, because nobody says "Monday" on Monday meaning today.
+  const weekday = core.match(/^(next|agle|agla|agli)?\s*([a-z]+)\b/);
+  if (weekday && DAYS[weekday[2]] !== undefined) {
+    const want = DAYS[weekday[2]];
+    let gap = (want - asDate(today).getUTCDay() + 7) % 7;
+    if (gap === 0) gap = 7;
+    if (weekday[1] && gap < 7) gap += 7;
+    return accept(isoDay(addDays(today, gap)));
+  }
+
   // "the 15th", "5 tarikh": this month, or next if it has gone.
   const dayOnly = text.match(/\b(\d{1,2})(?:st|nd|rd|th)?\b\s*(tarikh|tareekh)?/);
   if (dayOnly && (dayOnly[2] || /\b(the|on)\b/.test(text) || /^\d{1,2}(st|nd|rd|th)$/.test(text.trim()))) {
@@ -113,6 +128,88 @@ function checked(parts, today) {
     return refuse("That date is in the past. Please check the date with the caller and ask again.");
   }
   return accept(isoDay(parts));
+}
+
+// --- when a task is due: a day, and the time of day when one was said ----------
+//
+// A reminder at the wrong hour is a reminder nobody gets, so a bare hour ("at 5", "6 baje") is not
+// guessed at: the agent is asked to check morning or evening. A part of the day said without an
+// hour ("tomorrow evening") takes the usual hour for it.
+
+const PERIOD_WORDS = {
+  morning: ["subah", "savere", "sawere", "morning"],
+  afternoon: ["dopahar", "dopehar", "dupahar", "afternoon"],
+  evening: ["shaam", "sham", "evening"],
+  night: ["raat", "night"],
+};
+const PERIOD_RE = new RegExp(`\\b(${Object.values(PERIOD_WORDS).flat().join("|")})\\b`);
+const PERIOD_OF = Object.fromEntries(Object.entries(PERIOD_WORDS).flatMap(([p, words]) => words.map((w) => [w, p])));
+const USUAL_HOUR = { morning: 9, afternoon: 14, evening: 18, night: 20 };
+const P = Object.values(PERIOD_WORDS).flat().join("|");
+const TIME_PATTERNS = [
+  // 5 pm, 10:30 am, 6.45 p.m.
+  { re: /(?:\b(?:at|@)\s*)?\b(\d{1,2})(?:[:.](\d{2}))?\s*(a\.?\s?m\.?|p\.?\s?m\.?)(?![a-z])/, meridiem: 3 },
+  // shaam 6, morning 8:30
+  { re: new RegExp(`\\b(?:${P})\\s+(?:at\\s+)?(\\d{1,2})(?:[:.](\\d{2}))?(?:\\s*(?:baje|bje|o'?\\s?clock))?(?![\\w/-])`) },
+  // 7 in the evening, 6 baje shaam
+  { re: new RegExp(`\\b(\\d{1,2})(?:[:.](\\d{2}))?\\s*(?:baje|bje|o'?\\s?clock)?\\s+(?:in the\\s+)?(?:${P})\\b`) },
+  // 6 baje, 5 o'clock
+  { re: /(?:\b(?:at|@)\s*)?\b(\d{1,2})(?:[:.](\d{2}))?\s*(?:baje|bje|o'?\s?clock)\b/ },
+  // 17:30, at 9:15
+  { re: /(?:\b(?:at|@)\s*)?\b(\d{1,2}):(\d{2})\b/ },
+  // at 5 (and not "at 15 December", "at the 5th")
+  { re: /\b(?:at|@)\s*(\d{1,2})\b(?!\s*(?:st|nd|rd|th|tarikh|tareekh|days?|din|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b)(?![/-])/ },
+];
+
+/** The time of day in what was said: {found, hour, minute} with `rest` the words left for the day, or
+ * {ambiguous} for a bare hour, or {invalid} for an hour that does not exist. */
+function readTime(text) {
+  const periodWord = text.match(PERIOD_RE)?.[1] ?? null;
+  const period = periodWord ? PERIOD_OF[periodWord] : null;
+  const withoutPeriod = (s) => (periodWord ? s.replace(new RegExp(`\\b${periodWord}\\b`), " ") : s);
+  for (const { re, meridiem } of TIME_PATTERNS) {
+    const m = text.match(re);
+    if (!m) continue;
+    const raw = m[1];
+    const h = Number(raw);
+    const minute = m[2] === undefined ? 0 : Number(m[2]);
+    if (minute > 59) return { invalid: true };
+    const rest = withoutPeriod(text.replace(m[0], " "));
+    if (meridiem) {
+      if (h < 1 || h > 12) return { invalid: true };
+      const pm = m[meridiem].startsWith("p");
+      return { found: true, hour: pm ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h), minute, rest };
+    }
+    if (h > 23) return { invalid: true };
+    if (h >= 13 || h === 0 || (raw.length === 2 && raw.startsWith("0"))) return { found: true, hour: h, minute, rest };
+    const hour = !period ? null
+      : period === "morning" ? (h === 12 ? null : h)
+        : period === "afternoon" ? (h === 12 ? 12 : h <= 6 ? h + 12 : h)
+          : period === "evening" ? (h === 12 ? null : h + 12)
+            : (h >= 6 && h <= 11 ? h + 12 : null);
+    if (hour === null) return { ambiguous: true };
+    return { found: true, hour, minute, rest };
+  }
+  if (period) return { found: true, hour: USUAL_HOUR[period], minute: 0, rest: withoutPeriod(text) };
+  return { found: false, rest: text };
+}
+
+const pad2 = (n) => String(n).padStart(2, "0");
+
+/** When a task is due, as an instant: the day the caller said, at the time they said or 9 in the
+ * morning. Refused, with a line the agent can say, when either is not certain. */
+export function parseTaskDue(said, { now = new Date(), timezone = TZ } = {}) {
+  const text = String(said ?? "").toLowerCase().replace(/\btonight\b/g, "today night").replace(/\s+/g, " ").trim();
+  if (!text) return refuse("I did not catch the date. Please ask for the exact date, like the fifteenth of December.");
+  const time = readTime(text);
+  if (time.invalid) return refuse("I did not catch the time. Please ask for it again, like 5 in the evening.");
+  if (time.ambiguous) return refuse("That time could be in the morning or the evening. Please ask which they mean.");
+  const rest = time.rest.replace(/\b(?:ko|ke|at)\b|@/g, " ").replace(/\s+/g, " ").trim();
+  const day = rest ? parseDate(rest, now, timezone) : accept(isoDay(todayIn(now, timezone)));
+  if (!day.ok) return day;
+  const value = new Date(`${day.value}T${pad2(time.found ? time.hour : 9)}:${pad2(time.found ? time.minute : 0)}:00+05:30`);
+  if (time.found && value <= now) return refuse("That time today has already gone. Please ask for a later time.");
+  return { ok: true, value, day: day.value, time_said: Boolean(time.found), message: null };
 }
 
 // --- the rest ----------------------------------------------------------------

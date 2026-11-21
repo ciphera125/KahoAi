@@ -2,9 +2,14 @@ import * as Task from "../models/Task.js";
 import * as ApiKey from "../models/ApiKey.js";
 import { note } from "./notify.js";
 
+/** A page of tasks, with counts for the page's buttons; one person's whole list when `contact_id` is given. */
 export async function list(req, res) {
-  res.json(await Task.list(req.user.org_id, { range: req.query.range ?? "all",
-    status: req.query.status ?? "all", contactId: req.query.contact_id ?? null }));
+  if (req.query.contact_id) {
+    res.json(await Task.list(req.user.org_id, { range: req.query.range ?? "all", status: req.query.status ?? "all", contactId: req.query.contact_id }));
+    return;
+  }
+  res.json(await Task.page(req.user.org_id, { range: req.query.range ?? "all", status: req.query.status ?? "all",
+    q: req.query.q ?? null, page: req.query.page, perPage: req.query.per_page ?? 25 }));
 }
 
 export async function create(req, res) {

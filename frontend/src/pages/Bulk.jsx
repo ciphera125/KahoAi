@@ -7,7 +7,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { get, post } from "../api.js";
 import { countsKey, slotsText } from "../bulk.js";
 import { parseCallList } from "../csv.js";
-import { Icon, Modal, OutcomePill, plural, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
+import { Info, Icon, Modal, OutcomePill, plural, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
 import { startPolling } from "../poll.js";
 
 const STATUS_LABEL = { running: "Running", paused: "Paused", done: "Finished", cancelled: "Cancelled" };
@@ -34,7 +34,7 @@ function RunList() {
   return (
     <section>
       <header className="page">
-        <div><h1>Bulk calls</h1><div className="sub">Upload a list of names and phone numbers and an agent calls them all, a few at a time. Do not call numbers are skipped.</div></div>
+        <div><h1>Bulk calls<Info text="Upload a list of numbers and an agent calls them one after another, only inside calling hours, and never the same person twice in a day." /></h1><div className="sub">Upload a list of names and phone numbers and an agent calls them all, a few at a time. Do not call numbers are skipped.</div></div>
         {can(me, "calls.bulk") && <div className="head-actions"><button className="primary" onClick={() => setCreating(true)}><Icon name="upload" />New bulk call</button></div>}
       </header>
       <div className="card list">

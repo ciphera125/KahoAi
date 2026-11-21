@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { del, get, patch, post } from "../api.js";
 import { can, useMe } from "../auth.jsx";
-import { Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
+import { Info, Icon, Menu, Modal, Spinner, useConfirm, usePaged, useToast, whenShort } from "../ui.jsx";
 
 export default function Prompts() {
   const me = useMe();
@@ -23,7 +23,7 @@ export default function Prompts() {
   return (
     <section>
       <header className="page">
-        <div><h1>Prompts</h1><div className="sub">A prompt is the instructions an agent follows on a call. Here is every prompt in your organization and the agent it belongs to.</div></div>
+        <div><h1>Prompts<Info text="A prompt is the written brief an agent follows. Every change is saved as a version you can go back to." /></h1><div className="sub">A prompt is the instructions an agent follows on a call. Here is every prompt in your organization and the agent it belongs to.</div></div>
         {can(me, "agents.edit") && <div className="head-actions"><button className="primary" onClick={() => setEditing({})}><Icon name="plus" />New prompt</button></div>}
       </header>
       <div className="card list">

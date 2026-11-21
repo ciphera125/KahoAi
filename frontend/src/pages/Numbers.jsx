@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { del, get, patch, post } from "../api.js";
 import { isAdmin, useMe } from "../auth.jsx";
-import { DropdownButton, Menu, Modal, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
+import { Info, DropdownButton, Menu, Modal, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 const STATUS = { active: ["Active", "active"], incomplete: ["Needs credentials", "warn"], not_connected: ["Not connected yet", "muted"] };
 
@@ -25,7 +25,7 @@ export default function Numbers() {
   return (
     <section>
       <header className="page">
-        <div><h1>Numbers</h1><div className="sub">The numbers your agents call from and answer on, and which agent answers each one.</div></div>
+        <div><h1>Numbers<Info text="The phone numbers your calls come from and arrive on, and which agent answers each." /></h1><div className="sub">The numbers your agents call from and answer on, and which agent answers each one.</div></div>
         {admin && <div className="head-actions">
           <DropdownButton label="Add number" icon="plus"
             items={providers.map((p) => [`${p.label}${p.connected ? "" : " (save only)"}`, () => setEditing({ provider: p })])} />
