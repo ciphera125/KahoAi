@@ -38,14 +38,12 @@ export async function importLegacy({ data = path.join(ROOT, "data"), calls: call
   const counts = {};
   const count = (what, n = 1) => { if (n) counts[what] = (counts[what] || 0) + n; };
   const users = (await json(data, "users.json", { users: [] })).users || [];
-  let fresh = false;
 
   await asSystem(async (db) => {
     if (orgId) {
       if (!(await db.query("SELECT 1 FROM organizations WHERE id = $1", [orgId])).rowCount) throw new Error(`no organization ${orgId}`);
     } else {
       orgId = `org_${hexId()}`;
-      fresh = true;
       const name = (orgName || users.find((u) => u.role === "owner")?.company || "Imported organization").slice(0, 80);
       await db.query("INSERT INTO organizations (id, name) VALUES ($1, $2)", [orgId, name]);
     }

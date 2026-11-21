@@ -20,10 +20,9 @@ const head = async (b, path) => { const r = await fetch(`${base}/object/${b}/${e
 const get = async (b, path) => { const r = await fetch(`${base}/object/${b}/${enc(path)}`, { headers: H }); return r.ok ? await r.text() : null; };
 const ls = async (b, prefix) => (await (await fetch(`${base}/object/list/${b}`, { method: "POST", headers: { ...H, "Content-Type": "application/json" }, body: JSON.stringify({ prefix, limit: 1000 }) })).json());
 const walk = async (b, prefix) => { const out = []; for (const o of await ls(b, prefix)) { const p = prefix ? `${prefix}/${o.name}` : o.name; if (o.id) out.push(p); else out.push(...await walk(b, p)); } return out; };
-const table = (t) => parseCsv(t.replace(/^﻿/, ""));
+const table = (t) => parseCsv(t.replace(/^\uFEFF/, ""));
 const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+/;
 const NUMBER = /\+?\d(?:[\s().-]?\d){8,}/;
-const dayOf = (iso) => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date(iso));
 
 if (!MAIN) { console.log("SUPABASE_RECORDINGS_BUCKET is not set."); process.exit(1); }
 console.log(`Customers' bucket: ${MAIN}`);

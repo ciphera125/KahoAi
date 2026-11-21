@@ -119,7 +119,8 @@ export async function decideRequest(req, res) {
   const out = await Requests.decide(req.params.id, { action: req.body?.action, response: req.body?.response, adminEmail: who(req) });
   await record(req, `request.${out.status === "done" ? "done" : "dismiss"}`, { orgId: out.org_id, target: out.id, detail: out.response ?? "" });
   await Billing.tell(out.org_id, out.status === "done" ? "Kaho answered your request." : "Kaho closed your request.", { actor: "Kaho AI" });
-  const { org_id, ...shown } = out;
+  const shown = { ...out };
+  delete shown.org_id; // the organization is told separately; the page does not need it
   res.json(shown);
 }
 

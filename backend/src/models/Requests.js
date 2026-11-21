@@ -12,7 +12,7 @@ const iso = (d) => (d ? new Date(d).toISOString() : null);
 const clean = (v, max, what) => {
   if (v === undefined || v === null || v === "") return "";
   if (typeof v !== "string") throw new ValidationError(`${what} must be text`);
-  const t = v.replace(/\u0000/g, "").trim();
+  const t = v.replaceAll("\u0000", "").trim();
   if (t.length > max) throw new ValidationError(`${what} can be at most ${max} characters`);
   return t;
 };

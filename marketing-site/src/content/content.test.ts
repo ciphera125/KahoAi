@@ -3,11 +3,13 @@
 import { describe, expect, test } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { PLANS, SPEC_LABELS, planSpecs } from "./plans";
 import { PRICING } from "./pricingCopy";
 import { offer } from "../config/offer.config";
 
-const root = new URL("../", import.meta.url).pathname;
+// fileURLToPath, not .pathname: a folder name with a space arrives as %20 and was not found
+const root = fileURLToPath(new URL("../", import.meta.url));
 function files(dir: string): string[] {
   return readdirSync(dir).flatMap((f) => {
     const p = join(dir, f);
@@ -15,7 +17,7 @@ function files(dir: string): string[] {
     return /\.(tsx?|css|html)$/.test(f) && !/\.test\./.test(f) ? [p] : [];
   });
 }
-const sources = [...files(root), new URL("../../index.html", import.meta.url).pathname].map((p) => [p, readFileSync(p, "utf8")] as const);
+const sources = [...files(root), fileURLToPath(new URL("../../index.html", import.meta.url))].map((p) => [p, readFileSync(p, "utf8")] as const);
 
 const BANNED = [
   /whatsapp/i, /omnichannel/i, /broadcast/i, /ticketing/i, /flow builder/i, /on-?premise/i, /\bSSO\b/, /audit log/i,
@@ -30,7 +32,7 @@ describe("copy rules", () => {
     for (const [p, s] of sources) for (const re of BANNED) expect(re.test(s), `${re} in ${p}`).toBe(false);
   });
   test("no em dash anywhere", () => {
-    for (const [p, s] of sources) expect(s.includes("—"), p).toBe(false);
+    for (const [p, s] of sources) expect(s.includes(String.fromCharCode(0x2014)), p).toBe(false);
   });
   test("no slide-style section numbers like 07 /", () => {
     for (const [p, s] of sources) expect(/padStart\(2|k-eyebrow-n/.test(s), p).toBe(false);

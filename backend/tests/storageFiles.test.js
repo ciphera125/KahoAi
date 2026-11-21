@@ -33,7 +33,7 @@ beforeEach(async () => {
 });
 
 const CALL = "99999999-9999-9999-9999-999999999999";
-const rowsOf = (p) => parseCsv(p.body.replace(/^﻿/, ""));
+const rowsOf = (p) => parseCsv(p.body.replace(/^\uFEFF/, ""));
 const find = (bucket, prefix) => puts.filter((x) => x.bucket === bucket && x.path.startsWith(prefix));
 async function aCall(b) {
   await line(b);

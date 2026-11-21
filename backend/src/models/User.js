@@ -16,7 +16,7 @@ import { ASSIGNABLE, can, permissionsOf } from "./permissions.js";
 import { summarize } from "./Billing.js";
 import * as Invite from "./Invite.js";
 import { randomBytes } from "node:crypto";
-import { asSystem, inOrg, systemQuery } from "../db/pool.js";
+import { asSystem, systemQuery } from "../db/pool.js";
 import { hexId, safeEqual, scryptHashAsync, sha256, token } from "../utils/crypto.js";
 import { AuthError, forbidden, NotFoundError, ValidationError } from "../utils/errors.js";
 
