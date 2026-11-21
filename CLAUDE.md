@@ -6,6 +6,13 @@ mic and speakers, or takes and places real phone calls through Plivo.
 Built clean-room. Every non-obvious decision is logged in `CLEANROOM.md` with
 the source or the measurement behind it, add a row when you make another one.
 
+## Link to give for the dashboard / admin panel (owner, 2026-11-18)
+
+When asked for the link to the dashboard or the admin panel, give
+**https://open-buckskin-wolverine.ngrok-free.dev**. Do not give the
+`localhost:5173` or `localhost:5174` addresses: the owner says they are not working.
+If the tunnel changes, the owner will give the new address; update it here.
+
 ## Session handoff
 
 `HANDOFF.md` is the memory between sessions. **At the start of a session, read it
