@@ -440,7 +440,12 @@ h1 { font-weight: 800; letter-spacing: -.03em; }
 
 .sys.warn-line { color: var(--warn, #b45309); }
 
-.publish-bar { margin-bottom: var(--s4); }
+.publish-bar { margin-bottom: var(--s4); scroll-margin-top: var(--s5); }
+.publish-top { display: inline-flex; align-items: center; gap: var(--s3); }
+.publish-top.done { color: var(--muted, inherit); font-weight: 600; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border, currentColor); }
+.publish-top .publish-note { font-size: 0.85rem; color: var(--accent); max-width: 18rem; text-align: right; line-height: 1.25; }
+.publish-top .primary { white-space: nowrap; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
+@media (max-width: 860px) { .publish-top .publish-note { display: none; } }
 .publish-bar.draft { border-color: var(--accent); }
 .publish-state { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
 .problems { margin: var(--s3) 0 0; padding-left: 18px; font-size: 13px; color: var(--text-2); }

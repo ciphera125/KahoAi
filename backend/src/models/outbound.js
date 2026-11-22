@@ -157,13 +157,15 @@ function rawRequest(url, { method, headers, body, deadline }) {
  * Retries once, and only when nothing came back at all (a timeout or a refused
  * connection), because a request that was received may have already done something.
  */
-export async function callOut({ url, method = "POST", headers = {}, body = null, timeoutMs = 6000 }) {
+export async function callOut({ url, method = "POST", headers = {}, body = null, timeoutMs = 6000, attempts = 2 }) {
   const problem = urlProblem(url) ?? (await resolvedProblem(new URL(url).hostname));
   if (problem) return { ok: false, problem };
 
   const deadline = Math.min(Math.max(Number(timeoutMs) || 6000, 500), MAX_TIMEOUT_MS);
   let lastProblem = "We could not reach it.";
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // `attempts: 1` for anything that must never happen twice (a booking): after a timeout nobody knows
+  // whether the other side acted, and asking again could do it again.
+  for (let attempt = 0; attempt < attempts; attempt++) {
     try {
       const response = await rawRequest(url, { method, headers, body, deadline });
       if (response.status >= 300 && response.status < 400) {

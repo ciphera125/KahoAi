@@ -105,6 +105,30 @@ def _clean_custom_tools(raw) -> list[dict]:
     return out
 
 
+def _bounded(value, default: int, low: int, high: int) -> int:
+    if isinstance(value, bool):
+        return default
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return default
+    return min(high, max(low, n))
+
+
+def _clean_silence(raw) -> dict | None:
+    """What the agent does when the caller goes quiet, as the Studio saved it (silence.py reads
+    it). The same limits the Studio enforces, held again here: it decides what a live call
+    does. None when the Studio said nothing, which leaves the follow-up off, as it always was."""
+    if not isinstance(raw, dict):
+        return None
+    message = raw.get("message")
+    return {"enabled": raw.get("enabled") is True,
+            "after_secs": _bounded(raw.get("after_secs"), 10, 5, 60),
+            "times": _bounded(raw.get("times"), 2, 1, 5),
+            "message": " ".join(message.split())[:200] if isinstance(message, str) else "",
+            "hang_up": raw.get("hang_up", True) is not False}
+
+
 def _clean_config(raw) -> dict | None:
     """The Studio's config in the shape agents_store.call_config gives, or None
     if anything in it is malformed (it decides what a live call does)."""
@@ -139,6 +163,7 @@ def _clean_config(raw) -> dict | None:
                 # Words this agent should listen for: cleaned again here, the Studio's answer
                 # goes into a connection to Deepgram and a bad word can refuse it.
                 "keyterms": stt_options.clean_keyterms(raw.get("keyterms")),
+                "silence": _clean_silence(raw.get("silence")),
                 "blocked": blocked,
                 "version": int(version) if version is not None else None}
     except (KeyError, TypeError, ValueError):

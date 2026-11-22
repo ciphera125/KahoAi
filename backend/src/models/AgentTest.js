@@ -98,6 +98,8 @@ function dryRun(name) {
     look_up_contact: { name: "Sample Caller", tags: [], details: {}, answers: {} },
     save_answer: { saved: true }, capture_lead: { status: "saved" }, end_call: { status: "ending" },
     transfer_to_human: { status: "transferring" }, call_webhook: { status: "ok" },
+    check_availability: { found: true, slots: [{ start: "2030-01-01T04:30:00.000Z", when: "a sample time" }], count: 1 },
+    book_meeting: { booked: true, when: "a sample time" },
   };
   return canned[name] ?? { ok: true };
 }

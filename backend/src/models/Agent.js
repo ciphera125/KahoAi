@@ -9,6 +9,8 @@ import { NotFoundError, ValidationError } from "../utils/errors.js";
 import { DEFAULT_TOOLS, KNOWN_TOOLS } from "./toolCatalog.js";
 import { KINDS as CAPTURE_KINDS } from "./answerValue.js";
 import { DEFAULT_LANGUAGE, LANGUAGE_CHOICES, LANGUAGE_VALUES } from "./language.js";
+import { isEventTypeUri } from "../services/calendly.js";
+import { calendlyStatus } from "./OrgSettings.js";
 import { fill as fillVariables, offered } from "./variables.js";
 import { standing as testStanding } from "./AgentTest.js";
 import { get as orgSettings } from "./OrgSettings.js";
@@ -40,7 +42,7 @@ export const DEFAULT_SILENCE = { enabled: true, after_secs: 10, times: 2, messag
 export const SILENCE_SECS = [5, 60];
 export const SILENCE_TIMES = [1, 5];
 export const DEFAULT_SETTINGS = { opening_line: "", max_minutes: 10, ring_secs: 40, call_window: DEFAULT_WINDOW,
-  capture_fields: [], confirm_answers: true, language: DEFAULT_LANGUAGE, silence: DEFAULT_SILENCE, keyterms: [] };
+  capture_fields: [], confirm_answers: true, language: DEFAULT_LANGUAGE, silence: DEFAULT_SILENCE, keyterms: [], meeting_type: "" };
 
 // Words the speech recognition should listen for (names, products, places). The list goes into the connection to
 // the speech provider, which refuses a connection over 500 tokens and does not read a comma, a semicolon or a line
@@ -191,6 +193,10 @@ function checkSettings(current, changes) {
       out.silence = checkSilence(current?.silence, value);
     } else if (key === "keyterms") {
       out.keyterms = checkKeyterms(value);
+    } else if (key === "meeting_type") {
+      // The Calendly meeting this agent books, as Calendly writes it. Empty means none chosen.
+      if (value !== "" && !isEventTypeUri(value)) throw new ValidationError("Choose one of the meeting types from the list");
+      out.meeting_type = value;
     } else if (key === "capture_fields") {
       out.capture_fields = checkCaptureFields(value);
     } else if (key === "confirm_answers") {
@@ -230,6 +236,7 @@ const settingsOf = (stored) => ({ ...DEFAULT_SETTINGS, ...stored,
   capture_fields: Array.isArray(stored?.capture_fields) ? stored.capture_fields : [],
   confirm_answers: stored?.confirm_answers !== false,
   keyterms: Array.isArray(stored?.keyterms) ? stored.keyterms : [],
+  meeting_type: isEventTypeUri(stored?.meeting_type) ? stored.meeting_type : "",
   language: LANGUAGE_VALUES.includes(stored?.language) ? stored.language : DEFAULT_LANGUAGE });
 
 /** Whether the draft says anything the published version does not. Compared field by
@@ -350,7 +357,27 @@ async function draftOf(db, orgId, agentId) {
 /** Everything that would stop this draft going live. */
 async function draftProblems(db, orgId, agentId) {
   const draft = await draftOf(db, orgId, agentId);
-  return promptProblems(draft.prompt, draft.tools, variablesOf(draft.settings), await customToolLabels(orgId));
+  const problems = promptProblems(draft.prompt, draft.tools, variablesOf(draft.settings), await customToolLabels(orgId));
+  return [...problems, ...(await meetingProblems(orgId, draft))];
+}
+
+/** An agent given the booking tools must be able to use them: Calendly connected, a meeting chosen, and the
+ * free times to look at before it books (a time it was never shown is refused at the call). */
+async function meetingProblems(orgId, draft) {
+  const tools = draft.tools ?? [];
+  const books = tools.includes("book_meeting"), looks = tools.includes("check_availability");
+  if (!books && !looks) return [];
+  const out = [];
+  if (!(await calendlyStatus(orgId)).connected) {
+    out.push({ code: "calendly_not_connected", message: "This agent can book meetings, but Calendly is not connected yet. Connect it under Settings, then Meetings." });
+  }
+  if (!isEventTypeUri(draft.settings?.meeting_type)) {
+    out.push({ code: "no_meeting_type", message: "Choose which Calendly meeting this agent books, in its Settings." });
+  }
+  if (books && !looks) {
+    out.push({ code: "meeting_needs_times", message: "To book a meeting the agent must also be able to check free times. Switch on \u201cCheck free times\u201d too." });
+  }
+  return out;
 }
 
 /** What the page shows beside the Publish button. */
@@ -527,7 +554,7 @@ export async function callConfig(agentId, { caller = null } = {}) {
       max_secs: Math.min(s.max_minutes, orgCap ?? Infinity) * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
       capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, language: s.language,
       voicemail: s.voicemail === "hang_up" ? "hang_up" : "talk",
-      silence: s.silence, keyterms: s.keyterms,
+      silence: s.silence, keyterms: s.keyterms, meeting_type: s.meeting_type,
       version: a.version };
   } catch (err) {
     logger.error({ err: err.message }, "agent unreadable, the call uses the default persona");

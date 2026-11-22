@@ -739,6 +739,84 @@ async def mark_task_done(args: dict, call: CallContext) -> dict:
     return {"done": True, "title": reply.get("title")}
 
 
+# --- meetings (2026-11-22): free times in the business's Calendly, and a booking -----------------
+# Calendly sends its own confirmation e-mails to the person booked and to the host. The Studio
+# checks the time is really open, that the e-mail is well formed and was read back, and books it
+# once however often it is asked.
+
+_NO_CALENDAR = {"what_to_do": "I cannot reach the calendar on this call. "
+                "Say someone will confirm a time."}
+
+
+@tool(
+    name="check_availability",
+    description=(
+        "Look up the free times for a meeting in the business's own calendar. Use it whenever "
+        "the caller wants to book something or asks when someone is free, and never suggest a "
+        "time from memory."
+    ),
+    properties={
+        "day": {"type": "string",
+                "description": "The day they want, as they said it: \"tomorrow\", \"Friday\", "
+                "\"the 25th\". Leave out to look at the next few days."},
+        "after": {"type": "string",
+                  "description": "The earliest they can do, as they said it: \"10 am\". "
+                  "Leave out if they did not say."},
+        "before": {"type": "string",
+                   "description": "The latest they can do, as they said it: \"1 pm\". "
+                   "Leave out if they did not say."},
+    },
+)
+async def check_availability(args: dict, call: CallContext) -> dict:
+    reply = await _ask_studio(call, "check_availability", day=str(args.get("day") or ""),
+                              after=str(args.get("after") or ""),
+                              before=str(args.get("before") or ""))
+    if reply is None:
+        return dict(_NO_CALENDAR)
+    if not reply.get("ok"):
+        return {"what_to_do": reply.get("message") or "I could not check the free times just now."}
+    slots = reply.get("slots") or []
+    # A lookup that ran: with nothing free the advice rides along, it is not a failure.
+    return {"found": bool(slots), "slots": slots, "count": reply.get("count", len(slots)),
+            "meeting": reply.get("meeting"), "advice": reply.get("note") or reply.get("message")}
+
+
+@tool(
+    name="book_meeting",
+    description=(
+        "Book the time the caller chose, in the business's calendar. First get their full name "
+        "and e-mail, then read the e-mail back to them letter by letter and wait for a yes. "
+        "Only then book, using the `start` of the slot exactly as check_availability gave it. "
+        "They get a confirmation by e-mail."
+    ),
+    properties={
+        "start": {"type": "string",
+                  "description": "The `start` of the slot they chose, exactly as "
+                  "check_availability gave it."},
+        "name": {"type": "string", "description": "Their full name, as they said it."},
+        "email": {"type": "string",
+                  "description": "Their e-mail, as they said it (\"ravi at gmail dot com\" "
+                  "is fine)."},
+        "email_confirmed": {"type": "boolean",
+                            "description": "True only after you read the e-mail back to them "
+                            "and they said it was right."},
+    },
+    required=["start", "name", "email", "email_confirmed"],
+)
+async def book_meeting(args: dict, call: CallContext) -> dict:
+    reply = await _ask_studio(call, "book_meeting", start=str(args.get("start") or ""),
+                              invitee_name=str(args.get("name") or ""),
+                              email=str(args.get("email") or ""),
+                              email_confirmed=args.get("email_confirmed") is True)
+    if reply is None:
+        return {"booked": False, **_NO_CALENDAR}
+    if not reply.get("ok"):
+        return {"booked": False,
+                "what_to_do": reply.get("message") or "I could not book it just now."}
+    # "when" is the day and time in words, on India's clock: say that, not the raw time.
+    return {"booked": True, "when": reply.get("when"), "email": reply.get("email"),
+            "next": "Tell them the time, and that a confirmation is on its way to their e-mail."}
+
 @tool(
     name="search_knowledge",
     description=(

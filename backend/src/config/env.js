@@ -43,11 +43,14 @@ const schema = z.object({
   // Admin actions that cost real work (filing records in Storage, five outside checks), per organization.
   ARCHIVE_RUN_PER_MIN: int(3, 1, 100),
   HEALTH_PER_MIN: int(12, 1, 600),
+  CALENDLY_CONNECT_PER_MIN: int(5, 1, 60),   // pasting a token: each try asks Calendly, so it must not be a way to test stolen tokens
+  CALENDLY_LOOKUP_PER_MIN: int(10, 1, 120),  // the meeting-type list: each look-up asks Calendly
   PUBLIC_HOST: z.string().optional(),
   PUBLIC_SCHEME: z.enum(["https", "http"]).default("https"),
   WEBHOOK_SECRET: z.string().optional(),
   MAX_CALL_DURATION_SECS: z.string().optional(),
   PLIVO_API_BASE: z.url().default("https://api.plivo.com"),
+  CALENDLY_API_BASE: z.url().default("https://api.calendly.com"), // tests only: production always uses the real one
   PLIVO_DIAL_TIMEOUT_MS: int(15000, 1000, 60000),
   PREFLIGHT_TIMEOUT_MS: int(10000, 1000, 60000),
   STREAM_WAIT_SECS: int(90, 1, 600),

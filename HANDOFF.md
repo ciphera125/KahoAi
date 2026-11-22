@@ -12,12 +12,14 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-11-22 (second session of the day). **Current state, read this first:** `main` is at `1fe3d30` on GitHub
-(Deepgram: per-agent keyterms, language hints, usage labels, number-confidence check) plus this handoff commit. Tests:
-backend 1013 (34 skipped, as before), voice 1045, frontend 81, marketing-site 69 (not rerun); ruff and eslint clean; frontend builds.
-**Restart the backend and the phone server** to run the new code (nothing was restarted). Newest work is the last entry of the
-session log ("2026-11-22 (second session): Deepgram features"); the paragraph below is the earlier state of the same day.
-Earlier state: `main` was at `ec2a269` on GitHub plus a handoff commit, and `website-redesign` was fast-forwarded to `ec2a269` (it had no work of its own, only a
+Last updated: 2026-11-22 (end of the third session of the day). **Current state, read this first:** Calendly booking, the Publish button, a
+security pass and the removal of two Settings sections are built and pushed (see the newest session-log entries). Tests: backend 1081 (34 skipped
+as before), voice 1077, frontend 86, admin 8; ruff and eslint clean; all web apps build. **How things run now:** backend :8020 (production mode,
+`NODE_ENV=production` in `backend/.env`), phone server :8765 on 127.0.0.1 only, Studio dev server :5173 (this machine only), marketing :4000, and
+the admin site on :5174 is `vite preview` of the BUILT files (run `cd admin && npm run build && npm run preview`), which is what the ngrok tunnel
+`open-buckskin-wolverine.ngrok-free.dev` points at. **Never point the tunnel at a dev server.** Calendly is NOT connected yet (it needs a token from the
+owner); nothing real has ever been booked. Migration 033 (`meeting_bookings`) is applied to the live database.
+Earlier state (before today's later sessions): `main` was at `ec2a269` on GitHub plus a handoff commit, and `website-redesign` was fast-forwarded to `ec2a269` (it had no work of its own, only a
 stale copy). Tests then: backend 999, voice 962, frontend 74, marketing-site 69; ruff and eslint clean; both sites build.
 Migration 032 (`call_events.outcome`) is applied to the live database. Running locally: backend :8020/:8021, Studio
 :5173, admin :5174 (also serves the phone server's /answer /hangup /transfer /ws through its Vite proxy), marketing
@@ -650,6 +652,19 @@ still open, section 6).
 - Attacks run: other organization, a viewer and a signed-out visitor changing an agent's words (all refused); keyterms that look
   like query syntax (stay one literal word each); 10 low-confidence turns in a row (all 10 flagged, no cap, see section 6).
 
+**2026-11-22, third session: Calendly, security pass, screens (verified in a real browser and by attacks)**
+- Browser (Claude in Chrome, signed in as the owner): the words box saves and persists; the top-right Publish control shows "Published", "You have
+  unpublished changes" with "Review and publish"; publishing a throwaway agent worked end to end; the Tools tab lists "Check free times" and
+  "Book a meeting"; the Meetings tab connected to a FAKE Calendly (the backend was briefly run in development mode against `tests/fakeCalendly.js`),
+  listed its three meeting types (the paid one greyed out), and an agent given a meeting and both tools no longer had booking problems. Phone width
+  checked by loading the pages in a 390px frame: no sideways scroll. All test agents, prompts and the fake connection were removed afterwards.
+- Real Calendly was only looked at: the signed-in account ("Cipheras", Free plan, one meeting "30 Minute Meeting" on Google Meet). The token page is
+  `calendly.com/integrations/api_webhooks` (the old "Profile menu, Developer" route and `/app/developer` no longer exist). No token was created.
+- Attacks run for real: public tunnel probes (before and after the fix), forged and unsigned webhooks with and without the right secret, oversized
+  bodies, path traversal, `/ws` with no, fake and hostile tokens, every backend route with no credentials (`tests/routeSweep.test.js`, permanent),
+  hostile and huge input into the booking tools, rate limiting, cross-site writes, other-organization and viewer access, `npm audit`, `pip-audit`,
+  a secret scan of tracked files. 29 safety rules broken on purpose across today's work: all caught except one equivalent change.
+
 ## 5. UNVERIFIED (assume nothing)
 
 Never claim any of these works until a real call shows it.
@@ -764,6 +779,15 @@ Never claim any of these works until a real call shows it.
   check only covers a run of three or more spoken digit words. Not tried on a real Hindi call.
 - Nothing here has run on a real phone call: the backend and phone server were not restarted, and the agent's new keyterms box
   was never clicked in a browser (the helper, form wiring and build are tested, the page itself was not looked at).
+
+**2026-11-22, third session**
+- Calendly against the REAL Calendly: never run (no token). The fake follows Calendly's docs, but the real replies (the exact error for a taken slot,
+  whether the host also gets an e-mail, the Google Meet booking) are unseen. First real step: owner connects the token, then a read-only check, then ONE
+  test booking with the owner's own e-mail (it sends real e-mails; the Free plan allows 5 bookings a day).
+- E-mail taken by voice, especially in Hindi, is tested only as typed or as English spoken forms.
+- `redact_usage` is sent and accepted by Deepgram; that it is honored is from the docs, not seen in a usage record.
+- The new phone-server code (inbound-call registration, silence settings, keyterms, number check, bind address) was restarted but no real call has been
+  made on it. Silence follow-up is now ON for Studio calls by default (10s, twice, then a goodbye and hang-up).
 
 ## 6. Open work, in the owner's order
 
@@ -928,6 +952,19 @@ signature validation below (`eeef867`). Remaining:
 - Scope for improvement: a digit-count check (a dropped digit has no score, and dropped digits were every wrong number measured);
   cap the repeat requests to one or two per number; set `redact_usage`; measure on real calls and on Hindi; decide on
   `mip_opt_out` (the owner was unsure; it tells Deepgram not to train on the calls, relevant to the DPDP question).
+
+**2026-11-22, third session: decisions for the owner**
+- Fixed this session (owner asked for fixes): meetings per call (2) and per e-mail per day (3); repeat-request cap (3 a call); `redact_usage`; length
+  limits; rate limits on the Calendly routes; Calendly account details only for admins; sign-up no longer advertised once both admins exist; meeting
+  names made safe for the model; phone server bound to 127.0.0.1; the tunnel serves built files, not the dev server.
+- Open: `REQUIRE_AGENT_TEST` makes publishing two steps ("Review and publish", test, publish). Setting it to false gives one press, without the test.
+- Open: the admin site (public, behind a sign-in, the setup code and an e-mail allowlist) is reachable from the whole internet through the tunnel. Its
+  login is rate limited and locked out, but a real deployment should put it behind a VPN or an IP allowlist.
+- Open: `GET /api/admin/auth/state` is public by design (the sign-in page needs it). Pillow 12.3.0 and opentelemetry-api 1.45.1 have advisories that cannot
+  be fixed without bumping pipecat (accepted; see CLEANROOM.md). A cap on meetings per organization per day is not built (Calendly's own limits apply).
+- Parked on purpose (owner): "Send calls to your system" and "API keys" are out of the Studio screens; the code is in `frontend/src/pages/parked.jsx`
+  (nothing imports it) and the backend routes are untouched. Re-add by importing in `Settings.jsx` and adding the tab entry.
+- Next when the owner is ready: Razorpay (preferred over GoKwik, which is for shop checkouts) for top-ups; invoices and GST; Mumbai hosting.
 
 ## 7. Gotchas that cost time
 
@@ -2445,3 +2482,23 @@ pushed as `1fe3d30`. Backend and phone server were not restarted.
    must not be set to the live one; `test_no_em_dashes` covers every tracked file including this one.
 **Open.** Restart the backend and phone server; publish an agent with some keyterms and try a real call; look at the new Settings box in a
 browser; decide the findings in section 6; `gh` is not installed, so GitHub CI for `1fe3d30` was not checked.
+
+## 2026-11-22 (third session): Calendly booking, security pass, screens
+Owner: add Calendly so the agent can check free times and book on the call (Calendly e-mails both sides), fix the silence bug, a clear Publish button,
+remove "Send calls to your system" and "API keys" from the screens (code kept), then verify in the browser, break the system as a security tester, fix
+what broke, and commit and push. Built test first; each new test was shown failing.
+1. **Calendly** (`services/calendly.js`, `models/Meeting.js`, tools `check_availability` and `book_meeting`, migration 033, Settings, Meetings tab, the
+   agent's "Meeting to book", publish checks). Per-organization personal access token, sealed; booked only for a time Calendly lists as open, only after
+   the e-mail was read back, once however often asked, never retried (after a timeout the booking is looked for). 61 backend tests against
+   `tests/fakeCalendly.js`. In production the backend ignores `CALENDLY_API_BASE` and talks only to api.calendly.com.
+2. **Bug found and fixed:** a live INBOUND call's record had no agent or organization until it hung up, so every Studio tool failed during the call.
+   The phone server now tells the Studio the agent as the call starts (background). Outbound calls had a record already, which hid it.
+3. **Silence settings** now reach calls (`_clean_config` dropped them). **Publish button** at the top right (`publish.js`, tested).
+4. **Removed from the screens** (code parked): Send calls to your system, API keys, their roles row and wording.
+5. **Security pass**: see sections 4, 5 and 6 above and CLEANROOM.md. Two real findings: the tunnel served the Vite dev server (source and an editor opener
+   reachable by anyone), and the phone server listened on all interfaces. Both fixed. The one probe of `/__open-in-editor` was mine, before the fix.
+6. **Gotchas**: `backend/.env` has `NODE_ENV=production`, so a backend started for screen tests against the fake needs `NODE_ENV=development
+   CALENDLY_API_BASE=http://127.0.0.1:18768` (and the fake running: `tests/fakeCalendly.js`). The admin site's dev server must not be run on the tunnel
+   port. The browser window cannot be shrunk below ~1176px here: test phone width by loading pages in a 390px iframe.
+**Open.** Owner connects the Calendly token (steps on the Meetings tab), then a real read-only check and one real test booking; a real call on the new phone
+server; decide `REQUIRE_AGENT_TEST`; `gh` is not installed so GitHub CI was not checked.

@@ -76,7 +76,8 @@ def test_no_ids_means_no_labels():
 
 def test_hindi_and_english_hints_are_sent_with_the_multilingual_setting():
     kw = kwargs_for()
-    assert kw["request_options"] == {"additional_query_parameters": {"language_hint": ["hi", "en"]}}
+    extra = kw["request_options"]["additional_query_parameters"]
+    assert extra["language_hint"] == ["hi", "en"]
 
 
 def test_hints_follow_the_setting_and_can_be_switched_off(monkeypatch):
@@ -84,7 +85,7 @@ def test_hints_follow_the_setting_and_can_be_switched_off(monkeypatch):
     hints = kwargs_for()["request_options"]["additional_query_parameters"]["language_hint"]
     assert hints == ["hi", "ta"]
     monkeypatch.setenv("DEEPGRAM_LANGUAGE_HINTS", "off")
-    assert "request_options" not in kwargs_for()
+    assert "language_hint" not in kwargs_for()["request_options"]["additional_query_parameters"]
 
 
 def test_a_bad_hint_in_the_setting_never_reaches_deepgram(monkeypatch):
@@ -95,7 +96,7 @@ def test_a_bad_hint_in_the_setting_never_reaches_deepgram(monkeypatch):
 def test_hints_are_not_sent_when_the_language_is_pinned(monkeypatch):
     # Deepgram ignores them unless language=multi; sending them would only be noise.
     monkeypatch.setenv("DEEPGRAM_LANGUAGE", "en")
-    assert "request_options" not in kwargs_for()
+    assert "language_hint" not in kwargs_for()["request_options"]["additional_query_parameters"]
 
 
 def test_what_was_already_sent_is_still_sent():
@@ -128,6 +129,7 @@ async def test_the_real_url_carries_every_parameter_once_each(monkeypatch):
     assert query["tag"] == [ORG]
     assert query["extra"] == ["call_id:c-9", "agent_id:ag_x1"]
     assert query["model"] == ["nova-3"] and query["language"] == ["multi"]
+    assert query["redact_usage"] == ["true"]
 
 
 async def test_a_keyterm_cannot_add_a_parameter_to_the_connection(monkeypatch):
@@ -156,8 +158,22 @@ async def test_a_keyterm_cannot_add_a_parameter_to_the_connection(monkeypatch):
     pipecat_own = {"detect_entities", "diarize", "dictation", "interim_results", "punctuate",
                    "encoding", "channels", "multichannel", "sample_rate"}
     ours = {"model", "language", "smart_format", "numerals", "keyterm", "tag", "extra",
-            "language_hint"}
+            "language_hint", "redact_usage"}
     assert set(query) == pipecat_own | ours
     assert query["model"] == ["nova-3"] and query["tag"] == [ORG]
     assert query["language_hint"] == ["hi", "en"]
     assert query["keyterm"][:5] == hostile
+
+
+def test_the_words_are_kept_out_of_deepgrams_usage_records():
+    # Deepgram's usage records show keyterms unless redact_usage is set, and a customer may
+    # list the names of doctors or patients there (security pass, 2026-11-22).
+    extra = kwargs_for(keyterms=["Dr. Mehta"])["request_options"]["additional_query_parameters"]
+    assert extra["redact_usage"] == "true"
+
+
+def test_it_is_set_whatever_else_is_switched_off(monkeypatch):
+    monkeypatch.setenv("DEEPGRAM_LANGUAGE_HINTS", "off")
+    monkeypatch.setenv("DEEPGRAM_LANGUAGE", "en")
+    extra = kwargs_for()["request_options"]["additional_query_parameters"]
+    assert extra == {"redact_usage": "true"}

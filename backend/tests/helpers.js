@@ -6,7 +6,7 @@ import { migrate } from "../src/db/migrate.js";
 import { resetRateLimits } from "../src/middleware/rateLimit.js";
 
 export const ORIGIN = "http://localhost:5173";
-const TABLES = ["impersonations", "admin_sessions", "admin_audit", "admins", "minute_ledger", "org_requests", "topups", "subscriptions", "tool_log", "builder_history", "agent_tests", "custom_tools", "tasks", "api_keys", "call_answers", "agent_versions", "error_logs", "bulk_items", "bulk_runs", "meta", "call_events", "calls", "activity", "contact_number_tags", "contact_tags",
+const TABLES = ["meeting_bookings", "impersonations", "admin_sessions", "admin_audit", "admins", "minute_ledger", "org_requests", "topups", "subscriptions", "tool_log", "builder_history", "agent_tests", "custom_tools", "tasks", "api_keys", "call_answers", "agent_versions", "error_logs", "bulk_items", "bulk_runs", "meta", "call_events", "calls", "activity", "contact_number_tags", "contact_tags",
   "contact_numbers", "contacts", "tags", "phone_numbers", "routes", "prompt_versions",
   "prompts", "agents", "login_failures", "devices", "sessions", "invites", "memberships", "users", "organizations"];
 
@@ -32,7 +32,7 @@ export const internalApp = createInternalApp();
 export function browser() {
   const agent = request.agent(app);
   const wrap = (method) => (path) => agent[method](path).set("Origin", ORIGIN).set("Host", "localhost:8020");
-  return { get: wrap("get"), post: wrap("post"), patch: wrap("patch"), delete: wrap("delete"), agent };
+  return { get: wrap("get"), post: wrap("post"), put: wrap("put"), patch: wrap("patch"), delete: wrap("delete"), agent };
 }
 
 export async function owner(fields = {}) {

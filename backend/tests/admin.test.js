@@ -23,6 +23,15 @@ describe("who may have an admin account", () => {
     expect(r.body).toEqual({ signup_open: true });
   });
 
+  it("stops saying sign-up is open once every allowed address has its account (security pass, 2026-11-22)", async () => {
+    // The public address would otherwise keep advertising a sign-up form that has nothing left to give.
+    for (const [email, name] of [[AADITYA, "Aditya Nair"], [AYUSHI, "Ayushi Makkad"]]) {
+      expect((await adminBrowser().get("/auth/state")).body).toEqual({ signup_open: true });
+      expect((await adminBrowser().post("/auth/signup").send({ name, email, password: PASSWORD, code: CODE })).status).toBe(200);
+    }
+    expect((await adminBrowser().get("/auth/state")).body).toEqual({ signup_open: false });
+  });
+
   it("lets exactly the two named e-mail addresses sign up, each with the setup code", async () => {
     for (const [email, name] of [[AADITYA, "Aditya Nair"], [AYUSHI, "Ayushi Makkad"]]) {
       const b = adminBrowser();

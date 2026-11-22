@@ -184,3 +184,27 @@ def test_a_turn_that_is_only_the_note_stores_nothing(tmp_path):
     t = CallTranscript("call-note-2", tmp_path)
     t.user(number_confidence.NOTE)
     assert t.caller_text == []
+
+
+# ---- it does not nag (security pass, 2026-11-22) ----
+
+
+async def test_a_noisy_line_gets_a_few_requests_to_repeat_and_then_no_more():
+    # A caller on a bad line (or one talking the agent in circles) could be asked to repeat a number
+    # every single turn until the call ended.
+    proc = number_confidence.FlagUnsureNumbers(0.65)
+    flagged = []
+    for _ in range(10):
+        out = await run(proc, final("98765", result(("98765", 0.2))))
+        flagged.append(number_confidence.NOTE in out[0].text)
+    assert flagged.count(True) == number_confidence.MAX_NOTES_PER_CALL
+    cap = number_confidence.MAX_NOTES_PER_CALL
+    assert flagged[:cap] == [True] * cap
+
+
+async def test_a_clear_number_never_uses_up_the_requests():
+    proc = number_confidence.FlagUnsureNumbers(0.65)
+    for _ in range(10):
+        await run(proc, final("98765", result(("98765", 0.99))))
+    out = await run(proc, final("98765", result(("98765", 0.2))))
+    assert number_confidence.NOTE in out[0].text

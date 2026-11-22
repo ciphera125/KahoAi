@@ -126,6 +126,11 @@ function workedSummary(name, label, args, result, { taskTitles = {}, fieldLabels
       if (r.found === false) return q ? `Nothing in your documents answers “${q}”.` : "Nothing in your documents answered the question.";
       return q ? `Found the answer to “${q}” in your documents.` : "Found an answer in your documents.";
     }
+    case "check_availability": {
+      const n = Number.isFinite(Number(r.count)) ? Number(r.count) : Array.isArray(r.slots) ? r.slots.length : 0;
+      return n === 0 ? "Checked your calendar: nothing free in that window." : `Checked your calendar: ${n} free time${n === 1 ? "" : "s"} to offer.`;
+    }
+    case "book_meeting": return r.when ? `Booked a meeting for ${clip(r.when, 60)}.` : "Booked a meeting.";
     case "look_up_contact": return "Looked up what you already know about them.";
     case "transfer_to_human": return "Passed the call to your team.";
     case "call_webhook": return a.action ? `Asked your system: “${humanize(a.action)}”.` : "Asked your system.";

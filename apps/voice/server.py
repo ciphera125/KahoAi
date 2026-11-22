@@ -561,6 +561,26 @@ async def stream(websocket: WebSocket, stream: str | None = Query(None)):
         ws_limiter().release()
 
 
+_HOST = re.compile(r"^[A-Za-z0-9.:-]{1,64}$")
+
+
+def bind_host() -> str:
+    """Where the server listens: this machine only, unless SERVER_HOST says otherwise (a
+    container or a proxy in front sets 0.0.0.0). It used to listen on every interface, so
+    anyone on the same network could reach it around the tunnel."""
+    wanted = (os.getenv("SERVER_HOST") or "").strip()
+    return wanted if _HOST.match(wanted) else "127.0.0.1"
+
+
+# Background reports to the Studio, kept so they are not collected before they finish.
+_background: set[asyncio.Task] = set()
+
+
+def _keep(task: asyncio.Task) -> None:
+    _background.add(task)
+    task.add_done_callback(_background.discard)
+
+
 # The recording notice, synthesised at startup (warm_up) and sent the instant a
 # call's stream opens; see notice_audio.py. None: calls speak it the normal way.
 _prespoken_notice: notice_audio.PrespokenNotice | None = None
@@ -650,6 +670,13 @@ async def _run_call(
     sink = studio_link.EventSink(call_id or "")
     sink.start()
     org_id = agent_config.get("org_id") if agent_config else None
+    # Tell the Studio which agent this call is on as it starts, in the background and never
+    # waited for. Every tool the Studio runs looks the organization up from the call; without
+    # this it learned the agent only at hang-up, so on an inbound call they all failed while
+    # it lasted (2026-11-22).
+    if agent_config and call_id and studio_link.configured():
+        told = studio_link.report_outcome(call_id, {"agent_id": agent_config["agent_id"]})
+        _keep(asyncio.create_task(told))
 
     async def report_error(level: str, source: str, message: str) -> None:
         await studio_link.report_error(level, source, message, call_id=call_id, org_id=org_id)
@@ -922,7 +949,7 @@ def main() -> None:
         asyncio.run(warm_up())
     except Exception as e:
         logger.warning(f"Warm-up failed: {type(e).__name__}")
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT") or 8000),
+    uvicorn.run(app, host=bind_host(), port=int(os.getenv("PORT") or 8000),
                 log_config=uvicorn_log_config())
 
 

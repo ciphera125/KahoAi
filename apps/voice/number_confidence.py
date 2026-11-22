@@ -33,6 +33,10 @@ _DIGIT_WORDS = {
     "saat", "aath", "nau", "nao",
 }
 _MIN_RUN = 3
+# Asking again is a cost to the caller. After this many requests in one call it stops, whatever
+# the line sounds like: a caller on a bad line, or one talking the agent in circles, is not asked
+# all call long.
+MAX_NOTES_PER_CALL = 3
 _EDGE = re.compile(r"^[^\w]+|[^\w]+$")
 
 
@@ -100,14 +104,17 @@ class FlagUnsureNumbers(FrameProcessor):
         super().__init__()
         self._threshold = threshold
         self._on_unsure = on_unsure
+        self._asked = 0
 
     async def process_frame(self, frame, direction):
         await super().process_frame(frame, direction)
-        if isinstance(frame, TranscriptionFrame) and NOTE not in frame.text:
+        if (isinstance(frame, TranscriptionFrame) and NOTE not in frame.text
+                and self._asked < MAX_NOTES_PER_CALL):
             try:
                 low = lowest_number_confidence(getattr(frame, "result", None))
                 if low is not None and low < self._threshold:
                     frame.text = f"{frame.text} {NOTE}"
+                    self._asked += 1
                     if self._on_unsure is not None:
                         self._on_unsure(low)
             except Exception as e:  # noqa: BLE001 - never raised into a live call

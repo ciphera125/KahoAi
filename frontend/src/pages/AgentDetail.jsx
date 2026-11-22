@@ -6,6 +6,7 @@ import AgentCalls from "../components/AgentCalls.jsx";
 import Assistant, { AssistantButton } from "../components/Assistant.jsx";
 import { changed, sameQuestions, sameSet } from "../dirty.js";
 import { KEYTERM_LIMIT, keytermsText, parseKeyterms } from "../keyterms.js";
+import { publishState } from "../publish.js";
 import { Icon, Info, Menu, SaveButton, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 const TOOL_LABELS = {
@@ -58,6 +59,7 @@ export default function AgentDetail() {
       <header className="page" style={{ marginTop: 8 }}>
         <div style={{ minWidth: 0 }}><h1>{agent.name}</h1><div className="sub">{agent.description || "No description yet."}</div></div>
         <div className="head-actions">
+          {can(me, "agents.edit") && <PublishButton agent={agent} check={check} onChanged={load} />}
           {isAdmin(me) && <Menu items={[["Delete agent", removeAgent, true]]} />}
         </div>
       </header>
@@ -143,6 +145,38 @@ function TestPanel({ agent, check, onChanged }) {
   );
 }
 
+/** The Publish button at the top right of the page, where it cannot be missed. An edit is only a draft until
+ * this is pressed: calls keep using the live version. When the draft passes every check one press makes it
+ * live; when it has a problem, or has not been tested, the press takes the person to the checks below. */
+function PublishButton({ agent, check, onChanged }) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const state = publishState(agent, check);
+  if (state.mode === "published") {
+    return <span className="publish-top done" title="Calls are using exactly what you see here.">✓ Published</span>;
+  }
+  const press = async () => {
+    if (state.mode === "review") {
+      document.getElementById("publish-bar")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
+    setBusy(true);
+    try {
+      await post(`/api/agents/${agent.id}/publish`, {});
+      toast("Published. New calls use it from now on.");
+      onChanged();
+    } catch (e) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  return (
+    <div className="publish-top">
+      <span className="publish-note">You have unpublished changes. Calls still use the live version.</span>
+      <button className="primary" disabled={busy} onClick={press}>
+        {state.mode === "review" ? "Review and publish" : "Publish"}
+      </button>
+    </div>
+  );
+}
+
 /** What is live, what is only saved, and the one button that changes that. */
 function PublishBar({ agent, check, me, confirm, onChanged }) {
   const toast = useToast();
@@ -164,12 +198,12 @@ function PublishBar({ agent, check, me, confirm, onChanged }) {
     const ok = await confirm({ title: "Publish anyway?",
       text: "We think this draft has a problem, or has not passed a test. If you know it is fine, you can publish it. "
         + "What you overrode is kept on this version, with your name.",
-      ok: "I know this is not a tool, publish anyway" });
+      ok: "Publish anyway" });
     if (ok) await publish(true);
   };
 
   return (
-    <div className={`card publish-bar${agent.draft_changed ? " draft" : ""}`}>
+    <div id="publish-bar" className={`card publish-bar${agent.draft_changed ? " draft" : ""}`}>
       <div className="publish-state">
         <div>
           <b>{agent.draft_changed ? "You have unpublished changes" : "Everything is published"}</b>
@@ -499,17 +533,24 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
   const w = s.call_window || { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
   const [cw, setCw] = useState(w);
   const [words, setWords] = useState(keytermsText(s.keyterms));
+  const wantsMeetings = (agent.tools ?? []).some((t) => t === "book_meeting" || t === "check_availability");
+  const [meeting, setMeeting] = useState(s.meeting_type || "");
+  const [types, setTypes] = useState(null); // null while loading, then { items } or { error }
+  useEffect(() => {
+    if (!wantsMeetings) return;
+    get("/api/org/calendly/event-types").then((d) => setTypes({ items: d.items })).catch((e) => setTypes({ error: e.message }));
+  }, [wantsMeetings]);
   const quiet0 = { enabled: true, after_secs: 10, times: 2, message: "", hang_up: true, ...s.silence };
   const [quiet, setQuiet] = useState(quiet0);
   const setQ = (patch) => setQuiet((q) => ({ ...q, ...patch }));
   const savedLang = languages.some((l) => l.value === s.language) ? s.language : "auto";
-  const mainDirty = changed({ opening: s.opening_line || "", maxMin: s.max_minutes, ring: s.ring_secs, lang: savedLang, voicemail: s.voicemail || "talk", quiet: quiet0, words: parseKeyterms(keytermsText(s.keyterms)) },
-    { opening, maxMin, ring, lang, voicemail, quiet, words: parseKeyterms(words) });
+  const mainDirty = changed({ opening: s.opening_line || "", maxMin: s.max_minutes, ring: s.ring_secs, lang: savedLang, voicemail: s.voicemail || "talk", quiet: quiet0, words: parseKeyterms(keytermsText(s.keyterms)), meeting: s.meeting_type || "" },
+    { opening, maxMin, ring, lang, voicemail, quiet, words: parseKeyterms(words), meeting });
   const windowDirty = changed(w, cw);
   const save = async () => {
     try {
       await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw, language: lang, voicemail,
-        keyterms: parseKeyterms(words),
+        keyterms: parseKeyterms(words), meeting_type: meeting,
         silence: { ...quiet, after_secs: Number(quiet.after_secs), times: Number(quiet.times) } } });
       toast("Saved as a draft. Publish it when you are ready."); onChanged();
     } catch (e) { toast(e.message, true); }
@@ -533,9 +574,19 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
         </div>
         <div className="field"><label className="f">Opening line</label><input value={opening} onChange={(e) => setOpening(e.target.value)} maxLength={200} placeholder="Leave empty to let the agent introduce itself" /></div>
         <div className="field"><label className="f">Words to listen for (optional)<Info text="Names the agent will hear on calls: a doctor, a product, a town. Listing them helps it write them down correctly instead of guessing a similar-sounding word." /></label>
-          <textarea rows={4} value={words} onChange={(e) => setWords(e.target.value)} placeholder={"Dr. Mehta\nApollo Clinic"} />
+          <textarea rows={4} style={{ minHeight: 0, height: 104 }} value={words} onChange={(e) => setWords(e.target.value)} placeholder={"Dr. Mehta\nApollo Clinic"} />
           <span className="hint">One to a line, written as people say them. {parseKeyterms(words).length} of {KEYTERM_LIMIT}. No commas inside a line.</span>
         </div>
+        {wantsMeetings && (
+          <div className="field"><label className="f">Meeting to book<Info text="The Calendly meeting this agent books when a caller picks a time. Connect Calendly first under Settings, then Meetings." /></label>
+            {types?.error ? <span className="hint">{types.error}</span> : !types ? <Spinner /> : (
+              <select value={meeting} onChange={(e) => setMeeting(e.target.value)}>
+                <option value="">Choose a meeting</option>
+                {meeting && !types.items.some((t) => t.uri === meeting) && <option value={meeting}>A meeting that is no longer in your Calendly</option>}
+                {types.items.map((t) => <option key={t.uri} value={t.uri} disabled={!t.bookable}>{t.name}{t.duration ? ` (${t.duration} min)` : ""}{t.bookable ? "" : ", takes payment"}</option>)}
+              </select>)}
+          </div>
+        )}
         <div className="field"><label className="f">Longest call (minutes)</label><input type="number" value={maxMin} min={1} max={limits.max_minutes} onChange={(e) => setMaxMin(e.target.value)} /><span className="hint">Up to {limits.max_minutes} minutes on this server.</span></div>
         <div className="field"><label className="f">Ring for (seconds)</label><input type="number" value={ring} min={limits.ring_secs[0]} max={limits.ring_secs[1]} onChange={(e) => setRing(e.target.value)} /></div>
         <div className="quiet-box">

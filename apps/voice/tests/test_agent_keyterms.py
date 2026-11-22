@@ -65,7 +65,9 @@ def test_the_phone_server_hands_the_pipeline_the_words_and_the_ids(monkeypatch, 
 
     monkeypatch.setattr(server, "build_worker", fake_build_worker)
     monkeypatch.setattr(server, "WorkerRunner", Runner)
-    config = studio_link._clean_config({**BASE, "keyterms": ["Dr. Mehta"]})
+    config = studio_link._clean_config({**BASE, "keyterms": ["Dr. Mehta"],
+                                        "silence": {"enabled": True, "after_secs": 15, "times": 3,
+                                                    "message": "", "hang_up": True}})
     token = server.issue_stream({"caller": None, "agent": None, "max_secs": None,
                                  "studio_agent": BASE["agent_id"], "agent_config": config})
     with TestClient(server.app).websocket_connect(f"/ws?stream={token}") as ws:
@@ -74,6 +76,7 @@ def test_the_phone_server_hands_the_pipeline_the_words_and_the_ids(monkeypatch, 
     assert seen["keyterms"] == ["Dr. Mehta"]
     assert seen["org_id"] == "org_8f2a91c4d0e7"
     assert seen["agent_id"] == "ag_6d26dca7bd61"
+    assert seen["silence"]["after_secs"] == 15 and seen["silence"]["enabled"] is True
 
 
 def test_a_call_with_no_studio_agent_passes_nothing_and_still_runs(monkeypatch, tmp_path):

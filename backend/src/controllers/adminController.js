@@ -18,7 +18,7 @@ async function signedIn(req, res, admin) {
   res.json(admin);
 }
 
-export function state(_req, res) { res.json({ signup_open: Admin.signupOpen() }); }
+export async function state(_req, res) { res.json({ signup_open: await Admin.signupAdvertised() }); }
 
 export async function signUp(req, res) {
   const admin = await Admin.signUp(req.body ?? {}, req.ip);

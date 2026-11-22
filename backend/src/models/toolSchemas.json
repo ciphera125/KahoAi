@@ -16,6 +16,34 @@
       "title"
     ]
   },
+  "book_meeting": {
+    "description": "Book the time the caller chose, in the business's calendar. First get their full name and e-mail, then read the e-mail back to them letter by letter and wait for a yes. Only then book, using the `start` of the slot exactly as check_availability gave it. They get a confirmation by e-mail.",
+    "per_call": false,
+    "properties": {
+      "email": {
+        "description": "Their e-mail, as they said it (\"ravi at gmail dot com\" is fine).",
+        "type": "string"
+      },
+      "email_confirmed": {
+        "description": "True only after you read the e-mail back to them and they said it was right.",
+        "type": "boolean"
+      },
+      "name": {
+        "description": "Their full name, as they said it.",
+        "type": "string"
+      },
+      "start": {
+        "description": "The `start` of the slot they chose, exactly as check_availability gave it.",
+        "type": "string"
+      }
+    },
+    "required": [
+      "start",
+      "name",
+      "email",
+      "email_confirmed"
+    ]
+  },
   "call_webhook": {
     "description": "Save or look something up in the business's own system. Use it only for what the persona says it is for. The answer comes back as text for you to use.",
     "per_call": false,
@@ -57,6 +85,25 @@
           "string",
           "null"
         ]
+      }
+    },
+    "required": []
+  },
+  "check_availability": {
+    "description": "Look up the free times for a meeting in the business's own calendar. Use it whenever the caller wants to book something or asks when someone is free, and never suggest a time from memory.",
+    "per_call": false,
+    "properties": {
+      "after": {
+        "description": "The earliest they can do, as they said it: \"10 am\". Leave out if they did not say.",
+        "type": "string"
+      },
+      "before": {
+        "description": "The latest they can do, as they said it: \"1 pm\". Leave out if they did not say.",
+        "type": "string"
+      },
+      "day": {
+        "description": "The day they want, as they said it: \"tomorrow\", \"Friday\", \"the 25th\". Leave out to look at the next few days.",
+        "type": "string"
       }
     },
     "required": []

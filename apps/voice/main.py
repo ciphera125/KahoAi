@@ -535,9 +535,12 @@ class DeepgramSTTService(PipecatDeepgramSTTService):
         parameter. Deepgram only reads it with language=multi, so it is sent only then; the
         codes were checked by stt_options.language_hints (an unknown one is an HTTP 400)."""
         kwargs = super()._build_connect_kwargs()
+        # redact_usage keeps the keyterms out of Deepgram's usage records (a customer may list the
+        # names of doctors or patients there). The SDK's connect() has no argument for it either.
+        extra = {"redact_usage": "true"}
         if self._language_hints and kwargs.get("language") == "multi":
-            kwargs["request_options"] = {
-                "additional_query_parameters": {"language_hint": list(self._language_hints)}}
+            extra["language_hint"] = list(self._language_hints)
+        kwargs["request_options"] = {"additional_query_parameters": extra}
         return kwargs
 
 

@@ -29,10 +29,10 @@ const ALL = PERMISSIONS.map((p) => p.id);
 
 export const ROLES = [
   { id: "admin", label: "Admin", permissions: ALL,
-    summary: "In charge of the organization: can do everything, including the plan, numbers, people, roles and keys, and can make others admins." },
+    summary: "In charge of the organization: can do everything, including the plan, numbers, people and roles, and can make others admins." },
   { id: "manager", label: "Manager",
     permissions: ["view", "recordings.listen", "calls.place", "calls.bulk", "contacts.edit", "contacts.delete", "agents.edit"],
-    summary: "Runs the daily work: builds agents, places calls and bulk calls, listens to recordings and looks after contacts. Cannot change numbers, people or keys." },
+    summary: "Runs the daily work: builds agents, places calls and bulk calls, listens to recordings and looks after contacts. Cannot change numbers or people." },
   { id: "builder", label: "Agent builder",
     permissions: ["view", "agents.edit", "tools.custom"],
     summary: "Builds and tests agents, prompts, questions and tools. Cannot place calls or listen to recordings." },

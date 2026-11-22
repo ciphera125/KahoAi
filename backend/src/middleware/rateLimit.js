@@ -93,6 +93,11 @@ export const archiveRunPerMinute = rateLimit({ ...common, limit: config.ARCHIVE_
 export const healthPerMinute = rateLimit({ ...common, limit: config.HEALTH_PER_MIN, handler: costlyRefused("The system check"),
   keyGenerator: perOrg, store: store("health") });
 
+export const calendlyConnectPerMinute = rateLimit({ ...common, limit: config.CALENDLY_CONNECT_PER_MIN, handler: costlyRefused("Connecting to Calendly"),
+  keyGenerator: perOrg, store: store("calendly-connect") });
+export const calendlyLookupPerMinute = rateLimit({ ...common, limit: config.CALENDLY_LOOKUP_PER_MIN, handler: costlyRefused("Looking up your meetings"),
+  keyGenerator: perOrg, store: store("calendly-lookup") });
+
 // Choosing a plan, asking for a top-up, withdrawing one: per organization, an hour at a time, so a stuck
 // button or a script cannot fill the admins' queue.
 const billingRefused = (_req, res) => res.status(429).json({ error: "Too many billing requests in the last hour. Please wait and try again." });

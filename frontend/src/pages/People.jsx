@@ -8,9 +8,9 @@ import { ago, Avatar, Icon, Info, Menu, Spinner, useConfirm, usePaged, useToast 
 const INVITABLE = ["manager", "builder", "operator", "viewer"];
 // What each role means, in plain words, for the person choosing it. Enforced on the server (permissions.js).
 const ROLE_DETAIL = {
-  admin: { can: ["Everything, including plans, numbers, people, roles and keys"], cannot: ["Remove themselves while they are the last admin"], for: "The owner or the person in charge" },
+  admin: { can: ["Everything, including plans, numbers, people and roles"], cannot: ["Remove themselves while they are the last admin"], for: "The owner or the person in charge" },
   manager: { can: ["Build and change agents", "Place calls and bulk calls", "Listen to recordings", "Look after contacts and tasks"],
-    cannot: ["Change phone numbers", "Invite or remove people", "Make API keys"], for: "A team lead who runs the daily work" },
+    cannot: ["Change phone numbers", "Invite or remove people"], for: "A team lead who runs the daily work" },
   builder: { can: ["Build and test agents, prompts, questions and tools"], cannot: ["Place calls", "Listen to recordings", "Change people or numbers"],
     for: "Someone who sets up how the agent talks" },
   operator: { can: ["Place calls", "Listen to recordings", "Look after contacts and tasks"], cannot: ["Change agents, prompts or tools", "Change people or numbers"],

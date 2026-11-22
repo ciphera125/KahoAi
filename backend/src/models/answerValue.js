@@ -163,7 +163,7 @@ const TIME_PATTERNS = [
 
 /** The time of day in what was said: {found, hour, minute} with `rest` the words left for the day, or
  * {ambiguous} for a bare hour, or {invalid} for an hour that does not exist. */
-function readTime(text) {
+export function readTime(text) {
   const periodWord = text.match(PERIOD_RE)?.[1] ?? null;
   const period = periodWord ? PERIOD_OF[periodWord] : null;
   const withoutPeriod = (s) => (periodWord ? s.replace(new RegExp(`\\b${periodWord}\\b`), " ") : s);

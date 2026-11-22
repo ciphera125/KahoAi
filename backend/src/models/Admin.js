@@ -29,6 +29,15 @@ const text = (v) => (typeof v === "string" ? v : "");
 export const normalize = (email) => text(email).trim().toLowerCase();
 /** Exactly on the list. Case is ignored; nothing else is. */
 export const isAllowed = (email) => config.adminEmails.includes(normalize(email));
+/** What the public sign-in page is told: sign-up is on AND some allowed address still has no account. Once everyone
+ * allowed has one, the form has nothing left to give and the public address stops advertising it. */
+export async function signupAdvertised() {
+  if (!signupOpen()) return false;
+  const { rows } = await systemQuery("SELECT lower(email) AS email FROM admins");
+  const have = new Set(rows.map((r) => r.email));
+  return config.adminEmails.some((e) => !have.has(normalize(e)));
+}
+
 export const signupOpen = () => typeof config.ADMIN_SIGNUP_CODE === "string" && config.ADMIN_SIGNUP_CODE.length >= 16;
 
 const iso = (d) => (d ? new Date(d).toISOString() : null);

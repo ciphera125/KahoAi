@@ -16,6 +16,7 @@ import * as Task from "./Task.js";
 import * as Contact from "./Contact.js";
 import * as CustomTool from "./CustomTool.js";
 import { latestForContact } from "./CallAnswer.js";
+import * as Meeting from "./Meeting.js";
 
 const CALL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 const no = (message) => ({ ok: false, message });
@@ -28,7 +29,7 @@ const sameWords = (text) => createHash("sha1").update(String(text).toLowerCase()
  * hand back either, and a task read out on one turn was "not on their list" on the next. */
 async function callSubject(callId) {
   const { rows } = await asSystem((db) => db.query(
-    `SELECT c.org_id, c.agent_id, (SELECT cn.contact_id FROM contact_numbers cn
+    `SELECT c.call_id, c.org_id, c.agent_id, c.peer, (SELECT cn.contact_id FROM contact_numbers cn
        JOIN contacts ct ON ct.id = cn.contact_id AND ct.org_id = cn.org_id
        WHERE cn.number = c.peer AND cn.org_id = c.org_id ORDER BY ct.created_at, ct.id LIMIT 1) AS contact_id
      FROM calls c WHERE c.call_id = $1`, [callId]));
@@ -69,6 +70,10 @@ const HANDLERS = {
     if (!contact) return no("I do not have their details. Ask them for anything you need.");
     return { ok: true, name: contact.name, tags: contact.tags, details: contact.details, answers };
   },
+
+  /** The free times in the organization's Calendly, and a booking. See Meeting.js for every rule. */
+  async check_availability(subject, args) { return Meeting.checkAvailability(subject, args); },
+  async book_meeting(subject, args) { return Meeting.bookMeeting(subject, args); },
 
   async get_tasks(subject, args) {
     const tasks = await Task.forContactOnCall(subject.org_id, subject.contact_id, {

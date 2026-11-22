@@ -1,4 +1,4 @@
-import { archiveRunPerMinute, assistantPerDay, assistantPerMinute, healthPerMinute } from "../middleware/rateLimit.js";
+import { archiveRunPerMinute, assistantPerDay, assistantPerMinute, calendlyConnectPerMinute, calendlyLookupPerMinute, healthPerMinute } from "../middleware/rateLimit.js";
 import * as audit from "../controllers/auditController.js";
 import { listTemplates } from "../models/templates.js";
 import * as assistant from "../controllers/assistantController.js";
@@ -37,6 +37,10 @@ router.get("/avatars", ws.avatars);
 router.patch("/me/profile", ws.updateProfile);
 router.get("/org/settings", ws.orgSettings);
 router.patch("/org/settings", requirePermission("org.settings"), ws.updateOrgSettings);
+router.get("/org/calendly", ws.calendlyStatus);
+router.put("/org/calendly", requirePermission("org.settings"), calendlyConnectPerMinute, ws.calendlyConnect);
+router.delete("/org/calendly", requirePermission("org.settings"), ws.calendlyDisconnect);
+router.get("/org/calendly/event-types", requirePermission("agents.edit"), calendlyLookupPerMinute, ws.calendlyEventTypes);
 router.get("/invites", requirePermission("team.manage"), auth.invites);
 router.post("/invites", requirePermission("team.manage"), auth.makeInvite);
 router.delete("/invites/:code", requirePermission("team.manage"), auth.cancelInvite);

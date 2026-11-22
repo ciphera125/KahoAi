@@ -4,14 +4,14 @@ import { minutesText, STATUS_WORDS } from "../billing.js";
 import Usage from "./Usage.jsx";
 import Billing from "./Billing.jsx";
 import People from "./People.jsx";
-import { del, get, patch, post } from "../api.js";
+import { del, get, patch, post, put } from "../api.js";
 import { serverView } from "../paginate.js";
-import { can, isAdmin, useMe } from "../auth.jsx";
+import { can, useMe } from "../auth.jsx";
 import { Info, Icon, Pager, Spinner, useConfirm, useToast, SaveButton, usePaged } from "../ui.jsx";
 import { changed } from "../dirty.js";
 
-const TABS = [["organization", "Organization"], ["people", "People"], ["billing", "Billing"], ["calls", "Call rules"], ["roles", "Roles and access"], ["keys", "API keys"],
-  ["webhook", "Send calls to your system"], ["usage", "Usage"], ["system", "Is everything working?"], ["audit", "Audit log"]];
+const TABS = [["organization", "Organization"], ["people", "People"], ["billing", "Billing"], ["calls", "Call rules"], ["roles", "Roles and access"],
+  ["meetings", "Meetings (Calendly)"], ["usage", "Usage"], ["system", "Is everything working?"], ["audit", "Audit log"]];
 
 export default function Settings() {
   const me = useMe();
@@ -20,11 +20,11 @@ export default function Settings() {
   return (
     <section>
       <header className="page">
-        <div><h1>Settings<Info text="Rules for your whole organization: calling hours, who can do what, keys for other systems and your plan." /></h1>
-          <div className="sub">The rules for your whole organization: who can do what, when calls may be made, and how other systems connect.</div></div>
+        <div><h1>Settings<Info text="Rules for your whole organization: calling hours, who can do what, booking meetings and your plan." /></h1>
+          <div className="sub">The rules for your whole organization: who can do what, when calls may be made, and how meetings get booked.</div></div>
       </header>
       <div className="seg" style={{ marginBottom: "var(--s4)" }}>
-        {TABS.filter(([id]) => (id !== "keys" || can(me, "keys.manage")) && ((id !== "audit" && id !== "system") || can(me, "org.settings"))).map(([id, label]) =>
+        {TABS.filter(([id]) => (id !== "audit" && id !== "system") || can(me, "org.settings")).map(([id, label]) =>
           <button key={id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>)}
       </div>
       {tab === "organization" && <Organization />}
@@ -32,11 +32,10 @@ export default function Settings() {
       {tab === "billing" && <Billing />}
       {tab === "calls" && <CallRules />}
       {tab === "roles" && <Roles />}
-      {tab === "webhook" && <Webhook />}
+      {tab === "meetings" && <Meetings />}
       {tab === "usage" && <Usage />}
       {tab === "audit" && <Audit />}
       {tab === "system" && <SystemCheck />}
-      {tab === "keys" && <ApiKeys />}
     </section>
   );
 }
@@ -178,6 +177,8 @@ function CallRules() {
   );
 }
 
+const PARKED_PERMISSIONS = new Set(["keys.manage"]);
+
 /** What each role may do. Printed from the table the server enforces, so it cannot drift from it. */
 function Roles() {
   const me = useMe();
@@ -185,7 +186,9 @@ function Roles() {
   const [data, setData] = useState(null);
   useEffect(() => { get("/api/roles").then(setData).catch((e) => toast(e.message, true)); }, [toast]);
   if (!data) return <Spinner />;
-  const groups = [...new Set(data.permissions.map((p) => p.group))];
+  // A permission for a feature the Studio does not show yet (API keys, parked in pages/parked.jsx) is not listed.
+  const permissions = data.permissions.filter((p) => !PARKED_PERMISSIONS.has(p.id));
+  const groups = [...new Set(permissions.map((p) => p.group))];
   return (
     <>
       <p className="hint" style={{ marginBottom: "var(--s4)", maxWidth: 760 }}>
@@ -205,7 +208,7 @@ function Roles() {
           </thead>
           <tbody>
             {groups.map((g) => (
-              <FragmentGroup key={g} group={g} perms={data.permissions.filter((p) => p.group === g)} roles={data.roles} mine={me.role} />
+              <FragmentGroup key={g} group={g} perms={permissions.filter((p) => p.group === g)} roles={data.roles} mine={me.role} />
             ))}
           </tbody>
         </table>
@@ -232,106 +235,59 @@ function FragmentGroup({ group, perms, roles, mine }) {
   );
 }
 
-/** Keys another system uses to push tasks in. Shown once, then only by their first few
- * characters: we keep a hash, so nobody here can read one back out. */
-function ApiKeys() {
+/** Let agents book meetings in the organization's own Calendly (2026-11-22). Calendly sends its own confirmation
+ * e-mails to the person booked and to you, so there is nothing else to set up. The token is checked with Calendly
+ * when it is pasted, kept sealed, and never shown again. */
+function Meetings() {
   const me = useMe();
   const toast = useToast();
   const [confirm, confirmNode] = useConfirm();
-  const [keys, setKeys] = useState(null);
-  const [shownKeys, keysPager] = usePaged(keys ?? []);
-  const [name, setName] = useState("");
-  const [fresh, setFresh] = useState(null);
-
-  const load = useCallback(() => get("/api/api-keys").then(setKeys).catch((e) => toast(e.message, true)), [toast]);
-  useEffect(() => { load(); }, [load]);
-
-  const make = async () => {
-    try { const k = await post("/api/api-keys", { name }); setFresh(k); setName(""); load(); }
-    catch (e) { toast(e.message, true); }
-  };
-  const revoke = async (k) => {
-    if (!(await confirm({ title: `Revoke ${k.name || k.prefix}?`,
-      text: "Anything using this key stops working at once. This cannot be undone.", ok: "Revoke key" }))) return;
-    try { await del(`/api/api-keys/${k.id}`); toast("Key revoked."); load(); } catch (e) { toast(e.message, true); }
-  };
-  if (!isAdmin(me) && !can(me, "keys.manage")) return null;
-
-  return (
-    <div className="card" style={{ maxWidth: 680 }}>
-      <h2 style={{ margin: "0 0 var(--s3)" }}>API keys</h2>
-      <p className="hint" style={{ marginBottom: "var(--s4)" }}>
-        For your own system to push tasks in, by sending them to <code>/api/v1/tasks</code> with the key.
-        A key can only ever write into this organization.
-      </p>
-      {fresh && (
-        <div className="answers" style={{ marginBottom: "var(--s3)" }}>
-          <b>Copy this now. It is not shown again.</b>
-          <div className="answer-line"><code style={{ wordBreak: "break-all" }}>{fresh.key}</code></div>
-        </div>
-      )}
-      {!keys && <Spinner />}
-      {keys?.length === 0 && <p className="hint">No keys yet.</p>}
-      {shownKeys.map((k) => (
-        <div key={k.id} className="toggle-line">
-          <div><b>{k.name || "Unnamed key"}</b>
-            <div className="hint"><code>{k.prefix}…</code> · made {new Date(k.created_at).toLocaleDateString()}
-              {k.last_used_at ? ` · last used ${new Date(k.last_used_at).toLocaleDateString()}` : " · never used"}</div>
-          </div>
-          <button className="ghost" onClick={() => revoke(k)}>Revoke</button>
-        </div>
-      ))}
-      {keys?.length > 0 && keysPager}
-      <div className="field" style={{ marginTop: "var(--s3)" }}><label className="f">Name a new key</label>
-        <input value={name} maxLength={60} placeholder="Our CRM" onChange={(e) => setName(e.target.value)} /></div>
-      <div className="actions"><button className="primary" onClick={make}><Icon name="plus" />Make a key</button></div>
-      {confirmNode}
-    </div>
-  );
-}
-
-function Webhook() {
-  const me = useMe();
-  const toast = useToast();
   const editable = can(me, "org.settings");
   const [s, setS] = useState(null);
-  const [url, setUrl] = useState("");
-  const [secret, setSecret] = useState(null);
-  useEffect(() => { get("/api/org/settings").then((d) => { setS(d); setUrl(d.webhook_url ?? ""); }).catch((e) => toast(e.message, true)); }, [toast]);
-  const save = async (changes) => {
-    try {
-      const next = await patch("/api/org/settings", changes);
-      setS(next); setUrl(next.webhook_url ?? "");
-      if (next.webhook_secret) setSecret(next.webhook_secret);
-      toast("Saved.");
-    } catch (e) { toast(e.message, true); }
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { get("/api/org/calendly").then(setS).catch((e) => toast(e.message, true)); }, [toast]);
+  const connect = async () => {
+    setBusy(true);
+    try { setS(await put("/api/org/calendly", { token })); setToken(""); toast("Calendly is connected."); }
+    catch (e) { toast(e.message, true); } finally { setBusy(false); }
+  };
+  const disconnect = async () => {
+    if (!(await confirm({ title: "Disconnect Calendly?", text: "Agents will no longer be able to check free times or book meetings until you connect it again.", ok: "Disconnect" }))) return;
+    try { setS(await del("/api/org/calendly")); toast("Calendly is disconnected."); } catch (e) { toast(e.message, true); }
   };
   if (!s) return <Spinner />;
   return (
     <div className="card">
-      <h2>Send finished calls to your own system</h2>
-      <p className="hint"><b>In plain words:</b> when a call ends, Kaho AI can send its result straight to your own software, such as your CRM or a spreadsheet tool,
-        so nobody has to copy it across by hand. This is called a <i>webhook</i>.</p>
-      <ol className="steps">
-        <li>Ask whoever looks after your software for a <b>web address</b> that can receive calls (it starts with https://).</li>
-        <li>Paste it below and press Save. We will then send it the summary and every answer the agent saved, such as a payment date or a yes or no.</li>
-        <li>Each message is signed with a <b>secret</b>, a private password, so your system can tell it really came from us. Give the secret to the same person.</li>
-      </ol>
-      <p className="hint">Not using one? Leave it empty. Nothing else depends on it.</p>
-      <div className="field"><label className="f" htmlFor="wh-url">Web address</label>
-        <input id="wh-url" value={url} disabled={!editable} placeholder="https://yourcompany.com/kaho/calls" onChange={(e) => setUrl(e.target.value)} /></div>
-      {!editable && s.webhook_configured && <p className="hint">A webhook is set up. Only people who manage the organization can see its address.</p>}
-      {secret && (
-        <div className="notice"><b>Your signing secret</b> (shown once, copy it now)
-          <code className="secret">{secret}</code></div>
-      )}
-      {s.webhook_secret_set && !secret && <p className="hint">A signing secret is set. You can make a new one if it was lost; the old one stops working.</p>}
-      {editable && (
-        <div className="actions">
-          <button className="primary" onClick={() => save({ webhook_url: url.trim() || null })}>Save</button>
-          {s.webhook_secret_set && <button className="ghost" onClick={() => save({ rotate_webhook_secret: true })}>Make a new secret</button>}
-          {s.webhook_url && <button className="ghost" onClick={() => { save({ webhook_url: null }); setSecret(null); }}>Turn off</button>}
-        </div>
+      {confirmNode}
+      <h2>Book meetings on the call</h2>
+      <p className="hint"><b>In plain words:</b> when a caller wants a meeting, the agent looks at your free times in <b>Calendly</b>, offers them,
+        and books the one they pick. Calendly then e-mails the caller and you, the same as when someone books on your Calendly page.</p>
+      {s.connected ? (
+        <>
+          <div className="notice"><b>Connected</b> to Calendly as {s.name || "your account"}{s.email ? ` (${s.email})` : ""}.</div>
+          <p className="hint">Next, give an agent the tools <b>Check free times</b> and <b>Book a meeting</b> (agent, Tools tab), and choose the meeting it books (agent, Settings tab).</p>
+          {editable && <div className="actions"><button className="ghost" onClick={disconnect}>Disconnect</button></div>}
+        </>
+      ) : (
+        <>
+          <ol className="steps">
+            <li>In Calendly, open{" "}
+              <a href="https://calendly.com/integrations/api_webhooks" target="_blank" rel="noreferrer">calendly.com/integrations/api_webhooks</a>{" "}
+              (in the Calendly menus: <b>Integrations &amp; apps</b>, then <b>API and webhooks</b>). Under <b>Personal access tokens</b> press <b>Get a token now</b>, then <b>Continue</b>.</li>
+            <li>Name it "Kaho AI" and tick three permissions: <b>event_types:read</b> and <b>scheduled_events:write</b> (under Scheduling), and <b>users:read</b> (under User management). Press <b>Next</b>.</li>
+            <li>Calendly e-mails you a code. Enter it, then <b>copy the token</b>. Calendly shows it only once.</li>
+            <li>Paste it below and press Connect. We check it with Calendly and keep it sealed. Nobody, including us, can read it back.</li>
+          </ol>
+          <p className="hint">Good to know: a meeting that takes payment cannot be booked by an agent, and a free Calendly plan allows only 5 bookings a day (paid plans allow more).</p>
+          {editable ? (
+            <>
+              <div className="field"><label className="f" htmlFor="cal-token">Calendly token</label>
+                <input id="cal-token" type="password" autoComplete="off" spellCheck={false} value={token} placeholder="Paste the whole token here" onChange={(e) => setToken(e.target.value)} /></div>
+              <div className="actions"><button className="primary" disabled={busy || !token.trim()} onClick={connect}>Connect Calendly</button></div>
+            </>
+          ) : <p className="hint">Only people who manage the organization can connect Calendly.</p>}
+        </>
       )}
     </div>
   );

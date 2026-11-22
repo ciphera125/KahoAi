@@ -1,5 +1,6 @@
 import { note } from "./notify.js";
-import { ValidationError } from "../utils/errors.js";
+import { HttpError, ValidationError } from "../utils/errors.js";
+import * as Calendly from "../services/calendly.js";
 import { AVATARS } from "../models/avatars.js";
 import { can, PERMISSIONS, ROLES } from "../models/permissions.js";
 import * as OrgSettings from "../models/OrgSettings.js";
@@ -88,6 +89,35 @@ export async function updateOrgSettings(req, res) {
   const next = await OrgSettings.update(req.user.org_id, req.body ?? {});
   await note(req, "account", `${req.user.name} changed the organization's call settings`, "settings");
   res.json(next);
+}
+
+// Calendly (2026-11-22): the organization's own account, for booking meetings on a call. The token is checked
+// with Calendly when it is pasted and is never sent back to the browser.
+export async function calendlyStatus(req, res) {
+  const status = await OrgSettings.calendlyStatus(req.user.org_id);
+  // Whose Calendly it is (a name and an e-mail address) is for those who manage the organization.
+  res.json(can(req.user.role, "org.settings") ? status : { ...status, name: "", email: "" });
+}
+
+export async function calendlyConnect(req, res) {
+  const status = await OrgSettings.connectCalendly(req.user.org_id, req.body?.token);
+  await note(req, "account", `${req.user.name} connected the organization's Calendly`, "settings");
+  res.json(status);
+}
+
+export async function calendlyDisconnect(req, res) {
+  const status = await OrgSettings.disconnectCalendly(req.user.org_id);
+  await note(req, "account", `${req.user.name} disconnected the organization's Calendly`, "settings");
+  res.json(status);
+}
+
+/** The meeting types in this Calendly, for the agent's Settings to choose from. */
+export async function calendlyEventTypes(req, res) {
+  const connection = await OrgSettings.calendlyOf(req.user.org_id);
+  if (!connection) throw new HttpError(409, "Connect Calendly first, in Settings.");
+  const listed = await Calendly.eventTypes(connection.token, connection.userUri);
+  if (!listed.ok) throw new HttpError(502, "Calendly did not answer just now. Try again in a minute.");
+  res.json({ items: listed.items });
 }
 
 export function avatars(_req, res) {
