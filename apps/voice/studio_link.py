@@ -24,6 +24,7 @@ import re
 
 import httpx
 import language
+import stt_options
 from loguru import logger
 
 DEFAULT_TIMEOUT_SECS = 1.5
@@ -135,6 +136,9 @@ def _clean_config(raw) -> dict | None:
                 # Always one of the four modes: it ends up inside the prompt the model reads.
                 "language": language.clean_mode(raw.get("language")),
                 "confirm_answers": raw.get("confirm_answers") is not False,
+                # Words this agent should listen for: cleaned again here, the Studio's answer
+                # goes into a connection to Deepgram and a bad word can refuse it.
+                "keyterms": stt_options.clean_keyterms(raw.get("keyterms")),
                 "blocked": blocked,
                 "version": int(version) if version is not None else None}
     except (KeyError, TypeError, ValueError):

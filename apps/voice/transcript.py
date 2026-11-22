@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from masking import contains_sensitive, mask_sensitive
+from number_confidence import NOTE
 
 _UNSAFE = re.compile(r"[^A-Za-z0-9_.-]")
 
@@ -96,7 +97,9 @@ class CallTranscript:
         return bool(_HAS_DIGIT.search(text)) or all(len(t) == 1 for t in text.split())
 
     def user(self, text: str) -> None:
-        text = (text or "").strip()
+        # number_confidence adds a note for the model after a number the recogniser doubted.
+        # It is ours, not something the caller said, so it is never stored.
+        text = (text or "").replace(NOTE, "").strip()
         if not text:
             return
         self.caller_text.append(mask_sensitive(text))

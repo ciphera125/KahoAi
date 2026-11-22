@@ -40,7 +40,46 @@ export const DEFAULT_SILENCE = { enabled: true, after_secs: 10, times: 2, messag
 export const SILENCE_SECS = [5, 60];
 export const SILENCE_TIMES = [1, 5];
 export const DEFAULT_SETTINGS = { opening_line: "", max_minutes: 10, ring_secs: 40, call_window: DEFAULT_WINDOW,
-  capture_fields: [], confirm_answers: true, language: DEFAULT_LANGUAGE, silence: DEFAULT_SILENCE };
+  capture_fields: [], confirm_answers: true, language: DEFAULT_LANGUAGE, silence: DEFAULT_SILENCE, keyterms: [] };
+
+// Words the speech recognition should listen for (names, products, places). The list goes into the connection to
+// the speech provider, which refuses a connection over 500 tokens and does not read a comma, a semicolon or a line
+// break as a separator, so a list is checked here and again on the phone server. The estimate leans high (English
+// about three characters a token, Indian scripts about one) and keeps room for the deployment's own words.
+export const MAX_KEYTERMS = 50;
+export const MAX_KEYTERM_CHARS = 40;
+export const KEYTERM_TOKEN_BUDGET = 250;
+const keytermTokens = (term) => {
+  let ascii = 0, other = 0;
+  for (const ch of term) { if (ch.codePointAt(0) < 128) ascii += 1; else other += 1; }
+  return Math.ceil(ascii / 3) + other + 1;
+};
+
+// A control character, a comma or a semicolon: none of them separates words for the speech provider.
+const hasBadCharacter = (term) => [...term].some((ch) => ch.codePointAt(0) < 32 || ch.codePointAt(0) === 127 || ch === "," || ch === ";");
+
+export function checkKeyterms(value) {
+  if (!Array.isArray(value)) throw new ValidationError("Words to listen for must be a list");
+  const seen = new Set();
+  const out = [];
+  for (const item of value) {
+    if (typeof item !== "string") throw new ValidationError("Each word to listen for must be text");
+    const term = item.trim();
+    if (!term) continue;
+    if ([...term].length > MAX_KEYTERM_CHARS) throw new ValidationError(`A word to listen for can be at most ${MAX_KEYTERM_CHARS} characters`);
+    if (hasBadCharacter(term)) throw new ValidationError("A word to listen for cannot hold a comma, a semicolon or a line break: add each word on its own");
+    if (/:\s*[\d.]+$/.test(term)) throw new ValidationError("A word to listen for cannot end in a colon and a number");
+    const key = term.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
+  }
+  if (out.length > MAX_KEYTERMS) throw new ValidationError(`Add at most ${MAX_KEYTERMS} words to listen for`);
+  if (out.reduce((sum, t) => sum + keytermTokens(t), 0) > KEYTERM_TOKEN_BUDGET) {
+    throw new ValidationError("That is too many words to listen for: shorten the list, keeping the ones callers most often say");
+  }
+  return out;
+}
 
 function checkSilence(current, value) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ValidationError("silence must be an object");
@@ -150,6 +189,8 @@ function checkSettings(current, changes) {
       out.call_window = checkWindow(current?.call_window, value);
     } else if (key === "silence") {
       out.silence = checkSilence(current?.silence, value);
+    } else if (key === "keyterms") {
+      out.keyterms = checkKeyterms(value);
     } else if (key === "capture_fields") {
       out.capture_fields = checkCaptureFields(value);
     } else if (key === "confirm_answers") {
@@ -188,6 +229,7 @@ const settingsOf = (stored) => ({ ...DEFAULT_SETTINGS, ...stored,
   silence: { ...DEFAULT_SILENCE, ...stored?.silence },
   capture_fields: Array.isArray(stored?.capture_fields) ? stored.capture_fields : [],
   confirm_answers: stored?.confirm_answers !== false,
+  keyterms: Array.isArray(stored?.keyterms) ? stored.keyterms : [],
   language: LANGUAGE_VALUES.includes(stored?.language) ? stored.language : DEFAULT_LANGUAGE });
 
 /** Whether the draft says anything the published version does not. Compared field by
@@ -485,7 +527,7 @@ export async function callConfig(agentId, { caller = null } = {}) {
       max_secs: Math.min(s.max_minutes, orgCap ?? Infinity) * 60, ring_secs: Number(s.ring_secs), call_window: s.call_window,
       capture_fields: s.capture_fields, confirm_answers: s.confirm_answers, language: s.language,
       voicemail: s.voicemail === "hang_up" ? "hang_up" : "talk",
-      silence: s.silence,
+      silence: s.silence, keyterms: s.keyterms,
       version: a.version };
   } catch (err) {
     logger.error({ err: err.message }, "agent unreadable, the call uses the default persona");

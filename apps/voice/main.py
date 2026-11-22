@@ -25,7 +25,9 @@ from pathlib import Path
 
 import certifi
 import language
+import number_confidence
 import openai
+import stt_options
 from dotenv import load_dotenv
 from groq_usage import log_groq_call
 from interruptions import build_start_strategies
@@ -523,6 +525,54 @@ class DeepgramSTTService(PipecatDeepgramSTTService):
         self._quick_failure_tracker.reset()
         self._connection_settled.clear()
         self._connection_task = self.create_task(self._connection_handler())
+
+    def __init__(self, *args, language_hints=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._language_hints = list(language_hints or [])
+
+    def _build_connect_kwargs(self) -> dict:
+        """The SDK's connect() has no language_hint argument, so it goes in as an extra query
+        parameter. Deepgram only reads it with language=multi, so it is sent only then; the
+        codes were checked by stt_options.language_hints (an unknown one is an HTTP 400)."""
+        kwargs = super()._build_connect_kwargs()
+        if self._language_hints and kwargs.get("language") == "multi":
+            kwargs["request_options"] = {
+                "additional_query_parameters": {"language_hint": list(self._language_hints)}}
+        return kwargs
+
+
+def build_stt(*, keyterms=None, org_id=None, agent_id=None, call_id=None) -> DeepgramSTTService:
+    """The call's speech recognition.
+
+    keyterm biases nova-3 toward words it would otherwise mangle: brand names, drug names,
+    doctors, places, anything domain-specific. This agent's own words come first, then the
+    deployment's (DEEPGRAM_KEYTERMS), cut to a token budget so Deepgram never refuses the
+    connection for length (nova-3 replaced the older `keywords` and rejects it). language_hint
+    nudges detection towards the languages callers speak. The tag and the extra labels make
+    Deepgram's usage reports split by customer; they carry opaque ids only, never a name.
+    """
+    require_env("DEEPGRAM_API_KEY")
+    terms = stt_options.merge_keyterms(
+        keyterms, stt_options.keyterms_from_text(env("DEEPGRAM_KEYTERMS")))
+    labels = stt_options.usage_extra(call_id, agent_id)
+    return DeepgramSTTService(
+        api_key=env("DEEPGRAM_API_KEY"),
+        tag=stt_options.usage_tag(org_id),
+        language_hints=stt_options.language_hints(env("DEEPGRAM_LANGUAGE_HINTS")),
+        settings=DeepgramSTTService.Settings(
+            model=env("DEEPGRAM_MODEL"),
+            language=env("DEEPGRAM_LANGUAGE"),
+            # Punctuation and sentence casing give the LLM cleaner input, and
+            # numerals matter here: phone numbers, rupee amounts and OTPs are
+            # far easier to act on as digits than as spelled-out words.
+            # (Deepgram does not do numerals for Hindi: those stay as words.)
+            smart_format=True,
+            numerals=True,
+            keyterm=terms or None,
+            # Deepgram's own `extra` parameter, which Pipecat's `extra` dict can carry through.
+            **({"extra": {"extra": labels}} if labels else {}),
+        ),
+    )
 
 
 # What the caller hears when the model came back with nothing at all (2026-11-07, call
@@ -1404,6 +1454,9 @@ def build_worker(
     recording_upload=None,
     on_end_call=None,
     silence=None,
+    keyterms: list[str] | None = None,
+    org_id: str | None = None,
+    agent_id: str | None = None,
 ) -> PipelineWorker:
     """Everything between the transport's input and output, shared by every entry point.
 
@@ -1435,25 +1488,9 @@ def build_worker(
     """
     require_env("DEEPGRAM_API_KEY")
     language_mode = language.clean_mode(language_mode)
-
-    # keyterm biases nova-3 toward words it would otherwise mangle: brand names,
-    # drug names, place names, anything domain-specific. Worth filling in per
-    # deployment, it is the main lever on mis-transcription. (nova-3 replaced
-    # the older `keywords` parameter with this one and rejects `keywords`.)
-    keyterms = [t.strip() for t in (env("DEEPGRAM_KEYTERMS") or "").split(",") if t.strip()]
-    stt = DeepgramSTTService(
-        api_key=env("DEEPGRAM_API_KEY"),
-        settings=DeepgramSTTService.Settings(
-            model=env("DEEPGRAM_MODEL"),
-            language=env("DEEPGRAM_LANGUAGE"),
-            # Punctuation and sentence casing give the LLM cleaner input, and
-            # numerals matter here: phone numbers, rupee amounts and OTPs are
-            # far easier to act on as digits than as spelled-out words.
-            smart_format=True,
-            numerals=True,
-            keyterm=keyterms or None,
-        ),
-    )
+    # The call id may be made up just below for a local run; the labels want the real one,
+    # or none.
+    stt = build_stt(keyterms=keyterms, org_id=org_id, agent_id=agent_id, call_id=call_id)
 
     # The fallback callback reaches the transcript, which is created just below.
     llm = build_llm(
@@ -1560,6 +1597,14 @@ def build_worker(
     else:
         follow_proc = None
 
+    # A number the recogniser doubted: the model is told to ask again (STT_NUMBER_MIN_CONFIDENCE
+    # off switches it off). The event holds only the score, never the digits.
+    number_floor = number_confidence.min_confidence(env("STT_NUMBER_MIN_CONFIDENCE"))
+    number_check = (number_confidence.FlagUnsureNumbers(
+        number_floor,
+        on_unsure=lambda low: transcript.event("number_unsure", confidence=round(low, 2)))
+        if number_floor else None)
+
     reply_recorder = ReplyTextRecorder()
     call.reply_text = lambda: reply_recorder.text
     call.language_mode = language_mode
@@ -1570,6 +1615,7 @@ def build_worker(
             *keypad_processors(),
             stt,
             NormalizeTranscripts(),
+            *([number_check] if number_check else []),
             *([follow_proc] if follow_proc else []),
             user_aggregator,
             llm,

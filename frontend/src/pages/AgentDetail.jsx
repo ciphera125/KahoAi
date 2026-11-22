@@ -5,6 +5,7 @@ import { can, isAdmin, useMe } from "../auth.jsx";
 import AgentCalls from "../components/AgentCalls.jsx";
 import Assistant, { AssistantButton } from "../components/Assistant.jsx";
 import { changed, sameQuestions, sameSet } from "../dirty.js";
+import { KEYTERM_LIMIT, keytermsText, parseKeyterms } from "../keyterms.js";
 import { Icon, Info, Menu, SaveButton, Spinner, useConfirm, usePaged, useToast } from "../ui.jsx";
 
 const TOOL_LABELS = {
@@ -497,16 +498,18 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
   const [voicemail, setVoicemail] = useState(s.voicemail || "talk");
   const w = s.call_window || { enabled: false, start: "09:00", end: "21:00", timezone: "Asia/Kolkata" };
   const [cw, setCw] = useState(w);
+  const [words, setWords] = useState(keytermsText(s.keyterms));
   const quiet0 = { enabled: true, after_secs: 10, times: 2, message: "", hang_up: true, ...s.silence };
   const [quiet, setQuiet] = useState(quiet0);
   const setQ = (patch) => setQuiet((q) => ({ ...q, ...patch }));
   const savedLang = languages.some((l) => l.value === s.language) ? s.language : "auto";
-  const mainDirty = changed({ opening: s.opening_line || "", maxMin: s.max_minutes, ring: s.ring_secs, lang: savedLang, voicemail: s.voicemail || "talk", quiet: quiet0 },
-    { opening, maxMin, ring, lang, voicemail, quiet });
+  const mainDirty = changed({ opening: s.opening_line || "", maxMin: s.max_minutes, ring: s.ring_secs, lang: savedLang, voicemail: s.voicemail || "talk", quiet: quiet0, words: parseKeyterms(keytermsText(s.keyterms)) },
+    { opening, maxMin, ring, lang, voicemail, quiet, words: parseKeyterms(words) });
   const windowDirty = changed(w, cw);
   const save = async () => {
     try {
       await patch(`/api/agents/${agent.id}`, { settings: { opening_line: opening, max_minutes: maxMin, ring_secs: ring, call_window: cw, language: lang, voicemail,
+        keyterms: parseKeyterms(words),
         silence: { ...quiet, after_secs: Number(quiet.after_secs), times: Number(quiet.times) } } });
       toast("Saved as a draft. Publish it when you are ready."); onChanged();
     } catch (e) { toast(e.message, true); }
@@ -529,6 +532,10 @@ function SettingsTab({ agent, limits, languages, onChanged }) {
           <span className="hint">For calls we place. Plivo listens to the first few seconds; hanging up avoids talking to a recording. Try it on a real call before relying on it.</span>
         </div>
         <div className="field"><label className="f">Opening line</label><input value={opening} onChange={(e) => setOpening(e.target.value)} maxLength={200} placeholder="Leave empty to let the agent introduce itself" /></div>
+        <div className="field"><label className="f">Words to listen for (optional)<Info text="Names the agent will hear on calls: a doctor, a product, a town. Listing them helps it write them down correctly instead of guessing a similar-sounding word." /></label>
+          <textarea rows={4} value={words} onChange={(e) => setWords(e.target.value)} placeholder={"Dr. Mehta\nApollo Clinic"} />
+          <span className="hint">One to a line, written as people say them. {parseKeyterms(words).length} of {KEYTERM_LIMIT}. No commas inside a line.</span>
+        </div>
         <div className="field"><label className="f">Longest call (minutes)</label><input type="number" value={maxMin} min={1} max={limits.max_minutes} onChange={(e) => setMaxMin(e.target.value)} /><span className="hint">Up to {limits.max_minutes} minutes on this server.</span></div>
         <div className="field"><label className="f">Ring for (seconds)</label><input type="number" value={ring} min={limits.ring_secs[0]} max={limits.ring_secs[1]} onChange={(e) => setRing(e.target.value)} /></div>
         <div className="quiet-box">
