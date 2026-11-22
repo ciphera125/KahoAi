@@ -12,9 +12,13 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-11-22. **Current state, read this first:** `main` is at `ec2a269` on GitHub plus this handoff
-commit (local until pushed), and `website-redesign` was fast-forwarded to `ec2a269` (it had no work of its own, only a
-stale copy). Tests: backend 999, voice 962, frontend 74, marketing-site 69; ruff and eslint clean; both sites build.
+Last updated: 2026-11-22 (second session of the day). **Current state, read this first:** `main` is at `1fe3d30` on GitHub
+(Deepgram: per-agent keyterms, language hints, usage labels, number-confidence check) plus this handoff commit. Tests:
+backend 1013 (34 skipped, as before), voice 1045, frontend 81, marketing-site 69 (not rerun); ruff and eslint clean; frontend builds.
+**Restart the backend and the phone server** to run the new code (nothing was restarted). Newest work is the last entry of the
+session log ("2026-11-22 (second session): Deepgram features"); the paragraph below is the earlier state of the same day.
+Earlier state: `main` was at `ec2a269` on GitHub plus a handoff commit, and `website-redesign` was fast-forwarded to `ec2a269` (it had no work of its own, only a
+stale copy). Tests then: backend 999, voice 962, frontend 74, marketing-site 69; ruff and eslint clean; both sites build.
 Migration 032 (`call_events.outcome`) is applied to the live database. Running locally: backend :8020/:8021, Studio
 :5173, admin :5174 (also serves the phone server's /answer /hangup /transfer /ws through its Vite proxy), marketing
 :4000, phone server :8765, one ngrok tunnel `open-buckskin-wolverine.ngrok-free.dev` -> :5174. **The agent
@@ -370,6 +374,11 @@ apps/voice/interruptions.py  which caller sounds may interrupt (words only; back
 scripts/talk.py          local mic/speaker run, same as apps/voice/main.py
 apps/voice/masking.py    Aadhaar/PAN masking (any 12 digits; AAAAA9999A)
 apps/voice/transcript.py CallTranscript: only writer of call content; masks in write()
+apps/voice/stt_options.py  what is sent to Deepgram on connect: keyterms (agent's first, token budget), language hints,
+                         the organization tag and call/agent labels; every value checked, a bad one dropped (2026-11-22)
+apps/voice/number_confidence.py  a doubted number (Deepgram word score under STT_NUMBER_MIN_CONFIDENCE, default 0.65) gets a
+                         note for the model to ask again; CallTranscript strips the note before storing (2026-11-22)
+frontend/src/keyterms.js  the agent Settings box "Words to listen for": one per line to a list and back
 apps/voice/recording.py  CallRecorder: call audio to recordings/<id>.recording.wav (NOT masked); retention;
                          since 2026-11-03 also schedules a background Supabase Storage upload (upload=)
 apps/voice/recording_upload.py  new 2026-11-03: posts a closed recording to Supabase Storage, Opus-encoded
@@ -626,6 +635,21 @@ still open, section 6).
   sentences and were cut off 11 times. The caller steered the default persona into a detailed
   sex-education explanation; it answered, since the default persona answers general questions.
 
+**2026-11-22, Deepgram features (second session), verified against the live Deepgram and Groq APIs**
+- Deepgram accepted the exact connection a call now makes: `nova-3`, `language=multi`, keyterms, `language_hint=hi&language_hint=en`,
+  `tag`, `extra`. `extra` came back in each result's metadata (`{'agent_id', 'call_id'}`). The tag is not visible in the stream.
+- Refused by Deepgram on purpose (controls, never sent by us): 1000 keyterms, `language_hint=klingon`, a 200-character tag.
+  Accepted: the largest English list our budget allows (37 words, estimated 296 tokens), the largest Devanagari one (14, 284),
+  19 words full of `&`, `=`, `#`, `%`, quotes, emoji, right-to-left and zero-width characters.
+- Number confidence, 32 spoken numbers (Deepgram Aura voice, phone-line downsampling, added noise): all 18 wrong results had
+  LOST digits and none had a misheard digit; the check at 0.65 flags 6 of 18 wrong and 2 of 14 right. A weak signal. Default 0.65
+  is pinned by a test; change it only with a new measurement.
+- Real `gpt-oss-20b`, 3 runs each: with the note it asked the caller to repeat 3/3 in English and 3/3 in Hindi; without, 0/3.
+- Mutation checks: 19 safety rules broken on purpose, 18 caught by a test (1 deliberately equivalent). One survivor found and
+  closed with a test (junk stored in an agent's settings).
+- Attacks run: other organization, a viewer and a signed-out visitor changing an agent's words (all refused); keyterms that look
+  like query syntax (stay one literal word each); 10 low-confidence turns in a row (all 10 flagged, no cap, see section 6).
+
 ## 5. UNVERIFIED (assume nothing)
 
 Never claim any of these works until a real call shows it.
@@ -731,6 +755,15 @@ Never claim any of these works until a real call shows it.
 - Real-call behaviour of `capture_lead`: one live run stopped after the read-back,
   probably because a second utterance interrupted the in-flight tool call (Pipecat
   cancels function calls on interruption by default).
+
+**2026-11-22, Deepgram features (second session)**
+- Whether keyterms help Hindi words inside `language=multi` (Deepgram does not say; accepted, not measured for benefit).
+- The number check on real callers and on Hindi audio: the 32-number test was an English synthetic voice with simulated noise.
+- Deepgram's usage reports were never opened, so the organization tag has not been seen there.
+- Deepgram's `numerals` does not work for Hindi even inside `multi` (their docs); Hindi numbers arrive as words and the number
+  check only covers a run of three or more spoken digit words. Not tried on a real Hindi call.
+- Nothing here has run on a real phone call: the backend and phone server were not restarted, and the agent's new keyterms box
+  was never clicked in a browser (the helper, form wiring and build are tested, the page itself was not looked at).
 
 ## 6. Open work, in the owner's order
 
@@ -882,6 +915,19 @@ signature validation below (`eeef867`). Remaining:
      running from a turn the caller then continued (log 02:52:11-14). It is also English-only.
    - STT split one Hindi sentence into 3 turns (item 4).
    - "Aচ্ছা" came back partly in Bengali script, so the summary lists Bengali as a language.
+
+**2026-11-22, Deepgram features: findings reported, not fixed (owner decides)**
+- No cap on "please repeat that": a noisy line makes every turn with a doubted number carry the note, so the agent can ask each turn
+  until the call ends. Medium.
+- `redact_usage` is not set: Deepgram's usage records keep the keyterms; a customer who types patient or doctor names has them
+  stored there. Medium.
+- Deepgram now receives opaque ids (organization, agent, call). No names. Low.
+- **Pre-existing bug found on the way:** `studio_link._clean_config` builds a fixed shape and drops `silence` and `voicemail`, so an
+  agent's silence follow-up settings (seconds, times, own words, hang up) never reach a live Studio call; calls use the defaults.
+  `voicemail` is read by the backend when it dials, so only its absence in the config is confirmed. Fixing it changes live behaviour.
+- Scope for improvement: a digit-count check (a dropped digit has no score, and dropped digits were every wrong number measured);
+  cap the repeat requests to one or two per number; set `redact_usage`; measure on real calls and on Hindi; decide on
+  `mip_opt_out` (the owner was unsure; it tells Deepgram not to train on the calls, relevant to the DPDP question).
 
 ## 7. Gotchas that cost time
 
@@ -2376,3 +2422,26 @@ All of this is pushed: `main` and `website-redesign` are both at the commit afte
 **Open.** Publish the agent; try the silence follow-up and the end-call backstop on a real
 call; look at the Studio on a real phone; `gh` is not installed here, so GitHub CI was not checked after these pushes;
 Knowledge has no documents for any agent yet; a bulk call's ledger line has no person to name.
+
+## 2026-11-22 (second session): Deepgram features
+Owner asked what Deepgram `nova-3` features were unused; chose four of the list (per-agent keyterms, word confidence, language hint,
+tag and extra) and left `mip_opt_out` undecided. Built test first (each new test shown failing), attacked, reported, then committed and
+pushed as `1fe3d30`. Backend and phone server were not restarted.
+1. **Per-agent keyterms** ("Words to listen for", agent Settings): `Agent.js` `checkKeyterms` (50 words, 40 characters, token budget 250,
+   no comma, semicolon, line break or `term:0.5`), `call-config` carries `keyterms` after Publish, `studio_link._clean_config` cleans it
+   again, `server.py` passes `keyterms`, `org_id`, `agent_id` to `build_worker`, `stt_options.merge_keyterms` puts the agent's words
+   before `DEEPGRAM_KEYTERMS` under a 300-token budget. Frontend: `keyterms.js` and the textarea.
+2. **Language hint**: `DEEPGRAM_LANGUAGE_HINTS` (default `hi,en`, `off`), sent through the SDK's `request_options` (its `connect()` has no
+   `language_hint` argument), only with `language=multi`, codes checked against Deepgram's Nova-3 list.
+3. **Usage labels**: `tag` = organization id, `extra` = `call_id` and `agent_id`; ids checked before they go into the address.
+4. **Number confidence** (`number_confidence.py`, `STT_NUMBER_MIN_CONFIDENCE`, default 0.65): `FlagUnsureNumbers` sits straight after
+   `NormalizeTranscripts`; `CallTranscript.user` strips the note; a `number_unsure` event holds only the score.
+5. `build_stt()` now builds the speech recognition (it was inline in `build_worker`). `.env.example` documents the two new settings.
+   Four rows added to `CLEANROOM.md`.
+6. **Numbers to remember**: Deepgram refuses a keyterm list over 500 tokens and an unknown `language_hint`; `numerals` does not do Hindi;
+   word confidence caught 6 of 18 wrong numbers (all had lost digits). Details and the open findings are in sections 4, 5 and 6.
+7. **Gotchas met**: macOS needs `main.ensure_ca_bundle()` before any script opens a Deepgram websocket (SSL handshake error otherwise);
+   backend tests use the local `kaho_studio_test` database (set by `tests/setup-env.js`), never Supabase, and `TEST_DATABASE_URL`
+   must not be set to the live one; `test_no_em_dashes` covers every tracked file including this one.
+**Open.** Restart the backend and phone server; publish an agent with some keyterms and try a real call; look at the new Settings box in a
+browser; decide the findings in section 6; `gh` is not installed, so GitHub CI for `1fe3d30` was not checked.
