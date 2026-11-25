@@ -12,7 +12,11 @@ verify a specific claim against the repo before relying on it, especially the
   `git log` and `git status` against section 2, and reports what is done, what is
   open, and what it would do next, before touching anything.
 
-Last updated: 2026-11-22 (end of the third session of the day). **Current state, read this first:** Calendly booking, the Publish button, a
+Last updated: 2026-11-25 (deployment planning, discussion only, no code changed since `0437bef`). **Newest, read first:** the owner owns `kahoai.in` and
+asked to make the system deploy-ready. Nothing was built yet; the plan and open decisions are in the last session-log entry ("2026-11-25: deployment
+plan"). Short version: voice server and backend on ONE small server in Mumbai (AWS or DigitalOcean, owner to choose), the three websites on Cloudflare
+Pages, database stays on Supabase (already `ap-south-1`), Google login before public launch, and the "Book a Demo Call" button still to be discussed.
+Earlier header, still true: 2026-11-22 (end of the third session of the day). **Current state:** Calendly booking, the Publish button, a
 security pass and the removal of two Settings sections are built and pushed (see the newest session-log entries). Tests: backend 1081 (34 skipped
 as before), voice 1077, frontend 86, admin 8; ruff and eslint clean; all web apps build. **How things run now:** backend :8020 (production mode,
 `NODE_ENV=production` in `backend/.env`), phone server :8765 on 127.0.0.1 only, Studio dev server :5173 (this machine only), marketing :4000, and
@@ -2502,3 +2506,46 @@ what broke, and commit and push. Built test first; each new test was shown faili
    port. The browser window cannot be shrunk below ~1176px here: test phone width by loading pages in a 390px iframe.
 **Open.** Owner connects the Calendly token (steps on the Meetings tab), then a real read-only check and one real test booking; a real call on the new phone
 server; decide `REQUIRE_AGENT_TEST`; `gh` is not installed so GitHub CI was not checked.
+
+## 2026-11-25: deployment plan (discussion only; nothing built, nothing committed by this session before this entry)
+Owner asked: "make our system deploy-ready", where to host each part, whether Google sign-up and login can be built now, and what the landing page's
+"Book a Demo Call" button does. Agreed order: hosting first, then the demo button. Claude read the repo and checked hosting facts, then advised.
+**Readiness verdict given (2026-11-22).** Code and security are good for a closed pilot, not for a public launch. Missing: no Dockerfile, compose file,
+reverse proxy or process supervisor exists (only `.github/workflows/ci.yml`); production settings not prepared; never tested with two simultaneous real
+calls, a full Hindi call, a real call on the new phone-server code, or Calendly against the real API; Supabase network access still open to all
+addresses and backups unconfirmed; `SECRETS_KEY` has no safe copy outside the machine; admin passwords and setup code to be set; payments manual;
+recording FAQ on the website still has `TODO(legal)`; DPDP/Aadhaar question is with the owner's CA; no alerts if the phone server dies.
+**Hosting recommendation (owner has not chosen the server yet).**
+- Domain: owner already owns `kahoai.in` (do not try to buy it). Planned names: `kahoai.in` landing, `app.` Studio, `admin.` admin site, `api.` backend,
+  `voice.` phone server. `voice.` is needed because Plivo must reach the phone server at a public https address for `/answer`, `/hangup`, `/transfer`,
+  `/ws`. It should be DNS-only (not proxied by Cloudflare) so call audio takes the shortest path.
+- Landing, Studio and admin site: Cloudflare Pages (static files). Admin site behind Cloudflare Access (email code before the page loads), replacing the
+  ngrok tunnel.
+- Voice server and backend: one small server in Mumbai (`ap-south-1`; AWS EC2/Lightsail recommended, DigitalOcean Bangalore the alternative), Docker
+  plus Caddy for automatic https. They share one machine because the backend's internal port (8021) is private by design; split across hosts it would
+  have to be opened.
+- Database and files: stay on Supabase. The backend `DATABASE_URL` already points at `aws-0-ap-south-1` (Mumbai). Still to do: restrict network access to
+  the server's address, confirm backups (Pro plan), keep `DATABASE_SSL=verify`.
+- Render was rejected for the backend: its regions are Oregon, Ohio, Virginia, Frankfurt, Singapore (no Mumbai found), and it splits services across hosts.
+  Cloudflare was rejected for the backend: its way to run a server is Containers (billed by running time); Python/Express support, long-connection limits
+  and Mumbai placement were NOT confirmed by the search, so treat as unproven. Prices of AWS were not checked.
+- Redis is not needed while there is one backend process (rate-limit stores are per process).
+**To check before building.** The Studio reaches the backend through a built-in same-origin proxy today. On Pages it would call `api.kahoai.in` directly:
+confirm the sign-in cookie (`COOKIE_SECURE`, same-site across subdomains), `ALLOWED_ORIGINS` and `ADMIN_ORIGINS` (https), `PUBLIC_HOST`, `PUBLIC_SCHEME`,
+and `trust proxy` so rate limits see real client addresses. Test on staging first (Mumbai staging on its own subdomain).
+**Google sign-up and login (not built; no Google code exists, sign-in is email and password only).** Can be built now, independent of hosting. The owner
+must create the OAuth app in their Google Cloud account and paste the client id and secret into the server settings (Claude must not). Localhost works
+while building; the real `kahoai.in` addresses are added once staging is up. Rules agreed in principle: only emails Google marks verified; never silently
+merge a Google login into an existing password account (link only after the user proves they own it); a Google sign-up must still obey the invite or
+activation rules. Recommended: build during staging, required before public sign-up, not needed for a 2 or 3 customer pilot. Keep `app.kahoai.in` invite-only
+through the pilot (the owner has not answered invite-only versus open-with-activation).
+**"Book a Demo Call" today (read from `marketing-site/src/pages/BookACall.tsx`, `lib/validate.ts`).** With `VITE_BOOKING_URL` set (https) a Calendly or
+Cal.com page is embedded; nothing is set. Otherwise a form shows; with `VITE_FORM_ENDPOINT` unset, pressing the button only opens the visitor's own mail
+app with the details filled in, so a visitor without a mail app set up is lost silently. The fallback address is `hello@kaho.ai` (`VITE_CONTACT_EMAIL`
+default), which is not the owner's domain `kahoai.in`. Honeypot field and validation exist. Claude's starting suggestion, NOT agreed: the form saves to our
+own backend (public, rate-limited endpoint), shows in the admin site's notification bell and sends the owner an e-mail, then offers a Calendly booking.
+**Open questions for the owner.** (1) AWS Mumbai or DigitalOcean Bangalore for the server. (2) Demo button design (next topic). (3) Invite-only sign-up
+versus open with activation. (4) `REQUIRE_AGENT_TEST` (two-step versus one-press publish). (5) Payment gateway (Razorpay suggested, not built). (6)
+Calendly token from the owner, then a real read-only check and ONE real test booking with the owner's own e-mail (Free plan allows 5 bookings a day).
+**Not done and still unproven.** Two simultaneous real calls; a full Hindi call; a real call on today's phone-server code; `redact_usage` effect in
+Deepgram's usage records; GitHub CI (`gh` not installed).
